@@ -43,6 +43,7 @@ export default function SettingsPage() {
     setSaving(true)
     try {
       await invoke('update_settings', { settings })
+      await invoke('save_settings')
       setMessage('Settings saved successfully!')
       setTimeout(() => setMessage(null), 3000)
     } catch (err) {
@@ -124,8 +125,13 @@ export default function SettingsPage() {
                     text-gray-900 dark:text-white
                   "
                 >
-                  <option value="anthropic">Anthropic</option>
-                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic (Claude)</option>
+                  <option value="openai">OpenAI (GPT)</option>
+                  <option value="gemini">Google Gemini</option>
+                  <option value="cohere">Cohere</option>
+                  <option value="groq">Groq</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="xai">xAI (Grok)</option>
                   <option value="ollama">Ollama (Local)</option>
                 </select>
               </div>
@@ -150,6 +156,9 @@ export default function SettingsPage() {
                   "
                   placeholder="Enter your API key"
                 />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  You can also set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable.
+                </p>
               </div>
 
               <div>

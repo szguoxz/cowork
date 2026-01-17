@@ -4,12 +4,11 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use console::style;
-use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
+use dialoguer::{theme::ColorfulTheme, Input};
 use indicatif::{ProgressBar, ProgressStyle};
 
-use cowork_core::context::{Context, Workspace};
-use cowork_core::task::{Task, TaskStatus, TaskType};
-use cowork_core::tools::filesystem::{ListDirectory, ReadFile, SearchFiles, WriteFile};
+use cowork_core::task::TaskType;
+use cowork_core::tools::filesystem::{ListDirectory, ReadFile, SearchFiles};
 use cowork_core::tools::shell::ExecuteCommand;
 use cowork_core::tools::Tool;
 

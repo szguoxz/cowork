@@ -4,6 +4,16 @@
 //! - Workspace configuration
 //! - Conversation history
 //! - Variables and state
+//! - Token counting and summarization
+//! - Project context gathering
+
+pub mod gather;
+pub mod summarizer;
+pub mod tokens;
+
+pub use gather::{ContextGatherer, ProjectContext};
+pub use summarizer::{ConversationSummarizer, SummarizerConfig};
+pub use tokens::TokenCounter;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

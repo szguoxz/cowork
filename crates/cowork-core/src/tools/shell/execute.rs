@@ -4,18 +4,20 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::process::Command;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{Tool, ToolOutput};
 
-use super::ShellConfig;
+use super::{BackgroundShell, ShellConfig, ShellProcessRegistry, ShellStatus};
 
 /// Tool for executing shell commands
 pub struct ExecuteCommand {
     config: ShellConfig,
     workspace: PathBuf,
+    process_registry: Option<Arc<ShellProcessRegistry>>,
 }
 
 impl ExecuteCommand {
@@ -23,11 +25,17 @@ impl ExecuteCommand {
         Self {
             config: ShellConfig::default(),
             workspace,
+            process_registry: None,
         }
     }
 
     pub fn with_config(mut self, config: ShellConfig) -> Self {
         self.config = config;
+        self
+    }
+
+    pub fn with_registry(mut self, registry: Arc<ShellProcessRegistry>) -> Self {
+        self.process_registry = Some(registry);
         self
     }
 
@@ -59,14 +67,28 @@ impl Tool for ExecuteCommand {
                     "type": "string",
                     "description": "The shell command to execute"
                 },
+                "description": {
+                    "type": "string",
+                    "description": "Clear, concise description of what this command does"
+                },
                 "working_dir": {
                     "type": "string",
                     "description": "Working directory for the command (relative to workspace)"
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Timeout in seconds (default: 30)",
-                    "default": 30
+                    "description": "Timeout in milliseconds (max 600000, default: 120000)",
+                    "default": 120000
+                },
+                "run_in_background": {
+                    "type": "boolean",
+                    "description": "Run command in background. Use TaskOutput to check results.",
+                    "default": false
+                },
+                "dangerouslyDisableSandbox": {
+                    "type": "boolean",
+                    "description": "Override sandbox mode and run without sandboxing",
+                    "default": false
                 }
             },
             "required": ["command"]
@@ -78,7 +100,10 @@ impl Tool for ExecuteCommand {
             .as_str()
             .ok_or_else(|| ToolError::InvalidParams("command is required".into()))?;
 
-        let timeout = params["timeout"].as_u64().unwrap_or(self.config.timeout_seconds);
+        let timeout_ms = params["timeout"].as_u64().unwrap_or(120000);
+        let timeout_secs = (timeout_ms / 1000).min(600);
+        let run_in_background = params["run_in_background"].as_bool().unwrap_or(false);
+        let _description = params["description"].as_str().unwrap_or("");
 
         // Security check
         if self.is_command_blocked(command) {
@@ -97,8 +122,47 @@ impl Tool for ExecuteCommand {
                 .unwrap_or_else(|| self.workspace.clone())
         };
 
+        // Handle background execution
+        if run_in_background {
+            if let Some(registry) = &self.process_registry {
+                let shell_id = uuid::Uuid::new_v4().to_string();
+                let output_file = format!("/tmp/cowork-shell-{}.log", shell_id);
+
+                // Spawn the command in background
+                let child = Command::new("sh")
+                    .arg("-c")
+                    .arg(format!("{} > {} 2>&1", command, output_file))
+                    .current_dir(&working_dir)
+                    .spawn()
+                    .map_err(|e| ToolError::ExecutionFailed(format!("Failed to spawn: {}", e)))?;
+
+                let bg_shell = BackgroundShell {
+                    id: shell_id.clone(),
+                    command: command.to_string(),
+                    child: Some(child),
+                    started_at: chrono::Utc::now(),
+                    status: ShellStatus::Running,
+                    output: None,
+                };
+
+                registry.register(bg_shell).await;
+
+                return Ok(ToolOutput::success(json!({
+                    "shell_id": shell_id,
+                    "status": "running",
+                    "output_file": output_file,
+                    "message": "Command started in background. Use TaskOutput to check results."
+                })));
+            } else {
+                return Err(ToolError::ExecutionFailed(
+                    "Background execution not available: no process registry".into(),
+                ));
+            }
+        }
+
+        // Foreground execution with timeout
         let output = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout),
+            std::time::Duration::from_secs(timeout_secs),
             Command::new("sh")
                 .arg("-c")
                 .arg(command)
@@ -108,7 +172,9 @@ impl Tool for ExecuteCommand {
                 .output(),
         )
         .await
-        .map_err(|_| ToolError::ExecutionFailed(format!("Command timed out after {}s", timeout)))?
+        .map_err(|_| {
+            ToolError::ExecutionFailed(format!("Command timed out after {}s", timeout_secs))
+        })?
         .map_err(ToolError::Io)?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();

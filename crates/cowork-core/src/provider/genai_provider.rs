@@ -1,0 +1,596 @@
+//! GenAI-based LLM provider implementation
+//!
+//! Uses the genai framework to support multiple LLM providers with manual tool control.
+//! This gives us the ability to implement approval flows for tool execution.
+
+use async_trait::async_trait;
+use futures::StreamExt;
+use genai::chat::{ChatMessage, ChatRequest, ChatStreamEvent, Tool, ToolCall, ToolResponse};
+use genai::resolver::{AuthData, AuthResolver};
+use genai::Client;
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
+
+use crate::error::{Error, Result};
+use crate::tools::ToolDefinition;
+
+use super::{LlmMessage, LlmProvider, LlmRequest, LlmResponse, TokenUsage};
+
+/// Supported LLM provider types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderType {
+    /// OpenAI (GPT-4, GPT-4o, GPT-3.5, etc.)
+    OpenAI,
+    /// Anthropic (Claude 3.5, Claude 3, etc.)
+    Anthropic,
+    /// Google Gemini
+    Gemini,
+    /// Cohere (Command R, etc.)
+    Cohere,
+    /// Perplexity
+    Perplexity,
+    /// Groq (fast inference)
+    Groq,
+    /// xAI (Grok)
+    XAI,
+    /// DeepSeek
+    DeepSeek,
+    /// Ollama (local)
+    Ollama,
+}
+
+impl std::fmt::Display for ProviderType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProviderType::OpenAI => write!(f, "openai"),
+            ProviderType::Anthropic => write!(f, "anthropic"),
+            ProviderType::Gemini => write!(f, "gemini"),
+            ProviderType::Cohere => write!(f, "cohere"),
+            ProviderType::Perplexity => write!(f, "perplexity"),
+            ProviderType::Groq => write!(f, "groq"),
+            ProviderType::XAI => write!(f, "xai"),
+            ProviderType::DeepSeek => write!(f, "deepseek"),
+            ProviderType::Ollama => write!(f, "ollama"),
+        }
+    }
+}
+
+impl std::str::FromStr for ProviderType {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "openai" => Ok(ProviderType::OpenAI),
+            "anthropic" => Ok(ProviderType::Anthropic),
+            "gemini" | "google" => Ok(ProviderType::Gemini),
+            "cohere" => Ok(ProviderType::Cohere),
+            "perplexity" => Ok(ProviderType::Perplexity),
+            "groq" => Ok(ProviderType::Groq),
+            "xai" | "grok" => Ok(ProviderType::XAI),
+            "deepseek" => Ok(ProviderType::DeepSeek),
+            "ollama" => Ok(ProviderType::Ollama),
+            _ => Err(format!("Unknown provider: {}", s)),
+        }
+    }
+}
+
+impl ProviderType {
+    /// Get the default model for this provider
+    pub fn default_model(&self) -> &'static str {
+        match self {
+            ProviderType::OpenAI => "gpt-4o",
+            ProviderType::Anthropic => "claude-sonnet-4-20250514",
+            ProviderType::Gemini => "gemini-2.0-flash",
+            ProviderType::Cohere => "command-r-plus",
+            ProviderType::Perplexity => "llama-3.1-sonar-large-128k-online",
+            ProviderType::Groq => "llama-3.3-70b-versatile",
+            ProviderType::XAI => "grok-2",
+            ProviderType::DeepSeek => "deepseek-chat",
+            ProviderType::Ollama => "llama3.2",
+        }
+    }
+
+    /// Get the environment variable name for API key
+    pub fn api_key_env(&self) -> Option<&'static str> {
+        match self {
+            ProviderType::OpenAI => Some("OPENAI_API_KEY"),
+            ProviderType::Anthropic => Some("ANTHROPIC_API_KEY"),
+            ProviderType::Gemini => Some("GEMINI_API_KEY"),
+            ProviderType::Cohere => Some("COHERE_API_KEY"),
+            ProviderType::Perplexity => Some("PERPLEXITY_API_KEY"),
+            ProviderType::Groq => Some("GROQ_API_KEY"),
+            ProviderType::XAI => Some("XAI_API_KEY"),
+            ProviderType::DeepSeek => Some("DEEPSEEK_API_KEY"),
+            ProviderType::Ollama => None, // Local, no API key needed
+        }
+    }
+}
+
+/// Tool call from the LLM that needs approval
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingToolCall {
+    pub call_id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+impl From<ToolCall> for PendingToolCall {
+    fn from(tc: ToolCall) -> Self {
+        Self {
+            call_id: tc.call_id,
+            name: tc.fn_name,
+            arguments: tc.fn_arguments, // Already a serde_json::Value
+        }
+    }
+}
+
+/// Response from completion that may contain tool calls
+#[derive(Debug, Clone)]
+pub enum CompletionResult {
+    /// Simple text response
+    Message(String),
+    /// Tool calls that need approval before execution
+    ToolCalls(Vec<PendingToolCall>),
+}
+
+/// A provider implementation using genai
+pub struct GenAIProvider {
+    client: Client,
+    provider_type: ProviderType,
+    model: String,
+    system_prompt: Option<String>,
+}
+
+impl GenAIProvider {
+    /// Create a new provider with default settings (uses environment variables for auth)
+    pub fn new(provider_type: ProviderType, model: Option<&str>) -> Self {
+        let client = Client::default();
+        Self {
+            client,
+            provider_type,
+            model: model.unwrap_or(provider_type.default_model()).to_string(),
+            system_prompt: None,
+        }
+    }
+
+    /// Create a provider with a specific API key
+    pub fn with_api_key(provider_type: ProviderType, api_key: &str, model: Option<&str>) -> Self {
+        let api_key = api_key.to_string();
+        let auth_resolver = AuthResolver::from_resolver_fn(
+            move |_model_iden| -> std::result::Result<Option<AuthData>, genai::resolver::Error> {
+                Ok(Some(AuthData::from_single(api_key.clone())))
+            },
+        );
+
+        let client = Client::builder().with_auth_resolver(auth_resolver).build();
+
+        Self {
+            client,
+            provider_type,
+            model: model.unwrap_or(provider_type.default_model()).to_string(),
+            system_prompt: None,
+        }
+    }
+
+    /// Set the system prompt
+    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.system_prompt = Some(prompt.into());
+        self
+    }
+
+    /// Get the provider type
+    pub fn provider_type(&self) -> ProviderType {
+        self.provider_type
+    }
+
+    /// Get the model name
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// Execute a chat completion and return either a message or tool calls
+    pub async fn chat(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<CompletionResult> {
+        let mut chat_req = ChatRequest::default();
+
+        // Add system prompt if set
+        if let Some(system) = &self.system_prompt {
+            chat_req = chat_req.with_system(system.as_str());
+        }
+
+        // Convert messages
+        for msg in messages {
+            let chat_msg = match msg.role.as_str() {
+                "user" => ChatMessage::user(&msg.content),
+                "assistant" => ChatMessage::assistant(&msg.content),
+                "system" => ChatMessage::system(&msg.content),
+                _ => ChatMessage::user(&msg.content),
+            };
+            chat_req = chat_req.append_message(chat_msg);
+        }
+
+        // Add tools if provided
+        if let Some(tool_defs) = tools {
+            let genai_tools: Vec<Tool> = tool_defs
+                .into_iter()
+                .map(|t| {
+                    Tool::new(&t.name)
+                        .with_description(&t.description)
+                        .with_schema(t.parameters.clone())
+                })
+                .collect();
+            chat_req = chat_req.with_tools(genai_tools);
+        }
+
+        // Execute the chat
+        let chat_res = self
+            .client
+            .exec_chat(&self.model, chat_req, None)
+            .await
+            .map_err(|e| Error::Provider(format!("GenAI error: {}", e)))?;
+
+        // Check for tool calls first (need to clone since into_tool_calls consumes)
+        let tool_calls = chat_res.clone().into_tool_calls();
+        if !tool_calls.is_empty() {
+            let pending: Vec<PendingToolCall> = tool_calls.into_iter().map(Into::into).collect();
+            Ok(CompletionResult::ToolCalls(pending))
+        } else {
+            // Get text content
+            let content = chat_res.first_text().unwrap_or("").to_string();
+            Ok(CompletionResult::Message(content))
+        }
+    }
+
+    /// Continue a conversation after tool execution
+    /// Takes the original request, the tool calls that were made, and the results
+    pub async fn continue_with_tool_results(
+        &self,
+        mut chat_req: ChatRequest,
+        tool_calls: Vec<PendingToolCall>,
+        results: Vec<(String, String)>, // (call_id, result)
+    ) -> Result<CompletionResult> {
+        // Convert PendingToolCall back to genai ToolCall for the message
+        let genai_tool_calls: Vec<ToolCall> = tool_calls
+            .into_iter()
+            .map(|tc| ToolCall {
+                call_id: tc.call_id,
+                fn_name: tc.name,
+                fn_arguments: tc.arguments,
+                thought_signatures: None,
+            })
+            .collect();
+
+        // Add tool calls as assistant message
+        chat_req = chat_req.append_message(genai_tool_calls);
+
+        // Add tool results
+        for (call_id, result) in results {
+            let tool_response = ToolResponse::new(call_id, result);
+            chat_req = chat_req.append_message(tool_response);
+        }
+
+        // Execute the chat again
+        let chat_res = self
+            .client
+            .exec_chat(&self.model, chat_req, None)
+            .await
+            .map_err(|e| Error::Provider(format!("GenAI error: {}", e)))?;
+
+        // Check for more tool calls
+        let tool_calls = chat_res.clone().into_tool_calls();
+        if !tool_calls.is_empty() {
+            let pending: Vec<PendingToolCall> = tool_calls.into_iter().map(Into::into).collect();
+            Ok(CompletionResult::ToolCalls(pending))
+        } else {
+            let content = chat_res.first_text().unwrap_or("").to_string();
+            Ok(CompletionResult::Message(content))
+        }
+    }
+
+    /// Execute a streaming chat completion
+    /// Sends chunks to the provided channel as they arrive
+    pub async fn chat_stream(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+        chunk_tx: mpsc::Sender<StreamChunk>,
+    ) -> Result<CompletionResult> {
+        let mut chat_req = ChatRequest::default();
+
+        // Add system prompt if set
+        if let Some(system) = &self.system_prompt {
+            chat_req = chat_req.with_system(system.as_str());
+        }
+
+        // Convert messages
+        for msg in messages {
+            let chat_msg = match msg.role.as_str() {
+                "user" => ChatMessage::user(&msg.content),
+                "assistant" => ChatMessage::assistant(&msg.content),
+                "system" => ChatMessage::system(&msg.content),
+                _ => ChatMessage::user(&msg.content),
+            };
+            chat_req = chat_req.append_message(chat_msg);
+        }
+
+        // Add tools if provided
+        if let Some(tool_defs) = tools {
+            let genai_tools: Vec<Tool> = tool_defs
+                .into_iter()
+                .map(|t| {
+                    Tool::new(&t.name)
+                        .with_description(&t.description)
+                        .with_schema(t.parameters.clone())
+                })
+                .collect();
+            chat_req = chat_req.with_tools(genai_tools);
+        }
+
+        // Execute streaming chat
+        let stream_response = self
+            .client
+            .exec_chat_stream(&self.model, chat_req, None)
+            .await
+            .map_err(|e| Error::Provider(format!("GenAI stream error: {}", e)))?;
+
+        // Get the actual stream from the response
+        let mut stream = stream_response.stream;
+
+        let mut accumulated_text = String::new();
+        let mut tool_calls: Vec<PendingToolCall> = Vec::new();
+
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(event) => match event {
+                    ChatStreamEvent::Start => {
+                        let _ = chunk_tx.send(StreamChunk::Start).await;
+                    }
+                    ChatStreamEvent::Chunk(chunk) => {
+                        accumulated_text.push_str(&chunk.content);
+                        let _ = chunk_tx
+                            .send(StreamChunk::TextDelta(chunk.content))
+                            .await;
+                    }
+                    ChatStreamEvent::ReasoningChunk(_) => {
+                        // Reasoning chunks are not displayed to user
+                    }
+                    ChatStreamEvent::ThoughtSignatureChunk(_) => {
+                        // Thought signatures are not displayed to user
+                    }
+                    ChatStreamEvent::ToolCallChunk(tc_chunk) => {
+                        // Tool call received - genai sends complete tool calls, not deltas
+                        let tc = tc_chunk.tool_call;
+                        let call_id = tc.call_id.clone();
+                        let name = tc.fn_name.clone();
+
+                        let _ = chunk_tx
+                            .send(StreamChunk::ToolCallStart {
+                                id: call_id.clone(),
+                                name: name.clone(),
+                            })
+                            .await;
+
+                        let args_str = tc.fn_arguments.to_string();
+                        let _ = chunk_tx
+                            .send(StreamChunk::ToolCallDelta {
+                                id: call_id.clone(),
+                                delta: args_str,
+                            })
+                            .await;
+
+                        tool_calls.push(PendingToolCall {
+                            call_id: call_id.clone(),
+                            name,
+                            arguments: tc.fn_arguments,
+                        });
+
+                        let _ = chunk_tx.send(StreamChunk::ToolCallComplete(call_id)).await;
+                    }
+                    ChatStreamEvent::End(end_info) => {
+                        // Determine finish reason
+                        let reason = if !tool_calls.is_empty() {
+                            "tool_calls"
+                        } else {
+                            "stop"
+                        };
+                        let _ = chunk_tx.send(StreamChunk::End(reason.to_string())).await;
+
+                        // If we have captured content from the end event, use it
+                        if let Some(content) = end_info.captured_content {
+                            // Update tool calls from captured content if available
+                            let captured_tool_calls = content.into_tool_calls();
+                            if !captured_tool_calls.is_empty() && tool_calls.is_empty() {
+                                tool_calls = captured_tool_calls
+                                    .into_iter()
+                                    .map(|tc| PendingToolCall {
+                                        call_id: tc.call_id,
+                                        name: tc.fn_name,
+                                        arguments: tc.fn_arguments,
+                                    })
+                                    .collect();
+                            }
+                        }
+                    }
+                },
+                Err(e) => {
+                    let _ = chunk_tx
+                        .send(StreamChunk::Error(e.to_string()))
+                        .await;
+                    return Err(Error::Provider(format!("Stream error: {}", e)));
+                }
+            }
+        }
+
+        // Return result
+        if !tool_calls.is_empty() {
+            Ok(CompletionResult::ToolCalls(tool_calls))
+        } else {
+            Ok(CompletionResult::Message(accumulated_text))
+        }
+    }
+}
+
+/// Streaming chunk types
+#[derive(Debug, Clone)]
+pub enum StreamChunk {
+    Start,
+    TextDelta(String),
+    ToolCallStart { id: String, name: String },
+    ToolCallDelta { id: String, delta: String },
+    ToolCallComplete(String),
+    End(String),
+    Error(String),
+}
+
+// Implement LlmProvider trait for compatibility with existing code
+#[async_trait]
+impl LlmProvider for GenAIProvider {
+    fn name(&self) -> &str {
+        match self.provider_type {
+            ProviderType::OpenAI => "openai",
+            ProviderType::Anthropic => "anthropic",
+            ProviderType::Gemini => "gemini",
+            ProviderType::Cohere => "cohere",
+            ProviderType::Perplexity => "perplexity",
+            ProviderType::Groq => "groq",
+            ProviderType::XAI => "xai",
+            ProviderType::DeepSeek => "deepseek",
+            ProviderType::Ollama => "ollama",
+        }
+    }
+
+    async fn complete(&self, request: LlmRequest) -> Result<LlmResponse> {
+        // Convert tools
+        let tools = if request.tools.is_empty() {
+            None
+        } else {
+            Some(request.tools.clone())
+        };
+
+        // Add system prompt from request if present
+        let mut messages = request.messages.clone();
+        if let Some(system) = &request.system_prompt {
+            messages.insert(
+                0,
+                LlmMessage {
+                    role: "system".to_string(),
+                    content: system.clone(),
+                },
+            );
+        }
+
+        match self.chat(messages, tools).await? {
+            CompletionResult::Message(content) => Ok(LlmResponse {
+                content: Some(content),
+                tool_calls: Vec::new(),
+                finish_reason: "stop".to_string(),
+                usage: TokenUsage::default(),
+            }),
+            CompletionResult::ToolCalls(pending) => Ok(LlmResponse {
+                content: None,
+                tool_calls: pending
+                    .into_iter()
+                    .map(|tc| super::ToolCall {
+                        id: tc.call_id,
+                        name: tc.name,
+                        arguments: tc.arguments,
+                    })
+                    .collect(),
+                finish_reason: "tool_calls".to_string(),
+                usage: TokenUsage::default(),
+            }),
+        }
+    }
+
+    async fn health_check(&self) -> Result<bool> {
+        let request = LlmRequest::new(vec![LlmMessage {
+            role: "user".to_string(),
+            content: "Hi".to_string(),
+        }]);
+
+        match self.complete(request).await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+}
+
+/// Create a provider from configuration
+pub fn create_provider(
+    provider_type: ProviderType,
+    api_key: Option<&str>,
+    model: Option<&str>,
+    system_prompt: Option<&str>,
+) -> Result<GenAIProvider> {
+    let provider = if let Some(key) = api_key {
+        GenAIProvider::with_api_key(provider_type, key, model)
+    } else {
+        GenAIProvider::new(provider_type, model)
+    };
+
+    let provider = if let Some(prompt) = system_prompt {
+        provider.with_system_prompt(prompt)
+    } else {
+        provider.with_system_prompt(
+            "You are Cowork, a helpful AI assistant for software development tasks.",
+        )
+    };
+
+    Ok(provider)
+}
+
+/// Available models for each provider
+pub mod models {
+    /// OpenAI models
+    pub mod openai {
+        pub const GPT_4O: &str = "gpt-4o";
+        pub const GPT_4O_MINI: &str = "gpt-4o-mini";
+        pub const GPT_4_TURBO: &str = "gpt-4-turbo";
+        pub const O1: &str = "o1";
+        pub const O1_MINI: &str = "o1-mini";
+    }
+
+    /// Anthropic models
+    pub mod anthropic {
+        pub const CLAUDE_SONNET_4: &str = "claude-sonnet-4-20250514";
+        pub const CLAUDE_3_5_SONNET: &str = "claude-3-5-sonnet-20241022";
+        pub const CLAUDE_3_5_HAIKU: &str = "claude-3-5-haiku-20241022";
+        pub const CLAUDE_3_OPUS: &str = "claude-3-opus-20240229";
+    }
+
+    /// Google Gemini models
+    pub mod gemini {
+        pub const GEMINI_2_0_FLASH: &str = "gemini-2.0-flash";
+        pub const GEMINI_1_5_PRO: &str = "gemini-1.5-pro";
+        pub const GEMINI_1_5_FLASH: &str = "gemini-1.5-flash";
+    }
+
+    /// Cohere models
+    pub mod cohere {
+        pub const COMMAND_R_PLUS: &str = "command-r-plus";
+        pub const COMMAND_R: &str = "command-r";
+    }
+
+    /// Groq models
+    pub mod groq {
+        pub const LLAMA_3_3_70B: &str = "llama-3.3-70b-versatile";
+        pub const LLAMA_3_1_70B: &str = "llama-3.1-70b-versatile";
+        pub const MIXTRAL_8X7B: &str = "mixtral-8x7b-32768";
+    }
+
+    /// DeepSeek models
+    pub mod deepseek {
+        pub const DEEPSEEK_CHAT: &str = "deepseek-chat";
+        pub const DEEPSEEK_REASONER: &str = "deepseek-reasoner";
+    }
+
+    /// xAI models
+    pub mod xai {
+        pub const GROK_2: &str = "grok-2";
+        pub const GROK_BETA: &str = "grok-beta";
+    }
+}

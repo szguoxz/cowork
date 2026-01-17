@@ -15,12 +15,11 @@ use super::BrowserSession;
 /// Tool for taking screenshots
 pub struct TakeScreenshot {
     session: Arc<Mutex<BrowserSession>>,
-    output_dir: PathBuf,
 }
 
 impl TakeScreenshot {
-    pub fn new(session: Arc<Mutex<BrowserSession>>, output_dir: PathBuf) -> Self {
-        Self { session, output_dir }
+    pub fn new(session: Arc<Mutex<BrowserSession>>) -> Self {
+        Self { session }
     }
 }
 
@@ -38,9 +37,9 @@ impl Tool for TakeScreenshot {
         json!({
             "type": "object",
             "properties": {
-                "filename": {
+                "path": {
                     "type": "string",
-                    "description": "Output filename (without extension)"
+                    "description": "Output file path for the screenshot"
                 },
                 "full_page": {
                     "type": "boolean",
@@ -51,33 +50,84 @@ impl Tool for TakeScreenshot {
                     "type": "string",
                     "description": "CSS selector to screenshot specific element"
                 }
-            }
+            },
+            "required": ["path"]
         })
     }
 
     async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
-        let session = self.session.lock().await;
+        let output_path = params["path"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidParams("path is required".into()))?;
+        let full_page = params["full_page"].as_bool().unwrap_or(false);
+        let selector = params["selector"].as_str();
+
+        let mut session = self.session.lock().await;
+
         if !session.active {
             return Err(ToolError::ExecutionFailed(
-                "No active browser session".into(),
+                "No active browser session. Navigate to a URL first.".into(),
             ));
         }
 
-        let filename = params["filename"]
-            .as_str()
-            .unwrap_or("screenshot");
-        let _full_page = params["full_page"].as_bool().unwrap_or(false);
-        let _selector = params["selector"].as_str();
+        #[cfg(feature = "browser")]
+        {
+            use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 
-        let output_path = self.output_dir.join(format!("{}.png", filename));
+            let page = session.get_page().await
+                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
 
-        // TODO: Implement actual screenshot using chromiumoxide
-        // For now, return placeholder
+            let screenshot_data = if let Some(sel) = selector {
+                // Screenshot specific element
+                let element = page.find_element(sel)
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed(format!("Element not found: {}", e)))?;
 
-        Ok(ToolOutput::success(json!({
-            "path": output_path.display().to_string(),
-            "status": "captured"
-        })))
+                element.screenshot(CaptureScreenshotFormat::Png)
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed(format!("Screenshot failed: {}", e)))?
+            } else if full_page {
+                // Full page screenshot
+                page.screenshot(
+                    chromiumoxide::page::ScreenshotParams::builder()
+                        .full_page(true)
+                        .format(CaptureScreenshotFormat::Png)
+                        .build()
+                )
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(format!("Screenshot failed: {}", e)))?
+            } else {
+                // Viewport screenshot
+                page.screenshot(
+                    chromiumoxide::page::ScreenshotParams::builder()
+                        .format(CaptureScreenshotFormat::Png)
+                        .build()
+                )
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(format!("Screenshot failed: {}", e)))?
+            };
+
+            // Write to file
+            tokio::fs::write(&output_path, &screenshot_data)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to save screenshot: {}", e)))?;
+
+            Ok(ToolOutput::success(json!({
+                "path": output_path,
+                "size_bytes": screenshot_data.len(),
+                "status": "captured"
+            })))
+        }
+
+        #[cfg(not(feature = "browser"))]
+        {
+            // Fallback without browser feature
+            Ok(ToolOutput::success(json!({
+                "path": output_path,
+                "status": "simulated",
+                "note": "Browser feature not enabled - simulation only"
+            })))
+        }
     }
 
     fn approval_level(&self) -> ApprovalLevel {

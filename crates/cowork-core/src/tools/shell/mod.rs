@@ -1,8 +1,10 @@
 //! Shell tools for command execution
 
 mod execute;
+mod kill;
 
 pub use execute::ExecuteCommand;
+pub use kill::{BackgroundShell, KillShell, ShellProcessRegistry, ShellStatus};
 
 use std::collections::HashSet;
 

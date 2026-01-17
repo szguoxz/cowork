@@ -2,14 +2,18 @@
 //!
 //! This crate provides the Tauri-based desktop application for Cowork.
 
+pub mod agentic_loop;
+pub mod chat;
 pub mod commands;
 pub mod state;
+pub mod streaming;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
-use cowork_core::{AgentRegistry, Context, Workspace};
+use cowork_core::{AgentRegistry, ConfigManager, Context, Workspace};
 use state::AppState;
 
 /// Initialize the application state
@@ -18,10 +22,16 @@ pub fn init_state(workspace_path: std::path::PathBuf) -> AppState {
     let context = Context::new(workspace);
     let registry = AgentRegistry::new();
 
+    // Initialize config manager, falling back to default if it fails
+    let config_manager = ConfigManager::new().unwrap_or_default();
+
     AppState {
         context: Arc::new(RwLock::new(context)),
         registry: Arc::new(RwLock::new(registry)),
         workspace_path,
+        sessions: Arc::new(RwLock::new(HashMap::new())),
+        config_manager: Arc::new(RwLock::new(config_manager)),
+        loop_handles: Arc::new(RwLock::new(HashMap::new())),
     }
 }
 
@@ -64,6 +74,30 @@ pub fn run() {
             commands::execute_command,
             commands::get_settings,
             commands::update_settings,
+            commands::save_settings,
+            commands::check_api_key,
+            // Chat commands
+            commands::create_session,
+            commands::list_sessions,
+            commands::get_session_messages,
+            commands::send_message,
+            commands::execute_tool,
+            commands::approve_tool_call,
+            commands::reject_tool_call,
+            commands::delete_session,
+            // Agentic loop commands
+            commands::start_loop,
+            commands::stop_loop,
+            commands::approve_loop_tools,
+            commands::reject_loop_tools,
+            commands::get_loop_state,
+            commands::is_loop_active,
+            // Streaming commands
+            commands::send_message_stream,
+            // Skill commands
+            commands::execute_skill,
+            commands::list_skills,
+            commands::execute_command_string,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

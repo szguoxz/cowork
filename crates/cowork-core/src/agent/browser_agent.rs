@@ -1,13 +1,14 @@
 //! Browser Agent - specialized for web automation
 
 use async_trait::async_trait;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::context::Context;
 use crate::error::Result;
 use crate::task::{StepResult, TaskStep, TaskType};
-use crate::tools::browser::{BrowserController, ClickElement, NavigateTo, TakeScreenshot};
+use crate::tools::browser::{
+    BrowserController, ClickElement, GetPageContent, NavigateTo, TakeScreenshot, TypeText,
+};
 use crate::tools::Tool;
 
 use super::Agent;
@@ -20,14 +21,16 @@ pub struct BrowserAgent {
 }
 
 impl BrowserAgent {
-    pub fn new(output_dir: PathBuf, headless: bool) -> Self {
+    pub fn new(headless: bool) -> Self {
         let controller = BrowserController::new(headless);
         let session = controller.session();
 
         let tools: Vec<Arc<dyn Tool>> = vec![
             Arc::new(NavigateTo::new(session.clone())),
-            Arc::new(TakeScreenshot::new(session.clone(), output_dir)),
-            Arc::new(ClickElement::new(session)),
+            Arc::new(TakeScreenshot::new(session.clone())),
+            Arc::new(ClickElement::new(session.clone())),
+            Arc::new(TypeText::new(session.clone())),
+            Arc::new(GetPageContent::new(session)),
         ];
 
         Self {
@@ -39,6 +42,12 @@ impl BrowserAgent {
 
     pub fn controller(&self) -> &BrowserController {
         &self.controller
+    }
+}
+
+impl Default for BrowserAgent {
+    fn default() -> Self {
+        Self::new(true)
     }
 }
 
@@ -92,8 +101,8 @@ Your capabilities include:
 - Navigating to URLs
 - Taking screenshots of pages or elements
 - Clicking elements on pages
-- Filling forms
-- Extracting page content
+- Filling forms and typing text
+- Extracting page content (HTML or text)
 
 Always wait for pages to load before interacting.
 Use specific CSS selectors when targeting elements.

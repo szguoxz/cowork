@@ -7,7 +7,7 @@ description = "Core library for Cowork - agents, tools, and orchestration"
 
 [dependencies]
 # LLM Framework
-rig-core = "0.5"
+genai = "0.5"
 
 # Async runtime
 tokio.workspace = true
@@ -36,9 +36,14 @@ anyhow.workspace = true
 # Logging
 tracing.workspace = true
 
+# HTTP client for API calls
+reqwest = { version = "0.12", features = ["json"] }
+url = "2"
+
 # Utils
 uuid.workspace = true
 chrono.workspace = true
+dirs = "5"
 
 # Internal
 cowork-mcp = { workspace = true, optional = true }

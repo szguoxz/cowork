@@ -1,7 +1,21 @@
-//! LLM Provider abstraction
+//! LLM Provider abstraction using GenAI
 //!
-//! Abstracts different LLM providers (OpenAI, Anthropic, local models)
-//! for use with agents.
+//! This module provides a unified interface to multiple LLM providers
+//! through the genai framework. Supported providers include:
+//! - OpenAI (GPT-4, GPT-4o, etc.)
+//! - Anthropic (Claude 3.5, Claude 3, etc.)
+//! - Google Gemini
+//! - Cohere
+//! - Groq
+//! - DeepSeek
+//! - xAI
+//! - Ollama (local)
+
+mod genai_provider;
+
+pub use genai_provider::{
+    create_provider, models, CompletionResult, GenAIProvider, PendingToolCall, ProviderType,
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -106,21 +120,13 @@ pub struct ProviderConfig {
     pub default_max_tokens: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProviderType {
-    OpenAI,
-    Anthropic,
-    Ollama,
-    Custom,
-}
-
 impl Default for ProviderConfig {
     fn default() -> Self {
         Self {
             provider_type: ProviderType::Anthropic,
             api_key: None,
             base_url: None,
-            model: "claude-3-sonnet-20240229".to_string(),
+            model: "claude-sonnet-4-20250514".to_string(),
             default_max_tokens: 4096,
         }
     }

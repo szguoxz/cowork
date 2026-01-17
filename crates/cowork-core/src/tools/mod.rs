@@ -9,7 +9,13 @@
 pub mod browser;
 pub mod document;
 pub mod filesystem;
+pub mod interaction;
+pub mod lsp;
+pub mod notebook;
+pub mod planning;
 pub mod shell;
+pub mod task;
+pub mod web;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

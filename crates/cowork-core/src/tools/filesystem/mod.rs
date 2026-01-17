@@ -1,6 +1,9 @@
 //! Filesystem tools for file operations
 
 mod delete;
+mod edit;
+mod glob;
+mod grep;
 mod list;
 mod move_file;
 mod read;
@@ -8,6 +11,9 @@ mod search;
 mod write;
 
 pub use delete::DeleteFile;
+pub use edit::EditFile;
+pub use glob::GlobFiles;
+pub use grep::GrepFiles;
 pub use list::ListDirectory;
 pub use move_file::MoveFile;
 pub use read::ReadFile;
