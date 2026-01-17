@@ -59,7 +59,7 @@ export default function Files() {
           Files
         </h1>
         <div className="flex-1 flex items-center gap-1 text-sm text-gray-500">
-          {currentPath.split('/').map((part, i, arr) => (
+          {currentPath.split('/').map((part, i) => (
             <span key={i} className="flex items-center">
               {i > 0 && <ChevronRight className="w-4 h-4 mx-1" />}
               <span className="hover:text-primary-600 cursor-pointer">

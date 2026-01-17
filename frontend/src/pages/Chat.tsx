@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Send, Loader2 } from 'lucide-react'
-import { useStore } from '../store'
 
 interface Message {
   id: string
