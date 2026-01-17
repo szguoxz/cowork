@@ -2,9 +2,9 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Cowork",
   "version": "0.1.0",
-  "identifier": "com.cowork.app",
+  "identifier": "com.cowork.desktop",
   "build": {
-    "frontendDist": "../../../frontend/dist"
+    "frontendDist": "../../frontend/dist"
   },
   "app": {
     "windows": [
