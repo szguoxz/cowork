@@ -101,12 +101,31 @@ pub struct UiSettings {
 
 impl From<&Config> for Settings {
     fn from(config: &Config) -> Self {
+        // Get the default provider settings
+        let (provider_type, api_key, model, base_url) =
+            if let Some(provider) = config.get_default_provider() {
+                (
+                    provider.provider_type.clone(),
+                    provider.get_api_key(),
+                    provider.model.clone(),
+                    provider.base_url.clone(),
+                )
+            } else {
+                // Fallback to defaults
+                (
+                    "anthropic".to_string(),
+                    None,
+                    "claude-sonnet-4-20250514".to_string(),
+                    None,
+                )
+            };
+
         Self {
             provider: ProviderSettings {
-                provider_type: config.provider.provider_type.clone(),
-                api_key: config.provider.get_api_key(),
-                model: config.provider.model.clone(),
-                base_url: config.provider.base_url.clone(),
+                provider_type,
+                api_key,
+                model,
+                base_url,
             },
             approval: ApprovalSettings {
                 auto_approve_level: config.approval.auto_approve_level.clone(),

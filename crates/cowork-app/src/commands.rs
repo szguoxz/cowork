@@ -214,20 +214,25 @@ pub async fn update_settings(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let mut cm = state.config_manager.write().await;
-    let config = cm.config_mut();
 
-    // Update provider settings
-    config.provider.provider_type = settings.provider.provider_type;
-    config.provider.model = settings.provider.model;
-    config.provider.base_url = settings.provider.base_url;
+    // Update default provider if provider_type changed
+    let provider_type = &settings.provider.provider_type;
+    cm.set_default_provider(provider_type);
 
-    if let Some(key) = settings.provider.api_key {
-        if !key.is_empty() {
-            config.provider.api_key = Some(key);
+    // Update provider-specific settings
+    if let Some(provider) = cm.config_mut().get_provider_mut(provider_type) {
+        provider.model = settings.provider.model;
+        provider.base_url = settings.provider.base_url;
+
+        if let Some(key) = settings.provider.api_key {
+            if !key.is_empty() {
+                provider.api_key = Some(key);
+            }
         }
     }
 
     // Update approval settings
+    let config = cm.config_mut();
     config.approval.auto_approve_level = settings.approval.auto_approve_level;
     config.approval.show_dialogs = settings.approval.show_confirmation_dialogs;
 
@@ -263,7 +268,11 @@ pub struct SessionInfo {
 #[tauri::command]
 pub async fn create_session(state: State<'_, AppState>) -> Result<SessionInfo, String> {
     let cm = state.config_manager.read().await;
-    let provider = create_provider_from_config(&cm.config().provider)?;
+    let provider_config = cm
+        .config()
+        .get_default_provider()
+        .ok_or_else(|| "No default provider configured".to_string())?;
+    let provider = create_provider_from_config(provider_config)?;
 
     let session = ChatSession::new(provider);
     let info = SessionInfo {

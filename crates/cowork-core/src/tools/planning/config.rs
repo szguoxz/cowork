@@ -108,11 +108,32 @@ fn get_config_value(config: &ConfigManager, key: &str) -> Value {
     let parts: Vec<&str> = key.split('.').collect();
 
     match parts.as_slice() {
-        // Provider settings
-        ["provider"] => json!(config.config().provider.provider_type),
-        ["model"] => json!(config.config().provider.model),
-        ["max_tokens"] => json!(config.config().provider.default_max_tokens),
-        ["temperature"] => json!(config.config().provider.default_temperature),
+        // Provider settings (from default provider)
+        ["provider"] | ["default_provider"] => json!(config.default_provider()),
+        ["model"] => {
+            if let Some(provider) = config.config().get_default_provider() {
+                json!(provider.model)
+            } else {
+                Value::Null
+            }
+        }
+        ["max_tokens"] => {
+            if let Some(provider) = config.config().get_default_provider() {
+                json!(provider.default_max_tokens)
+            } else {
+                Value::Null
+            }
+        }
+        ["temperature"] => {
+            if let Some(provider) = config.config().get_default_provider() {
+                json!(provider.default_temperature)
+            } else {
+                Value::Null
+            }
+        }
+        ["providers"] => {
+            json!(config.list_providers())
+        }
         // Approval settings
         ["auto_approve_level"] => json!(config.config().approval.auto_approve_level),
         ["show_dialogs"] => json!(config.config().approval.show_dialogs),
@@ -131,18 +152,37 @@ fn set_config_value(config: &mut ConfigManager, key: &str, value: Value) -> Resu
     let parts: Vec<&str> = key.split('.').collect();
 
     match parts.as_slice() {
-        // Provider settings
+        // Provider settings (updates default provider)
+        ["default_provider"] | ["provider"] => {
+            let provider_name = value.as_str().ok_or("provider must be a string")?;
+            config.set_default_provider(provider_name);
+        }
         ["model"] => {
             let model = value.as_str().ok_or("model must be a string")?.to_string();
-            config.config_mut().provider.model = model;
+            let default_provider = config.default_provider().to_string();
+            if let Some(provider) = config.config_mut().get_provider_mut(&default_provider) {
+                provider.model = model;
+            } else {
+                return Err("No default provider configured".to_string());
+            }
         }
         ["max_tokens"] => {
             let tokens = value.as_u64().ok_or("max_tokens must be a number")? as u32;
-            config.config_mut().provider.default_max_tokens = tokens;
+            let default_provider = config.default_provider().to_string();
+            if let Some(provider) = config.config_mut().get_provider_mut(&default_provider) {
+                provider.default_max_tokens = tokens;
+            } else {
+                return Err("No default provider configured".to_string());
+            }
         }
         ["temperature"] => {
             let temp = value.as_f64().ok_or("temperature must be a number")? as f32;
-            config.config_mut().provider.default_temperature = temp;
+            let default_provider = config.default_provider().to_string();
+            if let Some(provider) = config.config_mut().get_provider_mut(&default_provider) {
+                provider.default_temperature = temp;
+            } else {
+                return Err("No default provider configured".to_string());
+            }
         }
         // Approval settings
         ["auto_approve_level"] => {
