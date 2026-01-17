@@ -1,0 +1,100 @@
+//! Write file tool
+
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use std::path::PathBuf;
+
+use crate::approval::ApprovalLevel;
+use crate::error::ToolError;
+use crate::tools::{Tool, ToolOutput};
+
+use super::validate_path;
+
+/// Tool for writing file contents
+pub struct WriteFile {
+    workspace: PathBuf,
+}
+
+impl WriteFile {
+    pub fn new(workspace: PathBuf) -> Self {
+        Self { workspace }
+    }
+}
+
+#[async_trait]
+impl Tool for WriteFile {
+    fn name(&self) -> &str {
+        "write_file"
+    }
+
+    fn description(&self) -> &str {
+        "Write content to a file. Creates the file if it doesn't exist, overwrites if it does."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to write (relative to workspace)"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Content to write to the file"
+                },
+                "create_dirs": {
+                    "type": "boolean",
+                    "description": "Create parent directories if they don't exist",
+                    "default": true
+                }
+            },
+            "required": ["path", "content"]
+        })
+    }
+
+    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
+        let path_str = params["path"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidParams("path is required".into()))?;
+
+        let content = params["content"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidParams("content is required".into()))?;
+
+        let create_dirs = params["create_dirs"].as_bool().unwrap_or(true);
+
+        let path = self.workspace.join(path_str);
+
+        // For new files, validate parent directory
+        if !path.exists() {
+            if let Some(parent) = path.parent() {
+                if parent.exists() {
+                    validate_path(parent, &self.workspace)?;
+                } else if create_dirs {
+                    // Will create directories, validate workspace root
+                    if !path.starts_with(&self.workspace) {
+                        return Err(ToolError::PermissionDenied(format!(
+                            "Path {} is outside workspace",
+                            path.display()
+                        )));
+                    }
+                    tokio::fs::create_dir_all(parent).await.map_err(ToolError::Io)?;
+                }
+            }
+        } else {
+            validate_path(&path, &self.workspace)?;
+        }
+
+        tokio::fs::write(&path, content).await.map_err(ToolError::Io)?;
+
+        Ok(ToolOutput::success(json!({
+            "path": path.display().to_string(),
+            "bytes_written": content.len()
+        })))
+    }
+
+    fn approval_level(&self) -> ApprovalLevel {
+        ApprovalLevel::Low
+    }
+}

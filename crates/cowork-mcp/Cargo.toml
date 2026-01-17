@@ -1,0 +1,25 @@
+[package]
+name = "cowork-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MCP (Model Context Protocol) client implementation"
+
+[dependencies]
+tokio = { workspace = true, features = ["process", "io-util"] }
+futures.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+# HTTP/SSE
+reqwest = { version = "0.12", features = ["stream", "json"] }
+eventsource-stream = "0.2"
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util", "macros"] }

@@ -1,0 +1,55 @@
+[package]
+name = "cowork-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core library for Cowork - agents, tools, and orchestration"
+
+[dependencies]
+# LLM Framework
+rig-core = "0.5"
+
+# Async runtime
+tokio.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+# File operations
+walkdir = "2"
+globset = "0.4"
+glob = "0.3"
+regex = "1"
+notify = "6"
+
+# Browser automation
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Utils
+uuid.workspace = true
+chrono.workspace = true
+
+# Internal
+cowork-mcp = { workspace = true, optional = true }
+cowork-sandbox = { workspace = true, optional = true }
+
+[features]
+default = ["browser", "mcp", "sandbox"]
+browser = ["dep:chromiumoxide"]
+mcp = ["dep:cowork-mcp"]
+sandbox = ["dep:cowork-sandbox"]
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["test-util", "macros"] }

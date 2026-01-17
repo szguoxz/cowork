@@ -1,0 +1,26 @@
+[package]
+name = "cowork-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Cowork CLI - Multi-agent assistant command line tool"
+license = "Apache-2.0"
+
+[[bin]]
+name = "cowork"
+path = "src/main.rs"
+
+[dependencies]
+cowork-core = { path = "../cowork-core", default-features = false, features = [] }
+cowork-mcp = { path = "../cowork-mcp" }
+
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+dialoguer = "0.11"
+console = "0.15"
+indicatif = "0.17"
+directories = "5"
