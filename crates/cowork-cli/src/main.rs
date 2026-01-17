@@ -4,13 +4,16 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use console::style;
-use dialoguer::{theme::ColorfulTheme, Input};
+use dialoguer::{theme::ColorfulTheme, Confirm, Input};
 use indicatif::{ProgressBar, ProgressStyle};
 
-use cowork_core::task::TaskType;
-use cowork_core::tools::filesystem::{ListDirectory, ReadFile, SearchFiles};
+use cowork_core::provider::{CompletionResult, GenAIProvider, LlmMessage, ProviderType};
+use cowork_core::skills::SkillRegistry;
+use cowork_core::tools::filesystem::{
+    GlobFiles, GrepFiles, ListDirectory, ReadFile, SearchFiles, WriteFile,
+};
 use cowork_core::tools::shell::ExecuteCommand;
-use cowork_core::tools::Tool;
+use cowork_core::tools::{Tool, ToolDefinition, ToolRegistry};
 
 #[derive(Parser)]
 #[command(name = "cowork")]
@@ -28,6 +31,14 @@ struct Cli {
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
+
+    /// LLM Provider (anthropic, openai)
+    #[arg(short, long, default_value = "anthropic")]
+    provider: String,
+
+    /// Model to use (defaults to provider's default)
+    #[arg(short, long)]
+    model: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -86,8 +97,15 @@ async fn main() -> anyhow::Result<()> {
 
     let workspace = cli.workspace.canonicalize().unwrap_or(cli.workspace);
 
+    // Parse provider type
+    let provider_type = match cli.provider.to_lowercase().as_str() {
+        "openai" => ProviderType::OpenAI,
+        "gemini" => ProviderType::Gemini,
+        "anthropic" | _ => ProviderType::Anthropic,
+    };
+
     match cli.command {
-        Some(Commands::Chat) => run_chat(&workspace).await?,
+        Some(Commands::Chat) => run_chat(&workspace, provider_type, cli.model.as_deref()).await?,
         Some(Commands::Run { command }) => run_command(&workspace, &command).await?,
         Some(Commands::List { path }) => list_files(&workspace, &path).await?,
         Some(Commands::Read { path }) => read_file(&workspace, &path).await?,
@@ -96,16 +114,52 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Tools) => show_tools(),
         Some(Commands::Config) => show_config(&workspace),
-        None => run_chat(&workspace).await?,
+        None => run_chat(&workspace, provider_type, cli.model.as_deref()).await?,
     }
 
     Ok(())
 }
 
-async fn run_chat(workspace: &PathBuf) -> anyhow::Result<()> {
-    println!("{}", style("Cowork - Multi-Agent Assistant").bold().cyan());
-    println!("{}", style("Type 'help' for commands, 'exit' to quit").dim());
+async fn run_chat(
+    workspace: &PathBuf,
+    provider_type: ProviderType,
+    model: Option<&str>,
+) -> anyhow::Result<()> {
+    println!("{}", style("Cowork - AI Coding Assistant").bold().cyan());
+    println!(
+        "{}",
+        style(format!("Provider: {:?}", provider_type)).dim()
+    );
+    println!(
+        "{}",
+        style("Type 'help' for commands, 'exit' to quit, or just chat with the AI").dim()
+    );
     println!();
+
+    // Check for API key
+    if let Some(env_var) = provider_type.api_key_env() {
+        if std::env::var(env_var).is_err() {
+            println!(
+                "{}",
+                style(format!("Warning: {} not set. Please set it or the AI won't work.", env_var))
+                    .yellow()
+            );
+            println!();
+        }
+    }
+
+    // Create provider
+    let provider = GenAIProvider::new(provider_type, model).with_system_prompt(SYSTEM_PROMPT);
+
+    // Create tool registry
+    let tool_registry = create_tool_registry(workspace);
+    let tool_definitions = tool_registry.list();
+
+    // Create skill registry for slash commands
+    let skill_registry = SkillRegistry::with_builtins(workspace.clone());
+
+    // Chat history
+    let mut messages: Vec<LlmMessage> = Vec::new();
 
     loop {
         let input: String = Input::with_theme(&ColorfulTheme::default())
@@ -113,6 +167,10 @@ async fn run_chat(workspace: &PathBuf) -> anyhow::Result<()> {
             .interact_text()?;
 
         let input = input.trim();
+
+        if input.is_empty() {
+            continue;
+        }
 
         match input {
             "exit" | "quit" | "q" => {
@@ -124,6 +182,14 @@ async fn run_chat(workspace: &PathBuf) -> anyhow::Result<()> {
             }
             "tools" => {
                 show_tools();
+            }
+            "clear" => {
+                messages.clear();
+                println!("{}", style("Conversation cleared.").green());
+            }
+            cmd if cmd.starts_with('/') => {
+                // Handle slash commands via skill registry
+                handle_slash_command(cmd, workspace, &skill_registry).await;
             }
             cmd if cmd.starts_with("run ") => {
                 let command = &cmd[4..];
@@ -146,19 +212,15 @@ async fn run_chat(workspace: &PathBuf) -> anyhow::Result<()> {
                 search_files(workspace, pattern, false).await?;
             }
             _ => {
-                // Treat as a task description
-                println!(
-                    "{}",
-                    style("Task received. In a full implementation, this would be processed by the AI.").dim()
-                );
-                println!("{}", style(format!("Task: {}", input)).cyan());
-
-                // Show what agents would handle this
-                let task_type = infer_task_type(input);
-                println!(
-                    "{}",
-                    style(format!("Inferred type: {:?}", task_type)).dim()
-                );
+                // Process with AI
+                process_ai_message(
+                    input,
+                    &provider,
+                    &tool_registry,
+                    &tool_definitions,
+                    &mut messages,
+                )
+                .await?;
             }
         }
 
@@ -166,6 +228,199 @@ async fn run_chat(workspace: &PathBuf) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Process a message through the AI
+async fn process_ai_message(
+    input: &str,
+    provider: &GenAIProvider,
+    tool_registry: &ToolRegistry,
+    tool_definitions: &[ToolDefinition],
+    messages: &mut Vec<LlmMessage>,
+) -> anyhow::Result<()> {
+    // Add user message
+    messages.push(LlmMessage {
+        role: "user".to_string(),
+        content: input.to_string(),
+    });
+
+    // Agentic loop - keep going until we get a text response (no more tool calls)
+    loop {
+        // Show spinner while waiting for AI
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.blue} {msg}")
+                .unwrap(),
+        );
+        spinner.set_message("Thinking...");
+        spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+
+        // Get response from AI
+        let result = provider
+            .chat(messages.clone(), Some(tool_definitions.to_vec()))
+            .await;
+
+        spinner.finish_and_clear();
+
+        match result {
+            Ok(CompletionResult::Message(text)) => {
+                // Got a text response - display it and we're done
+                println!("{}: {}", style("Assistant").bold().green(), text);
+                messages.push(LlmMessage {
+                    role: "assistant".to_string(),
+                    content: text,
+                });
+                break;
+            }
+            Ok(CompletionResult::ToolCalls(calls)) => {
+                // AI wants to use tools
+                println!(
+                    "{}",
+                    style(format!("AI wants to use {} tool(s):", calls.len())).cyan()
+                );
+
+                let mut tool_results = Vec::new();
+
+                for call in &calls {
+                    println!();
+                    println!("  {} {}", style("Tool:").bold(), style(&call.name).yellow());
+                    println!(
+                        "  {} {}",
+                        style("Args:").bold(),
+                        serde_json::to_string_pretty(&call.arguments)
+                            .unwrap_or_else(|_| call.arguments.to_string())
+                    );
+
+                    // Check if tool needs approval
+                    let needs_approval = tool_needs_approval(&call.name);
+
+                    let approved = if needs_approval {
+                        Confirm::with_theme(&ColorfulTheme::default())
+                            .with_prompt("Approve this tool call?")
+                            .default(true)
+                            .interact()?
+                    } else {
+                        // Auto-approve read-only tools
+                        println!("  {} (auto-approved)", style("Read-only").dim());
+                        true
+                    };
+
+                    if approved {
+                        // Execute tool
+                        let exec_spinner = ProgressBar::new_spinner();
+                        exec_spinner.set_style(
+                            ProgressStyle::default_spinner()
+                                .template("{spinner:.blue} Executing...")
+                                .unwrap(),
+                        );
+                        exec_spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+
+                        if let Some(tool) = tool_registry.get(&call.name) {
+                            match tool.execute(call.arguments.clone()).await {
+                                Ok(output) => {
+                                    exec_spinner.finish_and_clear();
+                                    let result_str = output.content.to_string();
+                                    let truncated = if result_str.len() > 500 {
+                                        format!("{}... (truncated)", &result_str[..500])
+                                    } else {
+                                        result_str.clone()
+                                    };
+                                    println!("  {} {}", style("Result:").bold(), truncated);
+
+                                    tool_results.push((call.name.clone(), result_str, true));
+                                }
+                                Err(e) => {
+                                    exec_spinner.finish_and_clear();
+                                    let error_msg = format!("Error: {}", e);
+                                    println!("  {}", style(&error_msg).red());
+                                    tool_results.push((call.name.clone(), error_msg, false));
+                                }
+                            }
+                        } else {
+                            exec_spinner.finish_and_clear();
+                            let error_msg = format!("Unknown tool: {}", call.name);
+                            println!("  {}", style(&error_msg).red());
+                            tool_results.push((call.name.clone(), error_msg, false));
+                        }
+                    } else {
+                        println!("  {}", style("Rejected by user").yellow());
+                        tool_results.push((
+                            call.name.clone(),
+                            "User rejected this tool call".to_string(),
+                            false,
+                        ));
+                    }
+                }
+
+                // Add tool results to messages for context
+                // Format as assistant message with tool results
+                let results_summary: Vec<String> = tool_results
+                    .iter()
+                    .map(|(name, result, success)| {
+                        if *success {
+                            format!("Tool {} result: {}", name, result)
+                        } else {
+                            format!("Tool {} failed: {}", name, result)
+                        }
+                    })
+                    .collect();
+
+                messages.push(LlmMessage {
+                    role: "assistant".to_string(),
+                    content: format!("I used these tools:\n{}", results_summary.join("\n")),
+                });
+
+                // Continue the loop to let AI process tool results
+            }
+            Err(e) => {
+                println!("{}", style(format!("Error: {}", e)).red());
+                // Remove the last user message since the request failed
+                messages.pop();
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Check if a tool needs user approval
+fn tool_needs_approval(tool_name: &str) -> bool {
+    match tool_name {
+        // Read-only tools - auto-approve
+        "read_file" | "glob" | "grep" | "list_directory" | "search_files" => false,
+        // Write/execute tools - need approval
+        _ => true,
+    }
+}
+
+/// Handle slash commands
+async fn handle_slash_command(cmd: &str, workspace: &PathBuf, registry: &SkillRegistry) {
+    let result = registry.execute_command(cmd, workspace.clone()).await;
+    if result.success {
+        println!("{}", result.response);
+    } else {
+        println!(
+            "{}",
+            style(format!("Error: {}", result.error.unwrap_or_default())).red()
+        );
+    }
+}
+
+/// Create tool registry with all available tools
+fn create_tool_registry(workspace: &PathBuf) -> ToolRegistry {
+    let mut registry = ToolRegistry::new();
+
+    registry.register(std::sync::Arc::new(ReadFile::new(workspace.clone())));
+    registry.register(std::sync::Arc::new(WriteFile::new(workspace.clone())));
+    registry.register(std::sync::Arc::new(GlobFiles::new(workspace.clone())));
+    registry.register(std::sync::Arc::new(GrepFiles::new(workspace.clone())));
+    registry.register(std::sync::Arc::new(ListDirectory::new(workspace.clone())));
+    registry.register(std::sync::Arc::new(SearchFiles::new(workspace.clone())));
+    registry.register(std::sync::Arc::new(ExecuteCommand::new(workspace.clone())));
+
+    registry
 }
 
 fn print_help() {
@@ -181,47 +436,31 @@ fn print_help() {
         style("search <pattern>").green()
     );
     println!("  {}        - Show available tools", style("tools").green());
+    println!("  {}        - Clear conversation history", style("clear").green());
     println!("  {}         - Show this help", style("help").green());
     println!("  {}         - Exit the program", style("exit").green());
     println!();
+    println!("{}", style("Slash Commands:").bold());
+    println!("  {}      - Create a git commit", style("/commit").green());
+    println!("  {}        - Push to remote", style("/push").green());
+    println!(
+        "  {}   - Create a pull request",
+        style("/pr [title]").green()
+    );
+    println!(
+        "  {}      - Review staged changes",
+        style("/review").green()
+    );
+    println!(
+        "  {}  - Clean up deleted branches",
+        style("/clean-gone").green()
+    );
+    println!("  {}        - Show slash command help", style("/help").green());
+    println!();
     println!(
         "{}",
-        style("Or just type what you want to do as a natural language task.").dim()
+        style("Or just type what you want to do - the AI will help!").dim()
     );
-}
-
-fn infer_task_type(input: &str) -> TaskType {
-    let input_lower = input.to_lowercase();
-
-    if input_lower.contains("file")
-        || input_lower.contains("read")
-        || input_lower.contains("write")
-        || input_lower.contains("create")
-        || input_lower.contains("delete")
-    {
-        TaskType::FileOperation
-    } else if input_lower.contains("run")
-        || input_lower.contains("execute")
-        || input_lower.contains("command")
-        || input_lower.contains("shell")
-    {
-        TaskType::ShellCommand
-    } else if input_lower.contains("search") || input_lower.contains("find") {
-        TaskType::Search
-    } else if input_lower.contains("build") || input_lower.contains("compile") {
-        TaskType::Build
-    } else if input_lower.contains("test") {
-        TaskType::Test
-    } else if input_lower.contains("browser")
-        || input_lower.contains("web")
-        || input_lower.contains("url")
-    {
-        TaskType::WebAutomation
-    } else if input_lower.contains("pdf") || input_lower.contains("document") {
-        TaskType::DocumentProcessing
-    } else {
-        TaskType::Custom(input.to_string())
-    }
 }
 
 async fn run_command(workspace: &PathBuf, command: &str) -> anyhow::Result<()> {
@@ -450,3 +689,25 @@ fn format_size(bytes: u64) -> String {
         format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     }
 }
+
+const SYSTEM_PROMPT: &str = r#"You are Cowork, an AI coding assistant. You help developers with software engineering tasks.
+
+You have access to these tools:
+- read_file: Read file contents
+- write_file: Write content to a file
+- glob: Search for files by pattern (e.g., "**/*.rs")
+- grep: Search file contents with regex patterns
+- list_directory: List directory contents
+- search_files: Search for files by name or content
+- execute_command: Run shell commands
+
+When the user asks you to perform a task:
+1. Think about what information you need first
+2. Use read-only tools (read_file, glob, grep, list_directory, search_files) to understand the codebase
+3. Plan your changes carefully
+4. Use write_file or execute_command to make changes
+5. Verify your changes worked
+
+Be concise and helpful. If a task is unclear, ask for clarification.
+When writing code, follow the existing style in the codebase.
+Always explain what you're doing and why."#;
