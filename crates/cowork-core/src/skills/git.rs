@@ -1,12 +1,62 @@
 //! Git-related skills for common git workflows
+//!
+//! These skills mirror Claude Code's commit-commands plugin:
+//! - /commit - Stage changes and create a commit
+//! - /commit-push-pr - Commit, push, and create a PR in one step
+//! - /push - Push commits to remote
+//! - /pr - Create a pull request
+//! - /review - Review staged changes
+//! - /clean-gone - Clean up branches deleted from remote
 
-use async_trait::async_trait;
 use std::path::PathBuf;
 use tokio::process::Command;
 
-use super::{Skill, SkillContext, SkillInfo, SkillResult};
+use super::{BoxFuture, Skill, SkillContext, SkillInfo, SkillResult};
+
+/// Helper to run git commands
+async fn run_git(workspace: &PathBuf, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(workspace)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+/// Helper to run gh (GitHub CLI) commands
+async fn run_gh(workspace: &PathBuf, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("gh")
+        .args(args)
+        .current_dir(workspace)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run gh: {}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+// =============================================================================
+// CommitSkill - /commit
+// =============================================================================
 
 /// Commit skill - stages changes and creates a commit
+///
+/// Mirrors Claude Code's /commit command:
+/// - Analyzes current git status
+/// - Reviews staged and unstaged changes
+/// - Examines recent commits to match repository style
+/// - Stages relevant files
+/// - Creates the commit with appropriate message
 pub struct CommitSkill {
     workspace: PathBuf,
 }
@@ -15,24 +65,8 @@ impl CommitSkill {
     pub fn new(workspace: PathBuf) -> Self {
         Self { workspace }
     }
-
-    async fn run_git(&self, args: &[&str]) -> Result<String, String> {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(&self.workspace)
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run git: {}", e))?;
-
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            Err(String::from_utf8_lossy(&output.stderr).to_string())
-        }
-    }
 }
 
-#[async_trait]
 impl Skill for CommitSkill {
     fn info(&self) -> SkillInfo {
         SkillInfo {
@@ -44,83 +78,202 @@ impl Skill for CommitSkill {
         }
     }
 
-    async fn execute(&self, ctx: SkillContext) -> SkillResult {
-        // Get git status
-        let status = match self.run_git(&["status", "--short"]).await {
-            Ok(s) => s,
-            Err(e) => return SkillResult::error(format!("Failed to get git status: {}", e)),
-        };
+    fn execute(&self, ctx: SkillContext) -> BoxFuture<'_, SkillResult> {
+        Box::pin(async move {
+            // Gather context like Claude Code does
+            let status = run_git(&self.workspace, &["status", "--short"]).await
+                .unwrap_or_else(|e| format!("Error: {}", e));
 
-        if status.trim().is_empty() {
-            return SkillResult::success("No changes to commit. Working tree is clean.");
-        }
+            if status.trim().is_empty() {
+                return SkillResult::success("No changes to commit. Working tree is clean.");
+            }
 
-        // Get diff for staged and unstaged changes
-        let diff = match self.run_git(&["diff", "HEAD"]).await {
-            Ok(d) => d,
-            Err(e) => return SkillResult::error(format!("Failed to get diff: {}", e)),
-        };
+            let diff = run_git(&self.workspace, &["diff", "HEAD"]).await
+                .unwrap_or_else(|e| format!("Error: {}", e));
 
-        // Get recent commits for style reference
-        let recent_commits = self.run_git(&["log", "--oneline", "-5"]).await.unwrap_or_default();
+            let branch = run_git(&self.workspace, &["branch", "--show-current"]).await
+                .unwrap_or_else(|_| "unknown".to_string());
 
-        // Build response with context for LLM to generate commit message
-        let response = format!(
-            r#"I'll help you create a git commit. Here's the current state:
+            let recent_commits = run_git(&self.workspace, &["log", "--oneline", "-10"]).await
+                .unwrap_or_default();
 
-## Git Status
+            // Build the prompt following Claude Code's format
+            let prompt = format!(
+                r#"Create a single git commit for the changes below.
+
+## Context
+
+**Allowed tools:** git add, git status, git commit
+
+**Current branch:** {}
+
+**Git status:**
 ```
 {}
 ```
 
-## Changes (diff)
+**Changes (diff):**
 ```diff
 {}
 ```
 
-## Recent Commits (for style reference)
+**Recent commits (for style reference):**
 ```
 {}
 ```
 
 {}
 
-Based on these changes, I'll:
-1. Stage all modified files (git add -A)
-2. Generate an appropriate commit message
-3. Create the commit
+## Task
 
-Please confirm or provide additional context for the commit message."#,
-            status.trim(),
-            if diff.len() > 5000 { &diff[..5000] } else { &diff },
-            recent_commits.trim(),
-            if !ctx.args.is_empty() {
-                format!("User hint: {}", ctx.args)
-            } else {
-                String::new()
-            }
-        );
+Based on these changes:
+1. Stage all relevant files (git add -A or git add specific files)
+2. Create a commit with an appropriate message following conventional commit format
 
-        SkillResult::success(response)
-            .with_data(serde_json::json!({
-                "status": status.trim(),
-                "has_changes": true,
-                "suggested_actions": ["stage_all", "commit"]
-            }))
+Commit message format:
+- type(scope): description
+- Types: feat, fix, docs, style, refactor, test, chore
+- Keep the first line under 72 characters
+- Match the style of recent commits in this repository
+
+Do not commit files that might contain secrets (.env, credentials.json, etc.).
+
+Execute the git commands now. Only output tool calls, no explanatory text."#,
+                branch.trim(),
+                status.trim(),
+                truncate_diff(&diff, 8000),
+                recent_commits.trim(),
+                if !ctx.args.is_empty() {
+                    format!("**User hint:** {}", ctx.args)
+                } else {
+                    String::new()
+                }
+            );
+
+            SkillResult::success(prompt)
+                .with_data(serde_json::json!({
+                    "status": status.trim(),
+                    "branch": branch.trim(),
+                    "has_changes": true
+                }))
+        })
     }
 
     fn prompt_template(&self) -> &str {
-        r#"You are helping the user create a git commit. Analyze the changes and:
-1. Summarize what changed
-2. Suggest a commit message following conventional commit format
-3. Ask for confirmation before committing
+        "Create a git commit based on the context provided."
+    }
 
-Format commit messages as:
-- type(scope): description
-- Types: feat, fix, docs, style, refactor, test, chore
-- Keep the first line under 72 characters"#
+    fn allowed_tools(&self) -> Option<Vec<&str>> {
+        Some(vec!["execute_command"])
     }
 }
+
+// =============================================================================
+// CommitPushPrSkill - /commit-push-pr
+// =============================================================================
+
+/// Commit, push, and create PR in one step
+///
+/// Mirrors Claude Code's /commit-push-pr command:
+/// - Creates new branch if on main
+/// - Stages and commits changes
+/// - Pushes branch to origin
+/// - Creates PR using gh pr create
+pub struct CommitPushPrSkill {
+    workspace: PathBuf,
+}
+
+impl CommitPushPrSkill {
+    pub fn new(workspace: PathBuf) -> Self {
+        Self { workspace }
+    }
+}
+
+impl Skill for CommitPushPrSkill {
+    fn info(&self) -> SkillInfo {
+        SkillInfo {
+            name: "commit-push-pr".to_string(),
+            display_name: "Commit, Push & PR".to_string(),
+            description: "Commit changes, push to remote, and create a pull request".to_string(),
+            usage: "/commit-push-pr".to_string(),
+            user_invocable: true,
+        }
+    }
+
+    fn execute(&self, _ctx: SkillContext) -> BoxFuture<'_, SkillResult> {
+        Box::pin(async move {
+            // Gather context
+            let status = run_git(&self.workspace, &["status", "--short"]).await
+                .unwrap_or_else(|e| format!("Error: {}", e));
+
+            let diff = run_git(&self.workspace, &["diff", "HEAD"]).await
+                .unwrap_or_else(|e| format!("Error: {}", e));
+
+            let branch = run_git(&self.workspace, &["branch", "--show-current"]).await
+                .unwrap_or_else(|_| "unknown".to_string());
+
+            let prompt = format!(
+                r#"Complete the following git workflow in a single response.
+
+## Context
+
+**Allowed tools:** git (branch, add, status, commit, push), gh pr create
+
+**Current branch:** {}
+
+**Git status:**
+```
+{}
+```
+
+**Changes (diff):**
+```diff
+{}
+```
+
+## Task (execute ALL steps in one response)
+
+1. **Branch Management**: If on main/master, create a new feature branch
+2. **Commit**: Stage all changes and create a commit with appropriate message
+3. **Push**: Push the branch to origin with -u flag
+4. **Pull Request**: Create PR using `gh pr create` with:
+   - Descriptive title
+   - Body with summary and test plan
+
+PR body format:
+```
+## Summary
+<1-3 bullet points>
+
+## Test plan
+- [ ] Test item 1
+- [ ] Test item 2
+
+🤖 Generated with Cowork
+```
+
+Execute all commands now. Only output tool calls, no explanatory text."#,
+                branch.trim(),
+                status.trim(),
+                truncate_diff(&diff, 5000),
+            );
+
+            SkillResult::success(prompt)
+        })
+    }
+
+    fn prompt_template(&self) -> &str {
+        "Commit, push, and create a pull request."
+    }
+
+    fn allowed_tools(&self) -> Option<Vec<&str>> {
+        Some(vec!["execute_command"])
+    }
+}
+
+// =============================================================================
+// PushSkill - /push
+// =============================================================================
 
 /// Push skill - pushes commits to remote
 pub struct PushSkill {
@@ -131,24 +284,8 @@ impl PushSkill {
     pub fn new(workspace: PathBuf) -> Self {
         Self { workspace }
     }
-
-    async fn run_git(&self, args: &[&str]) -> Result<String, String> {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(&self.workspace)
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run git: {}", e))?;
-
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            Err(String::from_utf8_lossy(&output.stderr).to_string())
-        }
-    }
 }
 
-#[async_trait]
 impl Skill for PushSkill {
     fn info(&self) -> SkillInfo {
         SkillInfo {
@@ -160,54 +297,66 @@ impl Skill for PushSkill {
         }
     }
 
-    async fn execute(&self, ctx: SkillContext) -> SkillResult {
-        // Get current branch
-        let branch = match self.run_git(&["branch", "--show-current"]).await {
-            Ok(b) => b.trim().to_string(),
-            Err(e) => return SkillResult::error(format!("Failed to get current branch: {}", e)),
-        };
+    fn execute(&self, ctx: SkillContext) -> BoxFuture<'_, SkillResult> {
+        Box::pin(async move {
+            let branch = run_git(&self.workspace, &["branch", "--show-current"]).await
+                .unwrap_or_else(|_| "unknown".to_string());
 
-        // Check if there are commits to push
-        let status = match self.run_git(&["status", "-sb"]).await {
-            Ok(s) => s,
-            Err(e) => return SkillResult::error(format!("Failed to get status: {}", e)),
-        };
+            let status = run_git(&self.workspace, &["status", "-sb"]).await
+                .unwrap_or_else(|e| format!("Error: {}", e));
 
-        // Parse remote and branch from args
-        let parts: Vec<&str> = ctx.args.split_whitespace().collect();
-        let remote = parts.get(0).unwrap_or(&"origin");
-        let target_branch = parts.get(1).map(|s| s.to_string()).unwrap_or(branch.clone());
+            // Parse remote and branch from args
+            let parts: Vec<&str> = ctx.args.split_whitespace().collect();
+            let remote = parts.first().unwrap_or(&"origin");
+            let target_branch = parts.get(1).map(|s| s.to_string()).unwrap_or_else(|| branch.trim().to_string());
 
-        let response = format!(
-            r#"Ready to push to remote.
+            let prompt = format!(
+                r#"Push commits to remote repository.
 
-Current branch: {}
-Target: {}/{}
+## Context
 
-Status:
+**Current branch:** {}
+**Target:** {}/{}
+
+**Status:**
 ```
 {}
 ```
 
-I'll run: git push {} {}
+## Task
 
-Please confirm to proceed."#,
-            branch, remote, target_branch, status.trim(), remote, target_branch
-        );
+Run: `git push {} {}`
 
-        SkillResult::success(response)
-            .with_data(serde_json::json!({
-                "branch": branch,
-                "remote": remote,
-                "target_branch": target_branch,
-                "command": format!("git push {} {}", remote, target_branch)
-            }))
+If the branch doesn't have an upstream, use: `git push -u {} {}`
+
+Execute the push command now."#,
+                branch.trim(), remote, target_branch,
+                status.trim(),
+                remote, target_branch,
+                remote, target_branch
+            );
+
+            SkillResult::success(prompt)
+                .with_data(serde_json::json!({
+                    "branch": branch.trim(),
+                    "remote": remote,
+                    "target_branch": target_branch
+                }))
+        })
     }
 
     fn prompt_template(&self) -> &str {
-        "You are helping the user push commits to a remote repository. Confirm the target and execute the push."
+        "Push commits to remote repository."
+    }
+
+    fn allowed_tools(&self) -> Option<Vec<&str>> {
+        Some(vec!["execute_command"])
     }
 }
+
+// =============================================================================
+// PullRequestSkill - /pr
+// =============================================================================
 
 /// Pull Request skill - creates a PR
 pub struct PullRequestSkill {
@@ -218,39 +367,8 @@ impl PullRequestSkill {
     pub fn new(workspace: PathBuf) -> Self {
         Self { workspace }
     }
-
-    async fn run_git(&self, args: &[&str]) -> Result<String, String> {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(&self.workspace)
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run git: {}", e))?;
-
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            Err(String::from_utf8_lossy(&output.stderr).to_string())
-        }
-    }
-
-    async fn run_gh(&self, args: &[&str]) -> Result<String, String> {
-        let output = Command::new("gh")
-            .args(args)
-            .current_dir(&self.workspace)
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run gh: {}", e))?;
-
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            Err(String::from_utf8_lossy(&output.stderr).to_string())
-        }
-    }
 }
 
-#[async_trait]
 impl Skill for PullRequestSkill {
     fn info(&self) -> SkillInfo {
         SkillInfo {
@@ -262,91 +380,102 @@ impl Skill for PullRequestSkill {
         }
     }
 
-    async fn execute(&self, ctx: SkillContext) -> SkillResult {
-        // Get current branch
-        let branch = match self.run_git(&["branch", "--show-current"]).await {
-            Ok(b) => b.trim().to_string(),
-            Err(e) => return SkillResult::error(format!("Failed to get current branch: {}", e)),
-        };
+    fn execute(&self, ctx: SkillContext) -> BoxFuture<'_, SkillResult> {
+        Box::pin(async move {
+            let branch = run_git(&self.workspace, &["branch", "--show-current"]).await
+                .unwrap_or_else(|_| "unknown".to_string());
 
-        // Get main branch (try main, then master)
-        let main_branch = if self.run_git(&["rev-parse", "--verify", "main"]).await.is_ok() {
-            "main"
-        } else {
-            "master"
-        };
+            // Determine base branch
+            let main_branch = if run_git(&self.workspace, &["rev-parse", "--verify", "main"]).await.is_ok() {
+                "main"
+            } else {
+                "master"
+            };
 
-        // Get commits in this branch
-        let commits = match self.run_git(&["log", &format!("{}..HEAD", main_branch), "--oneline"]).await {
-            Ok(c) => c,
-            Err(_) => "Unable to get commit log".to_string(),
-        };
+            let commits = run_git(&self.workspace, &["log", &format!("{}..HEAD", main_branch), "--oneline"]).await
+                .unwrap_or_else(|_| "Unable to get commits".to_string());
 
-        // Get diff summary
-        let diff_stat = match self.run_git(&["diff", "--stat", main_branch]).await {
-            Ok(d) => d,
-            Err(_) => "Unable to get diff stats".to_string(),
-        };
+            let diff_stat = run_git(&self.workspace, &["diff", "--stat", main_branch]).await
+                .unwrap_or_else(|_| "Unable to get diff".to_string());
 
-        let title = if ctx.args.is_empty() {
-            // Generate title from branch name
-            branch
-                .replace('-', " ")
-                .replace('_', " ")
-                .split('/')
-                .last()
-                .unwrap_or(&branch)
-                .to_string()
-        } else {
-            ctx.args.clone()
-        };
+            let title = if ctx.args.is_empty() {
+                branch.trim()
+                    .replace('-', " ")
+                    .replace('_', " ")
+                    .split('/')
+                    .last()
+                    .unwrap_or(branch.trim())
+                    .to_string()
+            } else {
+                ctx.args.clone()
+            };
 
-        let response = format!(
-            r#"I'll help you create a pull request.
+            let prompt = format!(
+                r#"Create a pull request.
 
-## Branch Info
-- Current branch: {}
-- Base branch: {}
+## Context
 
-## Commits in this PR
+**Current branch:** {}
+**Base branch:** {}
+
+**Commits in this PR:**
 ```
 {}
 ```
 
-## Changes Summary
+**Changes summary:**
 ```
 {}
 ```
 
-## Suggested PR Title
-{}
+**Suggested title:** {}
 
-I'll create the PR with:
+## Task
+
+Create a PR using `gh pr create` with:
 - Title: "{}"
 - Base: {}
+- Body with summary (1-3 bullets) and test plan
 
-I'll generate a description based on the commits and changes. Please confirm or provide additional context."#,
-            branch, main_branch, commits.trim(), diff_stat.trim(), title, title, main_branch
-        );
+Body format:
+```
+## Summary
+<bullet points summarizing the changes>
 
-        SkillResult::success(response)
-            .with_data(serde_json::json!({
-                "branch": branch,
-                "base": main_branch,
-                "title": title,
-                "commits": commits.lines().count()
-            }))
+## Test plan
+- [ ] Test instructions
+
+🤖 Generated with Cowork
+```
+
+Execute the gh command now."#,
+                branch.trim(), main_branch,
+                commits.trim(),
+                diff_stat.trim(),
+                title, title, main_branch
+            );
+
+            SkillResult::success(prompt)
+                .with_data(serde_json::json!({
+                    "branch": branch.trim(),
+                    "base": main_branch,
+                    "title": title
+                }))
+        })
     }
 
     fn prompt_template(&self) -> &str {
-        r#"You are helping the user create a pull request. Generate:
-1. A concise title (if not provided)
-2. A description with:
-   - Summary of changes (1-3 bullet points)
-   - Test plan
-3. Use the gh CLI to create the PR"#
+        "Create a pull request with auto-generated description."
+    }
+
+    fn allowed_tools(&self) -> Option<Vec<&str>> {
+        Some(vec!["execute_command"])
     }
 }
+
+// =============================================================================
+// ReviewSkill - /review
+// =============================================================================
 
 /// Review skill - reviews staged changes
 pub struct ReviewSkill {
@@ -357,24 +486,8 @@ impl ReviewSkill {
     pub fn new(workspace: PathBuf) -> Self {
         Self { workspace }
     }
-
-    async fn run_git(&self, args: &[&str]) -> Result<String, String> {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(&self.workspace)
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run git: {}", e))?;
-
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            Err(String::from_utf8_lossy(&output.stderr).to_string())
-        }
-    }
 }
 
-#[async_trait]
 impl Skill for ReviewSkill {
     fn info(&self) -> SkillInfo {
         SkillInfo {
@@ -386,54 +499,341 @@ impl Skill for ReviewSkill {
         }
     }
 
-    async fn execute(&self, _ctx: SkillContext) -> SkillResult {
-        // Get staged diff
-        let staged_diff = match self.run_git(&["diff", "--cached"]).await {
-            Ok(d) if !d.trim().is_empty() => d,
-            Ok(_) => {
-                // No staged changes, try unstaged
-                match self.run_git(&["diff"]).await {
+    fn execute(&self, _ctx: SkillContext) -> BoxFuture<'_, SkillResult> {
+        Box::pin(async move {
+            // Get staged diff first, fall back to unstaged
+            let diff = match run_git(&self.workspace, &["diff", "--cached"]).await {
+                Ok(d) if !d.trim().is_empty() => d,
+                _ => match run_git(&self.workspace, &["diff"]).await {
                     Ok(d) if !d.trim().is_empty() => d,
                     _ => return SkillResult::success("No changes to review. Stage some changes first with `git add`."),
                 }
-            }
-            Err(e) => return SkillResult::error(format!("Failed to get diff: {}", e)),
-        };
+            };
 
-        let response = format!(
-            r#"I'll review the following changes:
+            let prompt = format!(
+                r#"Review the following code changes.
+
+## Changes to Review
 
 ```diff
 {}
 ```
 
 ## Review Checklist
-I'll check for:
-- [ ] Code correctness and logic errors
-- [ ] Security issues (injection, secrets, etc.)
-- [ ] Performance concerns
-- [ ] Code style and best practices
-- [ ] Missing error handling
-- [ ] Test coverage considerations
 
-Analyzing..."#,
-            if staged_diff.len() > 10000 {
-                format!("{}...\n[truncated - {} more characters]", &staged_diff[..10000], staged_diff.len() - 10000)
-            } else {
-                staged_diff
-            }
-        );
+Analyze the changes for:
+1. **Correctness** - Logic errors, bugs, edge cases
+2. **Security** - Injection vulnerabilities, secrets exposure, OWASP issues
+3. **Performance** - Inefficient algorithms, N+1 queries, memory leaks
+4. **Code quality** - Readability, naming, duplication
+5. **Error handling** - Missing error cases, poor error messages
+6. **Tests** - Missing test coverage, test quality
 
-        SkillResult::success(response)
+## Task
+
+Provide a code review with:
+1. Summary of changes (what the code does)
+2. Issues found (if any) with severity and line numbers
+3. Suggestions for improvement
+4. Overall verdict: ✅ Approve, ⚠️ Request changes, or 💬 Comment
+
+Focus on HIGH-SIGNAL issues only - bugs, security problems, clear violations.
+Skip minor style preferences."#,
+                truncate_diff(&diff, 10000)
+            );
+
+            SkillResult::success(prompt)
+        })
     }
 
     fn prompt_template(&self) -> &str {
-        r#"You are a code reviewer. Analyze the diff and provide:
-1. Summary of changes
-2. Issues found (bugs, security, performance)
-3. Suggestions for improvement
-4. Overall assessment (approve, request changes, or comment)
+        "Review code changes and provide feedback."
+    }
+}
 
-Be specific and reference line numbers when possible."#
+// =============================================================================
+// CleanGoneSkill - /clean-gone
+// =============================================================================
+
+/// Clean up local branches that have been deleted from remote
+///
+/// Mirrors Claude Code's /clean_gone command:
+/// - Lists branches to identify [gone] status
+/// - Removes worktrees associated with gone branches
+/// - Deletes stale local branches
+pub struct CleanGoneSkill {
+    workspace: PathBuf,
+}
+
+impl CleanGoneSkill {
+    pub fn new(workspace: PathBuf) -> Self {
+        Self { workspace }
+    }
+}
+
+impl Skill for CleanGoneSkill {
+    fn info(&self) -> SkillInfo {
+        SkillInfo {
+            name: "clean-gone".to_string(),
+            display_name: "Clean Gone Branches".to_string(),
+            description: "Clean up local branches that have been deleted from remote".to_string(),
+            usage: "/clean-gone".to_string(),
+            user_invocable: true,
+        }
+    }
+
+    fn execute(&self, _ctx: SkillContext) -> BoxFuture<'_, SkillResult> {
+        Box::pin(async move {
+            // First fetch and prune to update tracking info
+            let _ = run_git(&self.workspace, &["fetch", "--prune"]).await;
+
+            // Get list of branches with their tracking status
+            let branches = run_git(&self.workspace, &["branch", "-vv"]).await
+                .unwrap_or_else(|e| format!("Error: {}", e));
+
+            let prompt = format!(
+                r#"Clean up local branches that have been deleted from remote.
+
+## Context
+
+**Branch status:**
+```
+{}
+```
+
+## Task
+
+1. Identify branches marked as `[gone]` (deleted from remote)
+2. For each gone branch:
+   - Check if it has an associated worktree
+   - Remove the worktree if present: `git worktree remove <path>`
+   - Delete the branch: `git branch -D <branch-name>`
+3. Report what was cleaned up
+
+**Safety rules:**
+- Never delete main/master branches
+- Skip the currently checked out branch
+- Only delete branches with `[gone]` tracking status
+
+If no branches need cleanup, report that the repository is clean.
+
+Execute the cleanup now."#,
+                branches.trim()
+            );
+
+            SkillResult::success(prompt)
+        })
+    }
+
+    fn prompt_template(&self) -> &str {
+        "Clean up branches deleted from remote."
+    }
+
+    fn allowed_tools(&self) -> Option<Vec<&str>> {
+        Some(vec!["execute_command"])
+    }
+}
+
+// =============================================================================
+// Helper functions
+// =============================================================================
+
+/// Truncate diff to max length, preserving meaningful content
+fn truncate_diff(diff: &str, max_len: usize) -> String {
+    if diff.len() <= max_len {
+        diff.to_string()
+    } else {
+        format!(
+            "{}...\n\n[truncated - {} more characters]",
+            &diff[..max_len],
+            diff.len() - max_len
+        )
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use tempfile::TempDir;
+
+    fn setup_git_repo() -> TempDir {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Initialize git repo
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output()
+            .expect("Failed to init git");
+
+        // Configure git user for commits
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(dir.path())
+            .output()
+            .expect("Failed to config email");
+
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(dir.path())
+            .output()
+            .expect("Failed to config name");
+
+        // Create initial commit
+        std::fs::write(dir.path().join("README.md"), "# Test\n").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .expect("Failed to add");
+        std::process::Command::new("git")
+            .args(["commit", "-m", "Initial commit"])
+            .current_dir(dir.path())
+            .output()
+            .expect("Failed to commit");
+
+        dir
+    }
+
+    #[tokio::test]
+    async fn test_commit_skill_no_changes() {
+        let dir = setup_git_repo();
+        let skill = CommitSkill::new(dir.path().to_path_buf());
+
+        let ctx = SkillContext {
+            workspace: dir.path().to_path_buf(),
+            args: String::new(),
+            data: HashMap::new(),
+        };
+
+        let result = skill.execute(ctx).await;
+        assert!(result.success);
+        assert!(result.response.contains("clean"));
+    }
+
+    #[tokio::test]
+    async fn test_commit_skill_with_changes() {
+        let dir = setup_git_repo();
+
+        // Create a change
+        std::fs::write(dir.path().join("new_file.txt"), "Hello\n").unwrap();
+
+        let skill = CommitSkill::new(dir.path().to_path_buf());
+        let ctx = SkillContext {
+            workspace: dir.path().to_path_buf(),
+            args: String::new(),
+            data: HashMap::new(),
+        };
+
+        let result = skill.execute(ctx).await;
+        assert!(result.success);
+        assert!(result.response.contains("git add"));
+        assert!(result.response.contains("new_file.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_review_skill_no_changes() {
+        let dir = setup_git_repo();
+        let skill = ReviewSkill::new(dir.path().to_path_buf());
+
+        let ctx = SkillContext {
+            workspace: dir.path().to_path_buf(),
+            args: String::new(),
+            data: HashMap::new(),
+        };
+
+        let result = skill.execute(ctx).await;
+        assert!(result.success);
+        assert!(result.response.contains("No changes to review"));
+    }
+
+    #[tokio::test]
+    async fn test_review_skill_with_changes() {
+        let dir = setup_git_repo();
+
+        // Modify an existing tracked file (README.md was created in setup)
+        std::fs::write(dir.path().join("README.md"), "# Test\n\nModified content.\n").unwrap();
+
+        let skill = ReviewSkill::new(dir.path().to_path_buf());
+        let ctx = SkillContext {
+            workspace: dir.path().to_path_buf(),
+            args: String::new(),
+            data: HashMap::new(),
+        };
+
+        let result = skill.execute(ctx).await;
+        assert!(result.success);
+        assert!(result.response.contains("Review"));
+        assert!(result.response.contains("README"));
+    }
+
+    #[tokio::test]
+    async fn test_push_skill() {
+        let dir = setup_git_repo();
+        let skill = PushSkill::new(dir.path().to_path_buf());
+
+        let ctx = SkillContext {
+            workspace: dir.path().to_path_buf(),
+            args: String::new(),
+            data: HashMap::new(),
+        };
+
+        let result = skill.execute(ctx).await;
+        assert!(result.success);
+        assert!(result.response.contains("git push"));
+    }
+
+    #[tokio::test]
+    async fn test_clean_gone_skill() {
+        let dir = setup_git_repo();
+        let skill = CleanGoneSkill::new(dir.path().to_path_buf());
+
+        let ctx = SkillContext {
+            workspace: dir.path().to_path_buf(),
+            args: String::new(),
+            data: HashMap::new(),
+        };
+
+        let result = skill.execute(ctx).await;
+        assert!(result.success);
+        assert!(result.response.contains("gone"));
+    }
+
+    #[test]
+    fn test_skill_info() {
+        let dir = TempDir::new().unwrap();
+
+        let commit = CommitSkill::new(dir.path().to_path_buf());
+        assert_eq!(commit.info().name, "commit");
+        assert!(commit.info().user_invocable);
+
+        let push = PushSkill::new(dir.path().to_path_buf());
+        assert_eq!(push.info().name, "push");
+
+        let pr = PullRequestSkill::new(dir.path().to_path_buf());
+        assert_eq!(pr.info().name, "pr");
+
+        let review = ReviewSkill::new(dir.path().to_path_buf());
+        assert_eq!(review.info().name, "review");
+
+        let clean = CleanGoneSkill::new(dir.path().to_path_buf());
+        assert_eq!(clean.info().name, "clean-gone");
+    }
+
+    #[test]
+    fn test_allowed_tools() {
+        let dir = TempDir::new().unwrap();
+
+        let commit = CommitSkill::new(dir.path().to_path_buf());
+        assert!(commit.allowed_tools().is_some());
+        assert!(commit.allowed_tools().unwrap().contains(&"execute_command"));
+
+        let review = ReviewSkill::new(dir.path().to_path_buf());
+        assert!(review.allowed_tools().is_none()); // Review doesn't need to execute commands
     }
 }

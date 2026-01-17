@@ -2,13 +2,20 @@
 //!
 //! Skills are predefined workflows triggered by slash commands like /commit, /pr, /review.
 //! Each skill has a prompt template and may use specific tools.
+//!
+//! This system is inspired by Claude Code's plugin/command system where skills are
+//! essentially prompt templates that get expanded with context and sent to the LLM.
 
 pub mod git;
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+
+/// Type alias for boxed futures (for object-safe async trait methods)
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Information about a skill
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,16 +82,20 @@ pub struct SkillContext {
 }
 
 /// Trait for implementing skills
-#[async_trait]
 pub trait Skill: Send + Sync {
     /// Get skill information
     fn info(&self) -> SkillInfo;
 
-    /// Execute the skill
-    async fn execute(&self, ctx: SkillContext) -> SkillResult;
+    /// Execute the skill - gathers context and returns a prompt for the LLM
+    fn execute(&self, ctx: SkillContext) -> BoxFuture<'_, SkillResult>;
 
-    /// Get the prompt template for this skill
+    /// Get the prompt template for this skill (instructions for the LLM)
     fn prompt_template(&self) -> &str;
+
+    /// Get the list of allowed tools for this skill (None = all tools allowed)
+    fn allowed_tools(&self) -> Option<Vec<&str>> {
+        None
+    }
 }
 
 /// Registry of available skills
@@ -102,11 +113,13 @@ impl SkillRegistry {
     pub fn with_builtins(workspace: std::path::PathBuf) -> Self {
         let mut registry = Self::new();
 
-        // Register git skills
+        // Register git skills (mirroring Claude Code's commit-commands plugin)
         registry.register(Arc::new(git::CommitSkill::new(workspace.clone())));
+        registry.register(Arc::new(git::CommitPushPrSkill::new(workspace.clone())));
         registry.register(Arc::new(git::PushSkill::new(workspace.clone())));
         registry.register(Arc::new(git::PullRequestSkill::new(workspace.clone())));
         registry.register(Arc::new(git::ReviewSkill::new(workspace.clone())));
+        registry.register(Arc::new(git::CleanGoneSkill::new(workspace)));
 
         // Register help skill
         registry.register(Arc::new(HelpSkill::new()));
@@ -178,7 +191,6 @@ impl HelpSkill {
     }
 }
 
-#[async_trait]
 impl Skill for HelpSkill {
     fn info(&self) -> SkillInfo {
         SkillInfo {
@@ -190,15 +202,18 @@ impl Skill for HelpSkill {
         }
     }
 
-    async fn execute(&self, _ctx: SkillContext) -> SkillResult {
-        let help_text = r#"
+    fn execute(&self, _ctx: SkillContext) -> BoxFuture<'_, SkillResult> {
+        Box::pin(async move {
+            let help_text = r#"
 Available Commands:
 
-/commit         - Stage changes and create a git commit with a generated message
-/push           - Push commits to the remote repository
-/pr [title]     - Create a pull request with auto-generated description
-/review         - Review staged changes and provide feedback
-/help           - Show this help message
+/commit           - Stage changes and create a git commit with a generated message
+/commit-push-pr   - Commit, push, and create a pull request in one step
+/push             - Push commits to the remote repository
+/pr [title]       - Create a pull request with auto-generated description
+/review           - Review staged changes and provide feedback
+/clean-gone       - Clean up local branches deleted from remote
+/help             - Show this help message
 
 Keyboard Shortcuts:
 
@@ -212,7 +227,8 @@ Tips:
 - Example: "/commit and then push to remote"
 "#;
 
-        SkillResult::success(help_text.trim())
+            SkillResult::success(help_text.trim())
+        })
     }
 
     fn prompt_template(&self) -> &str {
