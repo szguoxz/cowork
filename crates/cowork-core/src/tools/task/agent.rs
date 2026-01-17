@@ -3,7 +3,7 @@
 //! This tool allows spawning specialized subagents that can work autonomously
 //! on complex, multi-step tasks.
 
-use async_trait::async_trait;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 /// Agent types available for task execution
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -150,7 +150,7 @@ impl TaskTool {
     }
 }
 
-#[async_trait]
+
 impl Tool for TaskTool {
     fn name(&self) -> &str {
         "task"
@@ -204,7 +204,8 @@ impl Tool for TaskTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
         let description = params["description"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidParams("description is required".into()))?;
@@ -292,6 +293,7 @@ impl Tool for TaskTool {
                 "result": result
             })))
         }
+            })
     }
 
     fn approval_level(&self) -> ApprovalLevel {
@@ -340,7 +342,7 @@ impl TaskOutputTool {
     }
 }
 
-#[async_trait]
+
 impl Tool for TaskOutputTool {
     fn name(&self) -> &str {
         "task_output"
@@ -374,7 +376,8 @@ impl Tool for TaskOutputTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
         let task_id = params["task_id"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidParams("task_id is required".into()))?;
@@ -434,6 +437,7 @@ impl Tool for TaskOutputTool {
                 )))
             }
         }
+            })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

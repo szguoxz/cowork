@@ -2,7 +2,7 @@
 //!
 //! Allows getting and setting configuration values at runtime.
 
-use async_trait::async_trait;
+
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 use crate::approval::ApprovalLevel;
 use crate::config::ConfigManager;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 /// Tool for managing configuration
 pub struct ConfigTool {
@@ -23,7 +23,7 @@ impl ConfigTool {
     }
 }
 
-#[async_trait]
+
 impl Tool for ConfigTool {
     fn name(&self) -> &str {
         "config"
@@ -55,7 +55,8 @@ impl Tool for ConfigTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
         let setting = params["setting"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidParams("setting is required".into()))?;
@@ -95,6 +96,7 @@ impl Tool for ConfigTool {
             }
             Err(e) => Err(ToolError::InvalidParams(e)),
         }
+            })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

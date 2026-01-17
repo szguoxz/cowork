@@ -2,7 +2,7 @@
 //!
 //! Allows the agent to ask the user clarifying questions with multiple-choice options.
 
-use async_trait::async_trait;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 /// A single question option
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,7 +119,7 @@ impl Default for AskUserQuestion {
     }
 }
 
-#[async_trait]
+
 impl Tool for AskUserQuestion {
     fn name(&self) -> &str {
         "ask_user_question"
@@ -203,7 +203,8 @@ impl Tool for AskUserQuestion {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
         // Check if answers are already provided (from UI callback)
         if let Some(answers) = params.get("answers") {
             if answers.is_object() && !answers.as_object().unwrap().is_empty() {
@@ -276,6 +277,7 @@ impl Tool for AskUserQuestion {
                 "message": "Waiting for user response"
             })))
         }
+            })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

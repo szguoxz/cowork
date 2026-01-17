@@ -1,12 +1,12 @@
 //! LSP (Language Server Protocol) tools for code intelligence
 
-use async_trait::async_trait;
+
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 /// LSP operations supported by the tool
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +52,7 @@ impl LspTool {
     }
 }
 
-#[async_trait]
+
 impl Tool for LspTool {
     fn name(&self) -> &str {
         "lsp"
@@ -109,7 +109,8 @@ impl Tool for LspTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
         let operation_str = params["operation"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidParams("operation is required".into()))?;
@@ -207,6 +208,7 @@ impl Tool for LspTool {
 
         Ok(ToolOutput::success(result)
             .with_metadata("note", "LSP integration requires language server setup"))
+            })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

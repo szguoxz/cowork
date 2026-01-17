@@ -2,7 +2,6 @@
 //!
 //! Supports full regex syntax, file filtering, context lines, and multiple output modes.
 
-use async_trait::async_trait;
 use regex::{Regex, RegexBuilder};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -11,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 /// File type mappings (similar to ripgrep --type)
 fn get_type_extensions(type_name: &str) -> Option<Vec<&'static str>> {
@@ -65,7 +64,6 @@ struct GrepMatch {
     context_after: Vec<(usize, String)>,
 }
 
-#[async_trait]
 impl Tool for GrepFiles {
     fn name(&self) -> &str {
         "grep"
@@ -150,186 +148,188 @@ impl Tool for GrepFiles {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
-        let pattern_str = params["pattern"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidParams("pattern is required".into()))?;
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let pattern_str = params["pattern"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidParams("pattern is required".into()))?;
 
-        // Parse options
-        let case_insensitive = params["-i"].as_bool().unwrap_or(false);
-        let multiline = params["multiline"].as_bool().unwrap_or(false);
-        let show_line_numbers = params["-n"].as_bool().unwrap_or(true);
+            // Parse options
+            let case_insensitive = params["-i"].as_bool().unwrap_or(false);
+            let multiline = params["multiline"].as_bool().unwrap_or(false);
+            let show_line_numbers = params["-n"].as_bool().unwrap_or(true);
 
-        // Build regex
-        let regex = RegexBuilder::new(pattern_str)
-            .case_insensitive(case_insensitive)
-            .multi_line(multiline)
-            .dot_matches_new_line(multiline)
-            .build()
-            .map_err(|e| ToolError::InvalidParams(format!("Invalid regex: {}", e)))?;
+            // Build regex
+            let regex = RegexBuilder::new(pattern_str)
+                .case_insensitive(case_insensitive)
+                .multi_line(multiline)
+                .dot_matches_new_line(multiline)
+                .build()
+                .map_err(|e| ToolError::InvalidParams(format!("Invalid regex: {}", e)))?;
 
-        // Determine path
-        let base_path = if let Some(path) = params["path"].as_str() {
-            self.workspace.join(path)
-        } else {
-            self.workspace.clone()
-        };
+            // Determine path
+            let base_path = if let Some(path) = params["path"].as_str() {
+                self.workspace.join(path)
+            } else {
+                self.workspace.clone()
+            };
 
-        // Context lines - -C overrides -A and -B
-        let context_combined = params["-C"].as_u64().unwrap_or(0) as usize;
-        let context_before = if context_combined > 0 {
-            context_combined
-        } else {
-            params["-B"].as_u64().unwrap_or(0) as usize
-        };
-        let context_after = if context_combined > 0 {
-            context_combined
-        } else {
-            params["-A"].as_u64().unwrap_or(0) as usize
-        };
+            // Context lines - -C overrides -A and -B
+            let context_combined = params["-C"].as_u64().unwrap_or(0) as usize;
+            let context_before = if context_combined > 0 {
+                context_combined
+            } else {
+                params["-B"].as_u64().unwrap_or(0) as usize
+            };
+            let context_after = if context_combined > 0 {
+                context_combined
+            } else {
+                params["-A"].as_u64().unwrap_or(0) as usize
+            };
 
-        let output_mode = params["output_mode"]
-            .as_str()
-            .unwrap_or("files_with_matches");
-        let head_limit = params["head_limit"].as_u64().unwrap_or(0) as usize;
-        let offset = params["offset"].as_u64().unwrap_or(0) as usize;
+            let output_mode = params["output_mode"]
+                .as_str()
+                .unwrap_or("files_with_matches");
+            let head_limit = params["head_limit"].as_u64().unwrap_or(0) as usize;
+            let offset = params["offset"].as_u64().unwrap_or(0) as usize;
 
-        // Get files to search
-        let files = self.get_files_to_search(&base_path, &params).await?;
+            // Get files to search
+            let files = self.get_files_to_search(&base_path, &params).await?;
 
-        // Process based on output mode
-        match output_mode {
-            "files_with_matches" => {
-                let mut matching_files = Vec::new();
+            // Process based on output mode
+            match output_mode {
+                "files_with_matches" => {
+                    let mut matching_files = Vec::new();
 
-                for file_path in files {
-                    if is_binary_file(&file_path).await {
-                        continue;
-                    }
-
-                    if self.file_has_match(&file_path, &regex, multiline).await {
-                        let relative = self.relative_path(&file_path);
-                        matching_files.push(relative);
-                    }
-                }
-
-                // Apply offset and limit
-                let total = matching_files.len();
-                let result: Vec<_> = matching_files
-                    .into_iter()
-                    .skip(offset)
-                    .take(if head_limit > 0 { head_limit } else { usize::MAX })
-                    .collect();
-
-                Ok(ToolOutput::success(json!({
-                    "files": result,
-                    "count": result.len(),
-                    "total_matches": total,
-                    "pattern": pattern_str
-                })))
-            }
-            "count" => {
-                let mut file_counts: Vec<(String, usize)> = Vec::new();
-                let mut total_count = 0;
-
-                for file_path in files {
-                    if is_binary_file(&file_path).await {
-                        continue;
-                    }
-
-                    let count = self.count_matches(&file_path, &regex, multiline).await;
-                    if count > 0 {
-                        let relative = self.relative_path(&file_path);
-                        file_counts.push((relative, count));
-                        total_count += count;
-                    }
-                }
-
-                // Apply offset and limit
-                let result: Vec<_> = file_counts
-                    .into_iter()
-                    .skip(offset)
-                    .take(if head_limit > 0 { head_limit } else { usize::MAX })
-                    .map(|(f, c)| json!({ "file": f, "count": c }))
-                    .collect();
-
-                Ok(ToolOutput::success(json!({
-                    "counts": result,
-                    "total_matches": total_count,
-                    "pattern": pattern_str
-                })))
-            }
-            "content" | _ => {
-                let mut matches: Vec<GrepMatch> = Vec::new();
-
-                for file_path in files {
-                    if is_binary_file(&file_path).await {
-                        continue;
-                    }
-
-                    let file_matches = self
-                        .find_matches(&file_path, &regex, context_before, context_after, multiline)
-                        .await;
-                    matches.extend(file_matches);
-                }
-
-                // Apply offset and limit
-                let total = matches.len();
-                let matches: Vec<_> = matches
-                    .into_iter()
-                    .skip(offset)
-                    .take(if head_limit > 0 { head_limit } else { usize::MAX })
-                    .collect();
-
-                // Format output
-                let formatted: Vec<Value> = matches
-                    .iter()
-                    .map(|m| {
-                        let mut entry = json!({
-                            "file": m.file,
-                            "content": m.content,
-                        });
-
-                        if show_line_numbers {
-                            entry["line"] = json!(m.line_number);
+                    for file_path in files {
+                        if is_binary_file(&file_path).await {
+                            continue;
                         }
 
-                        if !m.context_before.is_empty() {
-                            entry["context_before"] = json!(m
-                                .context_before
-                                .iter()
-                                .map(|(n, s)| if show_line_numbers {
-                                    json!({ "line": n, "content": s })
-                                } else {
-                                    json!(s)
-                                })
-                                .collect::<Vec<_>>());
+                        if self.file_has_match(&file_path, &regex, multiline).await {
+                            let relative = self.relative_path(&file_path);
+                            matching_files.push(relative);
+                        }
+                    }
+
+                    // Apply offset and limit
+                    let total = matching_files.len();
+                    let result: Vec<_> = matching_files
+                        .into_iter()
+                        .skip(offset)
+                        .take(if head_limit > 0 { head_limit } else { usize::MAX })
+                        .collect();
+
+                    Ok(ToolOutput::success(json!({
+                        "files": result,
+                        "count": result.len(),
+                        "total_matches": total,
+                        "pattern": pattern_str
+                    })))
+                }
+                "count" => {
+                    let mut file_counts: Vec<(String, usize)> = Vec::new();
+                    let mut total_count = 0;
+
+                    for file_path in files {
+                        if is_binary_file(&file_path).await {
+                            continue;
                         }
 
-                        if !m.context_after.is_empty() {
-                            entry["context_after"] = json!(m
-                                .context_after
-                                .iter()
-                                .map(|(n, s)| if show_line_numbers {
-                                    json!({ "line": n, "content": s })
-                                } else {
-                                    json!(s)
-                                })
-                                .collect::<Vec<_>>());
+                        let count = self.count_matches(&file_path, &regex, multiline).await;
+                        if count > 0 {
+                            let relative = self.relative_path(&file_path);
+                            file_counts.push((relative, count));
+                            total_count += count;
+                        }
+                    }
+
+                    // Apply offset and limit
+                    let result: Vec<_> = file_counts
+                        .into_iter()
+                        .skip(offset)
+                        .take(if head_limit > 0 { head_limit } else { usize::MAX })
+                        .map(|(f, c)| json!({ "file": f, "count": c }))
+                        .collect();
+
+                    Ok(ToolOutput::success(json!({
+                        "counts": result,
+                        "total_matches": total_count,
+                        "pattern": pattern_str
+                    })))
+                }
+                "content" | _ => {
+                    let mut matches: Vec<GrepMatch> = Vec::new();
+
+                    for file_path in files {
+                        if is_binary_file(&file_path).await {
+                            continue;
                         }
 
-                        entry
-                    })
-                    .collect();
+                        let file_matches = self
+                            .find_matches(&file_path, &regex, context_before, context_after, multiline)
+                            .await;
+                        matches.extend(file_matches);
+                    }
 
-                Ok(ToolOutput::success(json!({
-                    "matches": formatted,
-                    "count": formatted.len(),
-                    "total_matches": total,
-                    "pattern": pattern_str
-                })))
+                    // Apply offset and limit
+                    let total = matches.len();
+                    let matches: Vec<_> = matches
+                        .into_iter()
+                        .skip(offset)
+                        .take(if head_limit > 0 { head_limit } else { usize::MAX })
+                        .collect();
+
+                    // Format output
+                    let formatted: Vec<Value> = matches
+                        .iter()
+                        .map(|m| {
+                            let mut entry = json!({
+                                "file": m.file,
+                                "content": m.content,
+                            });
+
+                            if show_line_numbers {
+                                entry["line"] = json!(m.line_number);
+                            }
+
+                            if !m.context_before.is_empty() {
+                                entry["context_before"] = json!(m
+                                    .context_before
+                                    .iter()
+                                    .map(|(n, s)| if show_line_numbers {
+                                        json!({ "line": n, "content": s })
+                                    } else {
+                                        json!(s)
+                                    })
+                                    .collect::<Vec<_>>());
+                            }
+
+                            if !m.context_after.is_empty() {
+                                entry["context_after"] = json!(m
+                                    .context_after
+                                    .iter()
+                                    .map(|(n, s)| if show_line_numbers {
+                                        json!({ "line": n, "content": s })
+                                    } else {
+                                        json!(s)
+                                    })
+                                    .collect::<Vec<_>>());
+                            }
+
+                            entry
+                        })
+                        .collect();
+
+                    Ok(ToolOutput::success(json!({
+                        "matches": formatted,
+                        "count": formatted.len(),
+                        "total_matches": total,
+                        "pattern": pattern_str
+                    })))
+                }
             }
-        }
+        })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

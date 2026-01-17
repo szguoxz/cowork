@@ -1,11 +1,11 @@
 //! WebFetch tool - fetch URLs and convert to markdown
 
-use async_trait::async_trait;
+
 use serde_json::{json, Value};
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 /// Tool for fetching and processing web content
 pub struct WebFetch;
@@ -22,7 +22,7 @@ impl Default for WebFetch {
     }
 }
 
-#[async_trait]
+
 impl Tool for WebFetch {
     fn name(&self) -> &str {
         "web_fetch"
@@ -61,7 +61,8 @@ impl Tool for WebFetch {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
         let url = params["url"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidParams("url is required".into()))?;
@@ -146,6 +147,7 @@ impl Tool for WebFetch {
             "prompt": prompt,
             "note": "Use the content above to answer the prompt"
         })))
+            })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

@@ -2,13 +2,13 @@
 //!
 //! Provides web search capability using search APIs.
 
-use async_trait::async_trait;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 /// Search result from web search
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,7 +167,7 @@ impl Default for WebSearch {
     }
 }
 
-#[async_trait]
+
 impl Tool for WebSearch {
     fn name(&self) -> &str {
         "web_search"
@@ -206,7 +206,8 @@ impl Tool for WebSearch {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
         let query = params["query"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidParams("query is required".into()))?;
@@ -245,6 +246,7 @@ impl Tool for WebSearch {
             }))),
             Err(e) => Err(ToolError::ExecutionFailed(e)),
         }
+            })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

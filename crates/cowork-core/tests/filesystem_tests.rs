@@ -124,7 +124,7 @@ mod edit_file_tests {
         let tool = EditFile::new(dir.path().to_path_buf());
 
         let result = tool.execute(json!({
-            "path": "src/main.rs",
+            "file_path": "src/main.rs",
             "old_string": "Hello, world!",
             "new_string": "Hello, Rust!"
         })).await;
@@ -141,18 +141,20 @@ mod edit_file_tests {
         let dir = setup_test_dir();
         let tool = EditFile::new(dir.path().to_path_buf());
 
+        // Replace "println" with "debug_print" (avoiding substring issues)
         let result = tool.execute(json!({
-            "path": "src/main.rs",
+            "file_path": "src/main.rs",
             "old_string": "println!",
-            "new_string": "eprintln!",
+            "new_string": "debug_print!",
             "replace_all": true
         })).await;
 
         assert!(result.is_ok(), "Replace all failed: {:?}", result.err());
 
         let content = fs::read_to_string(dir.path().join("src/main.rs")).unwrap();
-        assert!(!content.contains("println!"));
-        assert!(content.contains("eprintln!"));
+        // Note: "debug_print!" does NOT contain "println!" as substring
+        assert!(!content.contains("println!"), "Should have replaced all println!");
+        assert!(content.contains("debug_print!"), "Should contain debug_print!");
     }
 }
 

@@ -1,6 +1,6 @@
 //! TodoWrite tool - task tracking for AI workflows
 
-use async_trait::async_trait;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 /// Status of a todo item
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,7 +58,7 @@ impl Default for TodoWrite {
     }
 }
 
-#[async_trait]
+
 impl Tool for TodoWrite {
     fn name(&self) -> &str {
         "todo_write"
@@ -103,7 +103,8 @@ impl Tool for TodoWrite {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
         let todos_value = params["todos"]
             .as_array()
             .ok_or_else(|| ToolError::InvalidParams("todos array is required".into()))?;
@@ -187,6 +188,7 @@ impl Tool for TodoWrite {
                 "pending": pending
             }
         })))
+            })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

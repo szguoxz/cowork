@@ -1,12 +1,12 @@
 //! Office document reading tool
 
-use async_trait::async_trait;
+
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 use crate::tools::filesystem::validate_path;
 
 use super::DocumentFormat;
@@ -22,7 +22,7 @@ impl ReadOfficeDoc {
     }
 }
 
-#[async_trait]
+
 impl Tool for ReadOfficeDoc {
     fn name(&self) -> &str {
         "read_office_doc"
@@ -50,7 +50,8 @@ impl Tool for ReadOfficeDoc {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
         let path_str = params["path"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidParams("path is required".into()))?;
@@ -75,6 +76,7 @@ impl Tool for ReadOfficeDoc {
             "format": format!("{:?}", format),
             "content": "Office document extraction not yet implemented"
         })))
+            })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

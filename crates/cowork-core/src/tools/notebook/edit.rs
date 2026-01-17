@@ -2,14 +2,14 @@
 //!
 //! Allows editing, inserting, and deleting cells in .ipynb files.
 
-use async_trait::async_trait;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 /// Cell types in Jupyter notebooks
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -40,7 +40,7 @@ impl NotebookEdit {
     }
 }
 
-#[async_trait]
+
 impl Tool for NotebookEdit {
     fn name(&self) -> &str {
         "notebook_edit"
@@ -83,7 +83,8 @@ impl Tool for NotebookEdit {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
         let notebook_path = params["notebook_path"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidParams("notebook_path is required".into()))?;
@@ -251,6 +252,7 @@ impl Tool for NotebookEdit {
                 EditMode::Delete => "deleted",
             }
         })))
+            })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

@@ -2,7 +2,6 @@
 //!
 //! Allows killing running background shell commands by their ID.
 
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,7 +10,7 @@ use tokio::sync::RwLock;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 /// Registry for tracking background shell processes
 pub struct ShellProcessRegistry {
@@ -100,7 +99,6 @@ impl KillShell {
     }
 }
 
-#[async_trait]
 impl Tool for KillShell {
     fn name(&self) -> &str {
         "kill_shell"
@@ -125,19 +123,21 @@ impl Tool for KillShell {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
-        let shell_id = params["shell_id"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidParams("shell_id is required".into()))?;
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let shell_id = params["shell_id"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidParams("shell_id is required".into()))?;
 
-        match self.registry.kill(shell_id).await {
-            Ok(()) => Ok(ToolOutput::success(json!({
-                "success": true,
-                "shell_id": shell_id,
-                "message": format!("Shell {} has been terminated", shell_id)
-            }))),
-            Err(e) => Err(ToolError::ExecutionFailed(e)),
-        }
+            match self.registry.kill(shell_id).await {
+                Ok(()) => Ok(ToolOutput::success(json!({
+                    "success": true,
+                    "shell_id": shell_id,
+                    "message": format!("Shell {} has been terminated", shell_id)
+                }))),
+                Err(e) => Err(ToolError::ExecutionFailed(e)),
+            }
+        })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

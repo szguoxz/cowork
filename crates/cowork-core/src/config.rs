@@ -38,6 +38,7 @@ impl Default for Config {
 
 /// LLM Provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ProviderConfig {
     /// Provider type: "anthropic", "openai", "ollama"
     pub provider_type: String,

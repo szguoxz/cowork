@@ -2,7 +2,7 @@
 //!
 //! Used when in plan mode to signal completion of planning and request approval.
 
-use async_trait::async_trait;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 /// Allowed prompt for bash commands
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,7 +44,7 @@ impl ExitPlanMode {
     }
 }
 
-#[async_trait]
+
 impl Tool for ExitPlanMode {
     fn name(&self) -> &str {
         "exit_plan_mode"
@@ -83,7 +83,8 @@ impl Tool for ExitPlanMode {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
         let mut state = self.state.write().await;
 
         // Parse allowed prompts
@@ -121,6 +122,7 @@ impl Tool for ExitPlanMode {
                 })
             }).collect::<Vec<_>>()
         })))
+            })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

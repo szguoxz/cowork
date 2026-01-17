@@ -173,7 +173,7 @@ telemetry = true
 
     #[test]
     fn test_partial_config_deserialize() {
-        // Config with only some fields - others should use defaults
+        // Config with only some provider fields - others should use defaults
         let toml_content = r#"
 [provider]
 model = "custom-model"
@@ -182,9 +182,11 @@ model = "custom-model"
         let config: Config = toml::from_str(toml_content).unwrap();
 
         assert_eq!(config.provider.model, "custom-model");
-        // Other fields should be defaults
+        // Other provider fields should use defaults
         assert_eq!(config.provider.provider_type, "anthropic"); // default
-        assert!(config.approval.show_dialogs); // default
+        assert_eq!(config.provider.default_max_tokens, 4096); // default
+        // Other sections should use defaults
+        assert!(config.approval.show_dialogs);
     }
 }
 

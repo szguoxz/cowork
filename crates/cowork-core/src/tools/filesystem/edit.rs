@@ -1,12 +1,11 @@
 //! Edit file tool - surgical string replacement
 
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 use super::validate_path;
 
@@ -21,7 +20,6 @@ impl EditFile {
     }
 }
 
-#[async_trait]
 impl Tool for EditFile {
     fn name(&self) -> &str {
         "edit"
@@ -60,79 +58,81 @@ impl Tool for EditFile {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
-        let file_path = params["file_path"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidParams("file_path is required".into()))?;
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let file_path = params["file_path"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidParams("file_path is required".into()))?;
 
-        let old_string = params["old_string"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidParams("old_string is required".into()))?;
+            let old_string = params["old_string"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidParams("old_string is required".into()))?;
 
-        let new_string = params["new_string"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidParams("new_string is required".into()))?;
+            let new_string = params["new_string"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidParams("new_string is required".into()))?;
 
-        let replace_all = params["replace_all"].as_bool().unwrap_or(false);
+            let replace_all = params["replace_all"].as_bool().unwrap_or(false);
 
-        // Validate that old_string and new_string are different
-        if old_string == new_string {
-            return Err(ToolError::InvalidParams(
-                "old_string and new_string must be different".into(),
-            ));
-        }
+            // Validate that old_string and new_string are different
+            if old_string == new_string {
+                return Err(ToolError::InvalidParams(
+                    "old_string and new_string must be different".into(),
+                ));
+            }
 
-        // Validate path
-        let path = self.workspace.join(file_path);
-        let validated = validate_path(&path, &self.workspace)?;
+            // Validate path
+            let path = self.workspace.join(file_path);
+            let validated = validate_path(&path, &self.workspace)?;
 
-        // Read current content
-        let content = tokio::fs::read_to_string(&validated)
-            .await
-            .map_err(ToolError::Io)?;
+            // Read current content
+            let content = tokio::fs::read_to_string(&validated)
+                .await
+                .map_err(ToolError::Io)?;
 
-        // Count occurrences
-        let occurrences = content.matches(old_string).count();
+            // Count occurrences
+            let occurrences = content.matches(old_string).count();
 
-        if occurrences == 0 {
-            return Err(ToolError::InvalidParams(format!(
-                "old_string not found in file. Make sure to match the exact content including whitespace and indentation."
-            )));
-        }
+            if occurrences == 0 {
+                return Err(ToolError::InvalidParams(
+                    "old_string not found in file. Make sure to match the exact content including whitespace and indentation.".into()
+                ));
+            }
 
-        if !replace_all && occurrences > 1 {
-            return Err(ToolError::InvalidParams(format!(
-                "old_string appears {} times in the file. Either provide more context to make it unique, \
-                 or set replace_all=true to replace all occurrences.",
-                occurrences
-            )));
-        }
+            if !replace_all && occurrences > 1 {
+                return Err(ToolError::InvalidParams(format!(
+                    "old_string appears {} times in the file. Either provide more context to make it unique, \
+                     or set replace_all=true to replace all occurrences.",
+                    occurrences
+                )));
+            }
 
-        // Perform replacement
-        let new_content = if replace_all {
-            content.replace(old_string, new_string)
-        } else {
-            content.replacen(old_string, new_string, 1)
-        };
+            // Perform replacement
+            let new_content = if replace_all {
+                content.replace(old_string, new_string)
+            } else {
+                content.replacen(old_string, new_string, 1)
+            };
 
-        // Calculate diff info
-        let old_lines = content.lines().count();
-        let new_lines = new_content.lines().count();
-        let lines_changed = (new_lines as i64 - old_lines as i64).abs();
+            // Calculate diff info
+            let old_lines = content.lines().count();
+            let new_lines = new_content.lines().count();
+            let lines_changed = (new_lines as i64 - old_lines as i64).abs();
 
-        // Write back
-        tokio::fs::write(&validated, &new_content)
-            .await
-            .map_err(ToolError::Io)?;
+            // Write back
+            tokio::fs::write(&validated, &new_content)
+                .await
+                .map_err(ToolError::Io)?;
 
-        Ok(ToolOutput::success(json!({
-            "success": true,
-            "path": file_path,
-            "occurrences_replaced": if replace_all { occurrences } else { 1 },
-            "old_line_count": old_lines,
-            "new_line_count": new_lines,
-            "lines_changed": lines_changed
-        })))
+            Ok(ToolOutput::success(json!({
+                "success": true,
+                "path": file_path,
+                "occurrences_replaced": if replace_all { occurrences } else { 1 },
+                "old_line_count": old_lines,
+                "new_line_count": new_lines,
+                "lines_changed": lines_changed
+            })))
+        })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

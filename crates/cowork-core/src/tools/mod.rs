@@ -17,14 +17,18 @@ pub mod shell;
 pub mod task;
 pub mod web;
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::pin::Pin;
+use std::future::Future;
 use std::sync::Arc;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
+
+/// Boxed future type for object-safe async trait methods
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Output from a tool execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,7 +77,6 @@ pub struct ToolDefinition {
 }
 
 /// Core trait for all tools
-#[async_trait]
 pub trait Tool: Send + Sync {
     /// Tool name (used by LLM to invoke)
     fn name(&self) -> &str;
@@ -85,7 +88,7 @@ pub trait Tool: Send + Sync {
     fn parameters_schema(&self) -> Value;
 
     /// Execute the tool with given parameters
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError>;
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>>;
 
     /// What level of approval this tool requires
     fn approval_level(&self) -> ApprovalLevel {

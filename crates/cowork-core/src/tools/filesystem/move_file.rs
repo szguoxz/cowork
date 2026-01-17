@@ -1,12 +1,11 @@
 //! Move/rename file tool
 
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 use super::validate_path;
 
@@ -21,7 +20,6 @@ impl MoveFile {
     }
 }
 
-#[async_trait]
 impl Tool for MoveFile {
     fn name(&self) -> &str {
         "move_file"
@@ -53,44 +51,46 @@ impl Tool for MoveFile {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
-        let source_str = params["source"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidParams("source is required".into()))?;
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let source_str = params["source"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidParams("source is required".into()))?;
 
-        let dest_str = params["destination"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidParams("destination is required".into()))?;
+            let dest_str = params["destination"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidParams("destination is required".into()))?;
 
-        let overwrite = params["overwrite"].as_bool().unwrap_or(false);
+            let overwrite = params["overwrite"].as_bool().unwrap_or(false);
 
-        let source = self.workspace.join(source_str);
-        let dest = self.workspace.join(dest_str);
+            let source = self.workspace.join(source_str);
+            let dest = self.workspace.join(dest_str);
 
-        let validated_source = validate_path(&source, &self.workspace)?;
+            let validated_source = validate_path(&source, &self.workspace)?;
 
-        // For destination, validate parent exists and is in workspace
-        if let Some(parent) = dest.parent() {
-            if parent.exists() {
-                validate_path(parent, &self.workspace)?;
+            // For destination, validate parent exists and is in workspace
+            if let Some(parent) = dest.parent() {
+                if parent.exists() {
+                    validate_path(parent, &self.workspace)?;
+                }
             }
-        }
 
-        if dest.exists() && !overwrite {
-            return Err(ToolError::ExecutionFailed(format!(
-                "Destination {} already exists",
-                dest.display()
-            )));
-        }
+            if dest.exists() && !overwrite {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "Destination {} already exists",
+                    dest.display()
+                )));
+            }
 
-        tokio::fs::rename(&validated_source, &dest)
-            .await
-            .map_err(ToolError::Io)?;
+            tokio::fs::rename(&validated_source, &dest)
+                .await
+                .map_err(ToolError::Io)?;
 
-        Ok(ToolOutput::success(json!({
-            "source": validated_source.display().to_string(),
-            "destination": dest.display().to_string()
-        })))
+            Ok(ToolOutput::success(json!({
+                "source": validated_source.display().to_string(),
+                "destination": dest.display().to_string()
+            })))
+        })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

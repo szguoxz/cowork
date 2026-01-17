@@ -1,12 +1,11 @@
 //! Read file tool
 
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 use super::validate_path;
 
@@ -21,7 +20,6 @@ impl ReadFile {
     }
 }
 
-#[async_trait]
 impl Tool for ReadFile {
     fn name(&self) -> &str {
         "read_file"
@@ -49,23 +47,25 @@ impl Tool for ReadFile {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<ToolOutput, ToolError> {
-        let path_str = params["path"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidParams("path is required".into()))?;
+    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let path_str = params["path"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidParams("path is required".into()))?;
 
-        let path = self.workspace.join(path_str);
-        let validated = validate_path(&path, &self.workspace)?;
+            let path = self.workspace.join(path_str);
+            let validated = validate_path(&path, &self.workspace)?;
 
-        let content = tokio::fs::read_to_string(&validated)
-            .await
-            .map_err(ToolError::Io)?;
+            let content = tokio::fs::read_to_string(&validated)
+                .await
+                .map_err(ToolError::Io)?;
 
-        Ok(ToolOutput::success(json!({
-            "content": content,
-            "path": validated.display().to_string(),
-            "size": content.len()
-        })))
+            Ok(ToolOutput::success(json!({
+                "content": content,
+                "path": validated.display().to_string(),
+                "size": content.len()
+            })))
+        })
     }
 
     fn approval_level(&self) -> ApprovalLevel {
