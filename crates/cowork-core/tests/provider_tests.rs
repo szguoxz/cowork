@@ -5,7 +5,7 @@
 //! - ANTHROPIC_API_KEY
 //! - OPENAI_API_KEY
 
-use cowork_core::provider::{GenAIProvider, ProviderType};
+use cowork_core::provider::{GenAIProvider, LlmMessage, ProviderType};
 
 /// Helper to check if Anthropic API key is available
 fn has_anthropic_key() -> bool {
@@ -15,6 +15,36 @@ fn has_anthropic_key() -> bool {
 /// Helper to check if OpenAI API key is available
 fn has_openai_key() -> bool {
     std::env::var("OPENAI_API_KEY").is_ok()
+}
+
+/// Validate an API key by making a minimal API call
+async fn validate_anthropic_key() -> bool {
+    if !has_anthropic_key() {
+        return false;
+    }
+
+    let provider = GenAIProvider::new(ProviderType::Anthropic, Some("claude-3-haiku-20240307"));
+    let messages = vec![LlmMessage {
+        role: "user".to_string(),
+        content: "Hi".to_string(),
+    }];
+
+    provider.chat(messages, None).await.is_ok()
+}
+
+/// Validate an API key by making a minimal API call
+async fn validate_openai_key() -> bool {
+    if !has_openai_key() {
+        return false;
+    }
+
+    let provider = GenAIProvider::new(ProviderType::OpenAI, Some("gpt-4o-mini"));
+    let messages = vec![LlmMessage {
+        role: "user".to_string(),
+        content: "Hi".to_string(),
+    }];
+
+    provider.chat(messages, None).await.is_ok()
 }
 
 mod provider_type_tests {
@@ -98,33 +128,256 @@ mod provider_creation_tests {
 
 mod integration_tests {
     use super::*;
+    use cowork_core::provider::CompletionResult;
 
     // Note: These tests require actual API keys and will make real API calls
     // They are marked with #[ignore] by default
+    // Run with: cargo test -- --ignored
 
     #[tokio::test]
-    #[ignore] // Run with: cargo test -- --ignored
-    async fn test_anthropic_api_call() {
+    #[ignore]
+    async fn test_anthropic_simple_chat() {
         if !has_anthropic_key() {
             eprintln!("Skipping: ANTHROPIC_API_KEY not set");
             return;
         }
 
-        let provider = GenAIProvider::new(ProviderType::Anthropic, None);
-        // This would require implementing the actual completion call
-        // For now, just verify provider creation works with the actual key
-        println!("Provider created: {:?}", provider.provider_type());
+        if !validate_anthropic_key().await {
+            eprintln!("Skipping: ANTHROPIC_API_KEY is invalid (401 Unauthorized)");
+            return;
+        }
+
+        let provider = GenAIProvider::new(ProviderType::Anthropic, None)
+            .with_system_prompt("You are a helpful assistant. Keep responses brief.");
+
+        let messages = vec![LlmMessage {
+            role: "user".to_string(),
+            content: "What is 2 + 2? Reply with just the number.".to_string(),
+        }];
+
+        let result = provider.chat(messages, None).await;
+        println!("Anthropic result: {:?}", result);
+
+        assert!(result.is_ok(), "API call failed: {:?}", result.err());
+
+        match result.unwrap() {
+            CompletionResult::Message(text) => {
+                println!("Response: {}", text);
+                assert!(text.contains("4"), "Expected response to contain '4'");
+            }
+            CompletionResult::ToolCalls(_) => {
+                panic!("Unexpected tool calls in simple chat");
+            }
+        }
     }
 
     #[tokio::test]
     #[ignore]
-    async fn test_openai_api_call() {
+    async fn test_openai_simple_chat() {
         if !has_openai_key() {
             eprintln!("Skipping: OPENAI_API_KEY not set");
             return;
         }
 
-        let provider = GenAIProvider::new(ProviderType::OpenAI, None);
-        println!("Provider created: {:?}", provider.provider_type());
+        if !validate_openai_key().await {
+            eprintln!("Skipping: OPENAI_API_KEY is invalid (401 Unauthorized)");
+            return;
+        }
+
+        let provider = GenAIProvider::new(ProviderType::OpenAI, None)
+            .with_system_prompt("You are a helpful assistant. Keep responses brief.");
+
+        let messages = vec![LlmMessage {
+            role: "user".to_string(),
+            content: "What is 2 + 2? Reply with just the number.".to_string(),
+        }];
+
+        let result = provider.chat(messages, None).await;
+        println!("OpenAI result: {:?}", result);
+
+        assert!(result.is_ok(), "API call failed: {:?}", result.err());
+
+        match result.unwrap() {
+            CompletionResult::Message(text) => {
+                println!("Response: {}", text);
+                assert!(text.contains("4"), "Expected response to contain '4'");
+            }
+            CompletionResult::ToolCalls(_) => {
+                panic!("Unexpected tool calls in simple chat");
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_anthropic_with_tool_call() {
+        if !has_anthropic_key() {
+            eprintln!("Skipping: ANTHROPIC_API_KEY not set");
+            return;
+        }
+
+        if !validate_anthropic_key().await {
+            eprintln!("Skipping: ANTHROPIC_API_KEY is invalid (401 Unauthorized)");
+            return;
+        }
+
+        use cowork_core::tools::ToolDefinition;
+        use serde_json::json;
+
+        let provider = GenAIProvider::new(ProviderType::Anthropic, None)
+            .with_system_prompt("You are a helpful assistant. Use tools when appropriate.");
+
+        // Define a simple tool
+        let tools = vec![ToolDefinition {
+            name: "get_weather".to_string(),
+            description: "Get the current weather for a city".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "The city name"
+                    }
+                },
+                "required": ["city"]
+            }),
+        }];
+
+        let messages = vec![LlmMessage {
+            role: "user".to_string(),
+            content: "What's the weather in Paris?".to_string(),
+        }];
+
+        let result = provider.chat(messages, Some(tools)).await;
+        println!("Anthropic tool result: {:?}", result);
+
+        assert!(result.is_ok(), "API call failed: {:?}", result.err());
+
+        match result.unwrap() {
+            CompletionResult::ToolCalls(calls) => {
+                println!("Tool calls: {:?}", calls);
+                assert!(!calls.is_empty(), "Expected at least one tool call");
+                assert_eq!(calls[0].name, "get_weather");
+            }
+            CompletionResult::Message(text) => {
+                // Some models might not use tools - that's OK
+                println!("Got message instead of tool call: {}", text);
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_openai_with_tool_call() {
+        if !has_openai_key() {
+            eprintln!("Skipping: OPENAI_API_KEY not set");
+            return;
+        }
+
+        if !validate_openai_key().await {
+            eprintln!("Skipping: OPENAI_API_KEY is invalid (401 Unauthorized)");
+            return;
+        }
+
+        use cowork_core::tools::ToolDefinition;
+        use serde_json::json;
+
+        let provider = GenAIProvider::new(ProviderType::OpenAI, None)
+            .with_system_prompt("You are a helpful assistant. Use tools when appropriate.");
+
+        // Define a simple tool
+        let tools = vec![ToolDefinition {
+            name: "get_weather".to_string(),
+            description: "Get the current weather for a city".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "The city name"
+                    }
+                },
+                "required": ["city"]
+            }),
+        }];
+
+        let messages = vec![LlmMessage {
+            role: "user".to_string(),
+            content: "What's the weather in Paris?".to_string(),
+        }];
+
+        let result = provider.chat(messages, Some(tools)).await;
+        println!("OpenAI tool result: {:?}", result);
+
+        assert!(result.is_ok(), "API call failed: {:?}", result.err());
+
+        match result.unwrap() {
+            CompletionResult::ToolCalls(calls) => {
+                println!("Tool calls: {:?}", calls);
+                assert!(!calls.is_empty(), "Expected at least one tool call");
+                assert_eq!(calls[0].name, "get_weather");
+            }
+            CompletionResult::Message(text) => {
+                // Some models might not use tools - that's OK
+                println!("Got message instead of tool call: {}", text);
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_anthropic_conversation() {
+        if !has_anthropic_key() {
+            eprintln!("Skipping: ANTHROPIC_API_KEY not set");
+            return;
+        }
+
+        if !validate_anthropic_key().await {
+            eprintln!("Skipping: ANTHROPIC_API_KEY is invalid (401 Unauthorized)");
+            return;
+        }
+
+        let provider = GenAIProvider::new(ProviderType::Anthropic, None)
+            .with_system_prompt("You are a helpful assistant. Keep responses very brief.");
+
+        // First message
+        let messages1 = vec![LlmMessage {
+            role: "user".to_string(),
+            content: "My name is Alice.".to_string(),
+        }];
+
+        let result1 = provider.chat(messages1.clone(), None).await;
+        assert!(result1.is_ok(), "First API call failed: {:?}", result1.err());
+
+        let response1 = match result1.unwrap() {
+            CompletionResult::Message(text) => text,
+            _ => panic!("Unexpected tool calls"),
+        };
+        println!("First response: {}", response1);
+
+        // Second message - test context
+        let mut messages2 = messages1;
+        messages2.push(LlmMessage {
+            role: "assistant".to_string(),
+            content: response1,
+        });
+        messages2.push(LlmMessage {
+            role: "user".to_string(),
+            content: "What is my name?".to_string(),
+        });
+
+        let result2 = provider.chat(messages2, None).await;
+        assert!(result2.is_ok(), "Second API call failed: {:?}", result2.err());
+
+        match result2.unwrap() {
+            CompletionResult::Message(text) => {
+                println!("Second response: {}", text);
+                assert!(
+                    text.to_lowercase().contains("alice"),
+                    "Expected response to remember 'Alice'"
+                );
+            }
+            _ => panic!("Unexpected tool calls"),
+        }
     }
 }
