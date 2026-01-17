@@ -531,10 +531,15 @@ impl AgenticLoop {
     }
 }
 
+use std::future::Future;
+use std::pin::Pin;
+
+/// Type alias for boxed futures
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 /// Trait for executing tools
-#[async_trait::async_trait]
 pub trait ToolExecutor: Send + Sync {
-    async fn execute(&self, tool_call: &ToolCallInfo) -> Result<String, String>;
+    fn execute<'a>(&'a self, tool_call: &'a ToolCallInfo) -> BoxFuture<'a, Result<String, String>>;
 }
 
 /// Default tool executor that handles built-in tools
@@ -548,98 +553,99 @@ impl DefaultToolExecutor {
     }
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor for DefaultToolExecutor {
-    async fn execute(&self, tool_call: &ToolCallInfo) -> Result<String, String> {
-        match tool_call.name.as_str() {
-            "read_file" => {
-                let path = tool_call.arguments["path"]
-                    .as_str()
-                    .ok_or("Missing path parameter")?;
-                let full_path = self.workspace_path.join(path);
-                tokio::fs::read_to_string(&full_path)
-                    .await
-                    .map_err(|e| e.to_string())
-            }
-            "write_file" => {
-                let path = tool_call.arguments["path"]
-                    .as_str()
-                    .ok_or("Missing path parameter")?;
-                let content = tool_call.arguments["content"]
-                    .as_str()
-                    .ok_or("Missing content parameter")?;
-                let full_path = self.workspace_path.join(path);
-                tokio::fs::write(&full_path, content)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok(format!("Successfully wrote to {}", path))
-            }
-            "list_directory" => {
-                let path = tool_call.arguments["path"].as_str().unwrap_or(".");
-                let full_path = self.workspace_path.join(path);
-                let mut entries = Vec::new();
-                let mut dir = tokio::fs::read_dir(&full_path)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                while let Some(entry) = dir.next_entry().await.map_err(|e| e.to_string())? {
-                    let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    entries.push(if is_dir {
-                        format!("{}/", name)
+    fn execute<'a>(&'a self, tool_call: &'a ToolCallInfo) -> BoxFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            match tool_call.name.as_str() {
+                "read_file" => {
+                    let path = tool_call.arguments["path"]
+                        .as_str()
+                        .ok_or("Missing path parameter")?;
+                    let full_path = self.workspace_path.join(path);
+                    tokio::fs::read_to_string(&full_path)
+                        .await
+                        .map_err(|e| e.to_string())
+                }
+                "write_file" => {
+                    let path = tool_call.arguments["path"]
+                        .as_str()
+                        .ok_or("Missing path parameter")?;
+                    let content = tool_call.arguments["content"]
+                        .as_str()
+                        .ok_or("Missing content parameter")?;
+                    let full_path = self.workspace_path.join(path);
+                    tokio::fs::write(&full_path, content)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    Ok(format!("Successfully wrote to {}", path))
+                }
+                "list_directory" => {
+                    let path = tool_call.arguments["path"].as_str().unwrap_or(".");
+                    let full_path = self.workspace_path.join(path);
+                    let mut entries = Vec::new();
+                    let mut dir = tokio::fs::read_dir(&full_path)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    while let Some(entry) = dir.next_entry().await.map_err(|e| e.to_string())? {
+                        let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        entries.push(if is_dir {
+                            format!("{}/", name)
+                        } else {
+                            name
+                        });
+                    }
+                    Ok(entries.join("\n"))
+                }
+                "execute_command" => {
+                    let command = tool_call.arguments["command"]
+                        .as_str()
+                        .ok_or("Missing command parameter")?;
+                    let working_dir = tool_call.arguments["working_dir"]
+                        .as_str()
+                        .map(|d| self.workspace_path.join(d))
+                        .unwrap_or_else(|| self.workspace_path.clone());
+
+                    let output = tokio::process::Command::new("sh")
+                        .arg("-c")
+                        .arg(command)
+                        .current_dir(&working_dir)
+                        .output()
+                        .await
+                        .map_err(|e| e.to_string())?;
+
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let exit_code = output.status.code().unwrap_or(-1);
+
+                    Ok(format!(
+                        "Exit code: {}\nStdout:\n{}\nStderr:\n{}",
+                        exit_code, stdout, stderr
+                    ))
+                }
+                "search_files" => {
+                    let pattern = tool_call.arguments["pattern"]
+                        .as_str()
+                        .ok_or("Missing pattern parameter")?;
+                    let path = tool_call.arguments["path"].as_str().unwrap_or(".");
+                    let full_path = self.workspace_path.join(path);
+
+                    let glob_pattern = full_path.join(pattern).to_string_lossy().to_string();
+                    let matches: Vec<String> = glob::glob(&glob_pattern)
+                        .map_err(|e| e.to_string())?
+                        .filter_map(|entry| entry.ok())
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect();
+
+                    if matches.is_empty() {
+                        Ok("No files found matching the pattern".to_string())
                     } else {
-                        name
-                    });
+                        Ok(matches.join("\n"))
+                    }
                 }
-                Ok(entries.join("\n"))
+                _ => Err(format!("Unknown tool: {}", tool_call.name)),
             }
-            "execute_command" => {
-                let command = tool_call.arguments["command"]
-                    .as_str()
-                    .ok_or("Missing command parameter")?;
-                let working_dir = tool_call.arguments["working_dir"]
-                    .as_str()
-                    .map(|d| self.workspace_path.join(d))
-                    .unwrap_or_else(|| self.workspace_path.clone());
-
-                let output = tokio::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(command)
-                    .current_dir(&working_dir)
-                    .output()
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let exit_code = output.status.code().unwrap_or(-1);
-
-                Ok(format!(
-                    "Exit code: {}\nStdout:\n{}\nStderr:\n{}",
-                    exit_code, stdout, stderr
-                ))
-            }
-            "search_files" => {
-                let pattern = tool_call.arguments["pattern"]
-                    .as_str()
-                    .ok_or("Missing pattern parameter")?;
-                let path = tool_call.arguments["path"].as_str().unwrap_or(".");
-                let full_path = self.workspace_path.join(path);
-
-                let glob_pattern = full_path.join(pattern).to_string_lossy().to_string();
-                let matches: Vec<String> = glob::glob(&glob_pattern)
-                    .map_err(|e| e.to_string())?
-                    .filter_map(|entry| entry.ok())
-                    .map(|p| p.to_string_lossy().to_string())
-                    .collect();
-
-                if matches.is_empty() {
-                    Ok("No files found matching the pattern".to_string())
-                } else {
-                    Ok(matches.join("\n"))
-                }
-            }
-            _ => Err(format!("Unknown tool: {}", tool_call.name)),
-        }
+        })
     }
 }
 
