@@ -155,7 +155,7 @@ async fn run_one_shot(
         .with_system_prompt(SYSTEM_PROMPT);
 
     // Create tool registry
-    let tool_registry = create_tool_registry(workspace);
+    let tool_registry = create_tool_registry(workspace, provider_type);
     let tool_definitions = tool_registry.list();
 
     // Chat history
@@ -215,7 +215,7 @@ async fn run_chat(
     };
 
     // Create tool registry
-    let tool_registry = create_tool_registry(workspace);
+    let tool_registry = create_tool_registry(workspace, provider_type);
     let tool_definitions = tool_registry.list();
 
     // Create skill registry for slash commands
@@ -484,7 +484,7 @@ async fn handle_slash_command(cmd: &str, workspace: &PathBuf, registry: &SkillRe
 }
 
 /// Create tool registry with all available tools
-fn create_tool_registry(workspace: &PathBuf) -> ToolRegistry {
+fn create_tool_registry(workspace: &PathBuf, provider_type: ProviderType) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
 
     // Filesystem tools
@@ -516,10 +516,9 @@ fn create_tool_registry(workspace: &PathBuf) -> ToolRegistry {
 
     // Agent/Task tools
     let agent_registry = std::sync::Arc::new(AgentInstanceRegistry::new());
-    registry.register(std::sync::Arc::new(TaskTool::new(
-        agent_registry.clone(),
-        workspace.clone(),
-    )));
+    registry.register(std::sync::Arc::new(
+        TaskTool::new(agent_registry.clone(), workspace.clone()).with_provider(provider_type),
+    ));
     registry.register(std::sync::Arc::new(TaskOutputTool::new(agent_registry)));
 
     registry
