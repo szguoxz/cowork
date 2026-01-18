@@ -14,6 +14,7 @@ use cowork_core::tools::filesystem::{
     DeleteFile, EditFile, GlobFiles, GrepFiles, ListDirectory, MoveFile, ReadFile, SearchFiles,
     WriteFile,
 };
+use cowork_core::tools::lsp::LspTool;
 use cowork_core::tools::notebook::NotebookEdit;
 use cowork_core::tools::shell::ExecuteCommand;
 use cowork_core::tools::task::TodoWrite;
@@ -510,6 +511,9 @@ fn create_tool_registry(workspace: &PathBuf) -> ToolRegistry {
     // Task management tools
     registry.register(std::sync::Arc::new(TodoWrite::new()));
 
+    // Code intelligence tools
+    registry.register(std::sync::Arc::new(LspTool::new(workspace.clone())));
+
     registry
 }
 
@@ -785,6 +789,8 @@ fn show_tools() {
         ("notebook_edit", "Edit Jupyter notebooks", "High"),
         // Task management
         ("todo_write", "Manage task list", "None"),
+        // Code intelligence
+        ("lsp", "Language Server Protocol", "None"),
     ];
 
     for (name, desc, approval) in tools {
@@ -859,6 +865,14 @@ const SYSTEM_PROMPT: &str = r#"You are Cowork, an AI coding assistant. You help 
 
 ### Task Management
 - todo_write: Track progress with a structured todo list
+
+### Code Intelligence (LSP)
+- lsp: Language Server Protocol operations
+  - goToDefinition: Find where a symbol is defined
+  - findReferences: Find all usages of a symbol
+  - hover: Get type info and documentation
+  - documentSymbol: List all symbols in a file
+  - workspaceSymbol: Search symbols across workspace
 
 ## Workflow Guidelines
 

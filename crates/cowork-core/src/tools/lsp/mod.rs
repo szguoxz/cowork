@@ -1,5 +1,6 @@
 //! LSP (Language Server Protocol) tools for code intelligence
-
+//!
+//! Provides integration with language servers like rust-analyzer, tsserver, etc.
 
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -7,6 +8,12 @@ use std::path::PathBuf;
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
+
+#[cfg(feature = "lsp")]
+mod client;
+
+#[cfg(feature = "lsp")]
+pub use client::LspClient;
 
 /// LSP operations supported by the tool
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,14 +51,60 @@ impl std::str::FromStr for LspOperation {
 /// Tool for interacting with Language Server Protocol servers
 pub struct LspTool {
     workspace: PathBuf,
+    #[cfg(feature = "lsp")]
+    client: std::sync::Arc<tokio::sync::Mutex<Option<LspClient>>>,
 }
 
 impl LspTool {
     pub fn new(workspace: PathBuf) -> Self {
-        Self { workspace }
+        Self {
+            workspace,
+            #[cfg(feature = "lsp")]
+            client: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    #[cfg(feature = "lsp")]
+    async fn get_or_init_client(&self, file_path: &str) -> Result<(), ToolError> {
+        let mut client_guard = self.client.lock().await;
+
+        if client_guard.is_none() {
+            // Detect language server based on file extension
+            let server_cmd = Self::detect_language_server(file_path)?;
+
+            let client = LspClient::new(&self.workspace, &server_cmd[0], &server_cmd[1..])
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to start language server: {}", e)))?;
+
+            *client_guard = Some(client);
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "lsp")]
+    fn detect_language_server(file_path: &str) -> Result<Vec<String>, ToolError> {
+        let ext = std::path::Path::new(file_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        match ext {
+            "rs" => Ok(vec!["rust-analyzer".to_string()]),
+            "ts" | "tsx" | "js" | "jsx" => Ok(vec![
+                "typescript-language-server".to_string(),
+                "--stdio".to_string(),
+            ]),
+            "py" => Ok(vec!["pylsp".to_string()]),
+            "go" => Ok(vec!["gopls".to_string()]),
+            "c" | "cpp" | "cc" | "h" | "hpp" => Ok(vec!["clangd".to_string()]),
+            _ => Err(ToolError::ExecutionFailed(format!(
+                "No language server configured for .{} files. Supported: .rs (rust-analyzer), .ts/.js (typescript-language-server), .py (pylsp), .go (gopls), .c/.cpp (clangd)",
+                ext
+            ))),
+        }
     }
 }
-
 
 impl Tool for LspTool {
     fn name(&self) -> &str {
@@ -59,14 +112,14 @@ impl Tool for LspTool {
     }
 
     fn description(&self) -> &str {
-        "Interact with Language Server Protocol (LSP) servers to get code intelligence features. \
+        "Interact with Language Server Protocol (LSP) servers for code intelligence. \
          Supported operations: goToDefinition (find where a symbol is defined), \
          findReferences (find all references to a symbol), \
          hover (get documentation and type info), \
          documentSymbol (get all symbols in a file), \
          workspaceSymbol (search for symbols across the workspace), \
-         goToImplementation (find implementations of an interface), \
-         prepareCallHierarchy, incomingCalls, outgoingCalls (call hierarchy features)."
+         goToImplementation (find implementations of an interface). \
+         Requires a language server to be installed (rust-analyzer, typescript-language-server, etc.)."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -90,7 +143,7 @@ impl Tool for LspTool {
                 },
                 "filePath": {
                     "type": "string",
-                    "description": "The file to operate on"
+                    "description": "The file to operate on (relative or absolute path)"
                 },
                 "line": {
                     "type": "integer",
@@ -111,104 +164,89 @@ impl Tool for LspTool {
 
     fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
-        let operation_str = params["operation"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidParams("operation is required".into()))?;
+            let operation_str = params["operation"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidParams("operation is required".into()))?;
 
-        let operation: LspOperation = operation_str
-            .parse()
-            .map_err(|e: String| ToolError::InvalidParams(e))?;
+            let operation: LspOperation = operation_str
+                .parse()
+                .map_err(|e: String| ToolError::InvalidParams(e))?;
 
-        let file_path = params["filePath"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidParams("filePath is required".into()))?;
+            let file_path = params["filePath"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidParams("filePath is required".into()))?;
 
-        let line = params["line"]
-            .as_u64()
-            .ok_or_else(|| ToolError::InvalidParams("line is required".into()))? as u32;
+            let line = params["line"]
+                .as_u64()
+                .ok_or_else(|| ToolError::InvalidParams("line is required".into()))? as u32;
 
-        let character = params["character"]
-            .as_u64()
-            .ok_or_else(|| ToolError::InvalidParams("character is required".into()))? as u32;
+            let character = params["character"]
+                .as_u64()
+                .ok_or_else(|| ToolError::InvalidParams("character is required".into()))? as u32;
 
-        // For now, return a placeholder - actual LSP implementation would connect to a language server
-        // This is a stub that can be expanded when LSP servers are integrated
+            #[cfg(feature = "lsp")]
+            {
+                // Initialize client if needed
+                self.get_or_init_client(file_path).await?;
 
-        let result = match operation {
-            LspOperation::GoToDefinition => {
-                json!({
-                    "message": "LSP goToDefinition not yet implemented. This would find where the symbol at the given position is defined.",
-                    "file": file_path,
-                    "line": line,
-                    "character": character
-                })
-            }
-            LspOperation::FindReferences => {
-                json!({
-                    "message": "LSP findReferences not yet implemented. This would find all references to the symbol at the given position.",
-                    "file": file_path,
-                    "line": line,
-                    "character": character
-                })
-            }
-            LspOperation::Hover => {
-                json!({
-                    "message": "LSP hover not yet implemented. This would show documentation and type information for the symbol.",
-                    "file": file_path,
-                    "line": line,
-                    "character": character
-                })
-            }
-            LspOperation::DocumentSymbol => {
-                json!({
-                    "message": "LSP documentSymbol not yet implemented. This would list all symbols in the document.",
-                    "file": file_path
-                })
-            }
-            LspOperation::WorkspaceSymbol => {
-                let query = params["query"].as_str().unwrap_or("");
-                json!({
-                    "message": "LSP workspaceSymbol not yet implemented. This would search for symbols across the workspace.",
-                    "query": query
-                })
-            }
-            LspOperation::GoToImplementation => {
-                json!({
-                    "message": "LSP goToImplementation not yet implemented. This would find implementations of the interface/trait.",
-                    "file": file_path,
-                    "line": line,
-                    "character": character
-                })
-            }
-            LspOperation::PrepareCallHierarchy => {
-                json!({
-                    "message": "LSP prepareCallHierarchy not yet implemented. This would prepare call hierarchy information.",
-                    "file": file_path,
-                    "line": line,
-                    "character": character
-                })
-            }
-            LspOperation::IncomingCalls => {
-                json!({
-                    "message": "LSP incomingCalls not yet implemented. This would find all callers of the function.",
-                    "file": file_path,
-                    "line": line,
-                    "character": character
-                })
-            }
-            LspOperation::OutgoingCalls => {
-                json!({
-                    "message": "LSP outgoingCalls not yet implemented. This would find all callees of the function.",
-                    "file": file_path,
-                    "line": line,
-                    "character": character
-                })
-            }
-        };
+                let mut client_guard = self.client.lock().await;
+                let client = client_guard.as_mut().ok_or_else(|| {
+                    ToolError::ExecutionFailed("LSP client not initialized".into())
+                })?;
 
-        Ok(ToolOutput::success(result)
-            .with_metadata("note", "LSP integration requires language server setup"))
-            })
+                // Resolve file path
+                let full_path = if std::path::Path::new(file_path).is_absolute() {
+                    PathBuf::from(file_path)
+                } else {
+                    self.workspace.join(file_path)
+                };
+
+                // Convert to 0-based line/character for LSP
+                let line_0 = line.saturating_sub(1);
+                let char_0 = character.saturating_sub(1);
+
+                let result = match operation {
+                    LspOperation::GoToDefinition => {
+                        client.go_to_definition(&full_path, line_0, char_0).await
+                    }
+                    LspOperation::FindReferences => {
+                        client.find_references(&full_path, line_0, char_0).await
+                    }
+                    LspOperation::Hover => {
+                        client.hover(&full_path, line_0, char_0).await
+                    }
+                    LspOperation::DocumentSymbol => {
+                        client.document_symbols(&full_path).await
+                    }
+                    LspOperation::WorkspaceSymbol => {
+                        let query = params["query"].as_str().unwrap_or("");
+                        client.workspace_symbols(query).await
+                    }
+                    LspOperation::GoToImplementation => {
+                        client.go_to_implementation(&full_path, line_0, char_0).await
+                    }
+                    _ => {
+                        return Ok(ToolOutput::success(json!({
+                            "message": format!("Operation {} not yet implemented", operation_str),
+                            "file": file_path,
+                            "line": line,
+                            "character": character
+                        })));
+                    }
+                };
+
+                result.map_err(|e| ToolError::ExecutionFailed(e))
+                    .map(ToolOutput::success)
+            }
+
+            #[cfg(not(feature = "lsp"))]
+            {
+                let _ = (operation, file_path, line, character);
+                Err(ToolError::ExecutionFailed(
+                    "LSP support not compiled. Rebuild with --features lsp".into()
+                ))
+            }
+        })
     }
 
     fn approval_level(&self) -> ApprovalLevel {

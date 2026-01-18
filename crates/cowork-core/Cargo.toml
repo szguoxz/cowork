@@ -49,16 +49,20 @@ dirs = "5"
 # Token counting
 tiktoken-rs = { version = "0.6", optional = true }
 
+# LSP client
+lsp-types = { version = "0.97", optional = true }
+
 # Internal
 cowork-mcp = { workspace = true, optional = true }
 cowork-sandbox = { workspace = true, optional = true }
 
 [features]
-default = ["browser", "mcp", "sandbox", "tiktoken"]
+default = ["browser", "mcp", "sandbox", "tiktoken", "lsp"]
 browser = ["dep:chromiumoxide"]
 mcp = ["dep:cowork-mcp"]
 sandbox = ["dep:cowork-sandbox"]
 tiktoken = ["dep:tiktoken-rs"]
+lsp = ["dep:lsp-types"]
 
 [dev-dependencies]
 tempfile = "3"
