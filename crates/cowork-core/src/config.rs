@@ -9,6 +9,56 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
+/// MCP (Model Context Protocol) server configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    /// Command to run the MCP server
+    pub command: String,
+    /// Arguments to pass to the command
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Environment variables for the server
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// Whether this server is enabled (auto-starts on CLI startup)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl McpServerConfig {
+    /// Create a new MCP server config
+    pub fn new(command: impl Into<String>) -> Self {
+        Self {
+            command: command.into(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            enabled: true,
+        }
+    }
+
+    /// Add arguments to the config
+    pub fn with_args(mut self, args: Vec<String>) -> Self {
+        self.args = args;
+        self
+    }
+
+    /// Add an environment variable
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.insert(key.into(), value.into());
+        self
+    }
+
+    /// Set enabled status
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
+
 /// Main application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -21,6 +71,9 @@ pub struct Config {
     /// Legacy single provider config (for backwards compatibility)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<ProviderConfig>,
+    /// MCP server configurations
+    #[serde(default)]
+    pub mcp_servers: HashMap<String, McpServerConfig>,
     /// Approval settings
     #[serde(default)]
     pub approval: ApprovalConfig,
@@ -50,6 +103,7 @@ impl Default for Config {
             default_provider: default_provider_name(),
             providers: default_providers(),
             provider: None,
+            mcp_servers: HashMap::new(),
             approval: ApprovalConfig::default(),
             browser: BrowserConfig::default(),
             general: GeneralConfig::default(),

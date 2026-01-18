@@ -7,14 +7,19 @@
 //! essentially prompt templates that get expanded with context and sent to the LLM.
 
 pub mod context;
+pub mod dev;
 pub mod git;
 pub mod loader;
+pub mod mcp;
+pub mod session;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+
+use crate::mcp_manager::McpServerManager;
 
 /// Type alias for boxed futures (for object-safe async trait methods)
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -113,6 +118,14 @@ impl SkillRegistry {
 
     /// Create a registry with built-in skills
     pub fn with_builtins(workspace: std::path::PathBuf) -> Self {
+        Self::with_builtins_and_mcp(workspace, None)
+    }
+
+    /// Create a registry with built-in skills and optional MCP manager
+    pub fn with_builtins_and_mcp(
+        workspace: std::path::PathBuf,
+        mcp_manager: Option<Arc<McpServerManager>>,
+    ) -> Self {
         let mut registry = Self::new();
 
         // Register git skills (mirroring Claude Code's commit-commands plugin)
@@ -123,10 +136,32 @@ impl SkillRegistry {
         registry.register(Arc::new(git::ReviewSkill::new(workspace.clone())));
         registry.register(Arc::new(git::CleanGoneSkill::new(workspace.clone())));
 
+        // Register git info skills
+        registry.register(Arc::new(git::StatusSkill::new(workspace.clone())));
+        registry.register(Arc::new(git::DiffSkill::new(workspace.clone())));
+        registry.register(Arc::new(git::LogSkill::new(workspace.clone())));
+        registry.register(Arc::new(git::BranchSkill::new(workspace.clone())));
+
         // Register context management skills
         registry.register(Arc::new(context::CompactSkill::new(workspace.clone())));
         registry.register(Arc::new(context::ClearSkill::new(workspace.clone())));
         registry.register(Arc::new(context::ContextSkill::new(workspace.clone())));
+
+        // Register development workflow skills
+        registry.register(Arc::new(dev::TestSkill::new(workspace.clone())));
+        registry.register(Arc::new(dev::BuildSkill::new(workspace.clone())));
+        registry.register(Arc::new(dev::LintSkill::new(workspace.clone())));
+        registry.register(Arc::new(dev::FormatSkill::new(workspace.clone())));
+
+        // Register session management skills
+        registry.register(Arc::new(session::ConfigSkill::new(workspace.clone())));
+        registry.register(Arc::new(session::ModelSkill::new(workspace.clone())));
+        registry.register(Arc::new(session::ProviderSkill::new(workspace.clone())));
+
+        // Register MCP skill if manager is provided
+        if let Some(manager) = mcp_manager {
+            registry.register(Arc::new(mcp::McpSkill::new(manager)));
+        }
 
         // Register help skill
         registry.register(Arc::new(HelpSkill::new()));
@@ -229,10 +264,35 @@ Git Commands:
   /review           - Review staged changes and provide feedback
   /clean-gone       - Clean up local branches deleted from remote
 
+Git Info Commands:
+  /status           - Show current git status
+  /diff [--staged]  - Show current changes
+  /log [count]      - Show recent commits (default: 10)
+  /branch [name]    - List, create, or switch branches
+
 Context Commands:
   /compact [focus]  - Summarize conversation (optionally preserve specific content)
   /clear            - Clear conversation history, keep memory files
   /context          - Show context usage statistics and memory hierarchy
+
+Development Commands:
+  /test             - Run project tests (auto-detects framework)
+  /build            - Build the project
+  /lint             - Run linter (clippy, eslint, ruff, etc.)
+  /format           - Format code (rustfmt, prettier, black, etc.)
+
+Session Commands:
+  /config           - View current configuration
+  /model            - Show or switch the active model
+  /provider         - Show or switch the active provider
+
+MCP Server Commands:
+  /mcp list         - List configured MCP servers and status
+  /mcp add <name> <cmd> - Add a new MCP server
+  /mcp remove <name>    - Remove an MCP server
+  /mcp start <name>     - Start an MCP server
+  /mcp stop <name>      - Stop a running server
+  /mcp tools [server]   - List tools from MCP servers
 
 General:
   /help             - Show this help message

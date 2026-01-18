@@ -215,6 +215,7 @@ timeout_secs = 600
             default_provider: "anthropic".to_string(),
             providers,
             provider: None,
+            mcp_servers: std::collections::HashMap::new(),
             approval: ApprovalConfig {
                 auto_approve_level: "high".to_string(),
                 show_dialogs: true,

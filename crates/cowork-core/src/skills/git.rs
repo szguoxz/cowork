@@ -636,6 +636,236 @@ Execute the cleanup now."#,
 }
 
 // =============================================================================
+// StatusSkill - /status
+// =============================================================================
+
+/// Status skill - shows git status
+pub struct StatusSkill {
+    workspace: PathBuf,
+}
+
+impl StatusSkill {
+    pub fn new(workspace: PathBuf) -> Self {
+        Self { workspace }
+    }
+}
+
+impl Skill for StatusSkill {
+    fn info(&self) -> SkillInfo {
+        SkillInfo {
+            name: "status".to_string(),
+            display_name: "Git Status".to_string(),
+            description: "Show current git status".to_string(),
+            usage: "/status".to_string(),
+            user_invocable: true,
+        }
+    }
+
+    fn execute(&self, _ctx: SkillContext) -> BoxFuture<'_, SkillResult> {
+        Box::pin(async move {
+            let branch = run_git(&self.workspace, &["branch", "--show-current"]).await
+                .unwrap_or_else(|_| "unknown".to_string());
+
+            let status = run_git(&self.workspace, &["status", "-sb"]).await
+                .unwrap_or_else(|e| format!("Error: {}", e));
+
+            let output = format!(
+                "Branch: {}\n\n{}",
+                branch.trim(),
+                status.trim()
+            );
+
+            SkillResult::success(output)
+        })
+    }
+
+    fn prompt_template(&self) -> &str {
+        ""
+    }
+}
+
+// =============================================================================
+// DiffSkill - /diff
+// =============================================================================
+
+/// Diff skill - shows git diff
+pub struct DiffSkill {
+    workspace: PathBuf,
+}
+
+impl DiffSkill {
+    pub fn new(workspace: PathBuf) -> Self {
+        Self { workspace }
+    }
+}
+
+impl Skill for DiffSkill {
+    fn info(&self) -> SkillInfo {
+        SkillInfo {
+            name: "diff".to_string(),
+            display_name: "Git Diff".to_string(),
+            description: "Show current changes".to_string(),
+            usage: "/diff [file|--staged]".to_string(),
+            user_invocable: true,
+        }
+    }
+
+    fn execute(&self, ctx: SkillContext) -> BoxFuture<'_, SkillResult> {
+        Box::pin(async move {
+            let args = ctx.args.trim();
+
+            let diff = if args == "--staged" || args == "--cached" {
+                run_git(&self.workspace, &["diff", "--cached"]).await
+            } else if args.is_empty() {
+                run_git(&self.workspace, &["diff"]).await
+            } else {
+                run_git(&self.workspace, &["diff", args]).await
+            };
+
+            match diff {
+                Ok(output) if output.trim().is_empty() => {
+                    SkillResult::success("No changes to show.")
+                }
+                Ok(output) => {
+                    SkillResult::success(format!("```diff\n{}\n```", truncate_diff(&output, 15000)))
+                }
+                Err(e) => SkillResult::error(format!("Failed to get diff: {}", e)),
+            }
+        })
+    }
+
+    fn prompt_template(&self) -> &str {
+        ""
+    }
+}
+
+// =============================================================================
+// LogSkill - /log
+// =============================================================================
+
+/// Log skill - shows git log
+pub struct LogSkill {
+    workspace: PathBuf,
+}
+
+impl LogSkill {
+    pub fn new(workspace: PathBuf) -> Self {
+        Self { workspace }
+    }
+}
+
+impl Skill for LogSkill {
+    fn info(&self) -> SkillInfo {
+        SkillInfo {
+            name: "log".to_string(),
+            display_name: "Git Log".to_string(),
+            description: "Show recent commits".to_string(),
+            usage: "/log [count]".to_string(),
+            user_invocable: true,
+        }
+    }
+
+    fn execute(&self, ctx: SkillContext) -> BoxFuture<'_, SkillResult> {
+        Box::pin(async move {
+            let count = ctx.args.trim().parse::<usize>().unwrap_or(10);
+            let count_str = format!("-{}", count);
+
+            let log = run_git(&self.workspace, &[
+                "log", "--oneline", "--decorate", "--graph", &count_str
+            ]).await;
+
+            match log {
+                Ok(output) if output.trim().is_empty() => {
+                    SkillResult::success("No commits yet.")
+                }
+                Ok(output) => {
+                    SkillResult::success(format!("Recent commits:\n\n{}", output.trim()))
+                }
+                Err(e) => SkillResult::error(format!("Failed to get log: {}", e)),
+            }
+        })
+    }
+
+    fn prompt_template(&self) -> &str {
+        ""
+    }
+}
+
+// =============================================================================
+// BranchSkill - /branch
+// =============================================================================
+
+/// Branch skill - list, create, or switch branches
+pub struct BranchSkill {
+    workspace: PathBuf,
+}
+
+impl BranchSkill {
+    pub fn new(workspace: PathBuf) -> Self {
+        Self { workspace }
+    }
+}
+
+impl Skill for BranchSkill {
+    fn info(&self) -> SkillInfo {
+        SkillInfo {
+            name: "branch".to_string(),
+            display_name: "Git Branch".to_string(),
+            description: "List, create, or switch branches".to_string(),
+            usage: "/branch [name] [-d name] [--switch name]".to_string(),
+            user_invocable: true,
+        }
+    }
+
+    fn execute(&self, ctx: SkillContext) -> BoxFuture<'_, SkillResult> {
+        Box::pin(async move {
+            let args: Vec<&str> = ctx.args.split_whitespace().collect();
+
+            if args.is_empty() {
+                // List branches
+                let branches = run_git(&self.workspace, &["branch", "-vv"]).await;
+                match branches {
+                    Ok(output) => SkillResult::success(format!("Branches:\n\n{}", output.trim())),
+                    Err(e) => SkillResult::error(format!("Failed to list branches: {}", e)),
+                }
+            } else if args[0] == "-d" || args[0] == "--delete" {
+                // Delete branch
+                if args.len() < 2 {
+                    return SkillResult::error("Usage: /branch -d <name>");
+                }
+                let result = run_git(&self.workspace, &["branch", "-d", args[1]]).await;
+                match result {
+                    Ok(_) => SkillResult::success(format!("Deleted branch: {}", args[1])),
+                    Err(e) => SkillResult::error(format!("Failed to delete branch: {}", e)),
+                }
+            } else if args[0] == "--switch" || args[0] == "-s" {
+                // Switch branch
+                if args.len() < 2 {
+                    return SkillResult::error("Usage: /branch --switch <name>");
+                }
+                let result = run_git(&self.workspace, &["checkout", args[1]]).await;
+                match result {
+                    Ok(_) => SkillResult::success(format!("Switched to branch: {}", args[1])),
+                    Err(e) => SkillResult::error(format!("Failed to switch branch: {}", e)),
+                }
+            } else {
+                // Create new branch
+                let branch_name = args[0];
+                let result = run_git(&self.workspace, &["checkout", "-b", branch_name]).await;
+                match result {
+                    Ok(_) => SkillResult::success(format!("Created and switched to branch: {}", branch_name)),
+                    Err(e) => SkillResult::error(format!("Failed to create branch: {}", e)),
+                }
+            }
+        })
+    }
+
+    fn prompt_template(&self) -> &str {
+        ""
+    }
+}
+
+// =============================================================================
 // Helper functions
 // =============================================================================
 
