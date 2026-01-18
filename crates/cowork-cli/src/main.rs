@@ -17,7 +17,7 @@ use cowork_core::tools::filesystem::{
 use cowork_core::tools::lsp::LspTool;
 use cowork_core::tools::notebook::NotebookEdit;
 use cowork_core::tools::shell::ExecuteCommand;
-use cowork_core::tools::task::TodoWrite;
+use cowork_core::tools::task::{AgentInstanceRegistry, TaskOutputTool, TaskTool, TodoWrite};
 use cowork_core::tools::web::{WebFetch, WebSearch};
 use cowork_core::tools::{Tool, ToolDefinition, ToolRegistry};
 
@@ -464,7 +464,7 @@ fn tool_needs_approval(tool_name: &str) -> bool {
     match tool_name {
         // Read-only tools - auto-approve
         "read_file" | "glob" | "grep" | "list_directory" | "search_files" | "web_fetch"
-        | "web_search" | "todo_write" => false,
+        | "web_search" | "todo_write" | "lsp" | "task_output" => false,
         // Write/execute tools - need approval
         _ => true,
     }
@@ -513,6 +513,11 @@ fn create_tool_registry(workspace: &PathBuf) -> ToolRegistry {
 
     // Code intelligence tools
     registry.register(std::sync::Arc::new(LspTool::new(workspace.clone())));
+
+    // Agent/Task tools
+    let agent_registry = std::sync::Arc::new(AgentInstanceRegistry::new());
+    registry.register(std::sync::Arc::new(TaskTool::new(agent_registry.clone())));
+    registry.register(std::sync::Arc::new(TaskOutputTool::new(agent_registry)));
 
     registry
 }
@@ -791,6 +796,9 @@ fn show_tools() {
         ("todo_write", "Manage task list", "None"),
         // Code intelligence
         ("lsp", "Language Server Protocol", "None"),
+        // Sub-agents
+        ("task", "Launch subagent for complex tasks", "Low"),
+        ("task_output", "Get output from agents", "None"),
     ];
 
     for (name, desc, approval) in tools {
@@ -873,6 +881,14 @@ const SYSTEM_PROMPT: &str = r#"You are Cowork, an AI coding assistant. You help 
   - hover: Get type info and documentation
   - documentSymbol: List all symbols in a file
   - workspaceSymbol: Search symbols across workspace
+
+### Sub-Agents
+- task: Launch specialized subagents for complex tasks
+  - Bash: Command execution specialist
+  - general-purpose: Research and multi-step tasks
+  - Explore: Fast codebase exploration
+  - Plan: Software architecture and planning
+- task_output: Get output from running/completed agents
 
 ## Workflow Guidelines
 

@@ -444,3 +444,127 @@ impl Tool for TaskOutputTool {
         ApprovalLevel::None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_task_tool_basic() {
+        let registry = Arc::new(AgentInstanceRegistry::new());
+        let tool = TaskTool::new(registry.clone());
+
+        // Verify tool metadata
+        assert_eq!(tool.name(), "task");
+        assert!(tool.description().contains("agent"));
+
+        // Test execution with Explore agent
+        let params = json!({
+            "description": "Find config files",
+            "prompt": "Search for all configuration files in the project",
+            "subagent_type": "Explore"
+        });
+
+        let result = tool.execute(params).await;
+        assert!(result.is_ok());
+
+        let output = result.unwrap();
+        assert!(output.content["status"].as_str() == Some("completed"));
+        assert!(output.content["agent_id"].as_str().is_some());
+        assert!(output.content["result"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_task_tool_background() {
+        let registry = Arc::new(AgentInstanceRegistry::new());
+        let tool = TaskTool::new(registry.clone());
+
+        let params = json!({
+            "description": "Background task",
+            "prompt": "Run a long task",
+            "subagent_type": "Bash",
+            "run_in_background": true
+        });
+
+        let result = tool.execute(params).await.unwrap();
+        assert_eq!(result.content["status"].as_str(), Some("running"));
+        assert!(result.content["output_file"].as_str().is_some());
+        assert!(result.content["agent_id"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_task_output_tool() {
+        let registry = Arc::new(AgentInstanceRegistry::new());
+        let task_tool = TaskTool::new(registry.clone());
+        let output_tool = TaskOutputTool::new(registry.clone());
+
+        // First create a task
+        let params = json!({
+            "description": "Test task",
+            "prompt": "Do something",
+            "subagent_type": "general-purpose"
+        });
+
+        let result = task_tool.execute(params).await.unwrap();
+        let agent_id = result.content["agent_id"].as_str().unwrap().to_string();
+
+        // Now get the output
+        let output_params = json!({
+            "task_id": agent_id,
+            "block": false
+        });
+
+        let output_result = output_tool.execute(output_params).await.unwrap();
+        assert_eq!(output_result.content["status"].as_str(), Some("completed"));
+        assert!(output_result.content["output"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_agent_type_parsing() {
+        assert_eq!("bash".parse::<AgentType>().unwrap(), AgentType::Bash);
+        assert_eq!("Bash".parse::<AgentType>().unwrap(), AgentType::Bash);
+        assert_eq!("explore".parse::<AgentType>().unwrap(), AgentType::Explore);
+        assert_eq!(
+            "general-purpose".parse::<AgentType>().unwrap(),
+            AgentType::GeneralPurpose
+        );
+        assert_eq!("Plan".parse::<AgentType>().unwrap(), AgentType::Plan);
+        assert!("unknown".parse::<AgentType>().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_agent_registry() {
+        let registry = AgentInstanceRegistry::new();
+
+        let agent = AgentInstance {
+            id: "test-123".to_string(),
+            agent_type: AgentType::Explore,
+            description: "Test agent".to_string(),
+            prompt: "Do something".to_string(),
+            model: AgentModel::Sonnet,
+            status: AgentStatus::Running,
+            output: None,
+            output_file: None,
+            created_at: chrono::Utc::now(),
+        };
+
+        registry.register(agent).await;
+
+        // Check we can get it
+        let retrieved = registry.get("test-123").await;
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.as_ref().unwrap().description, "Test agent");
+
+        // Update status
+        registry
+            .update_status("test-123", AgentStatus::Completed, Some("Done!".to_string()))
+            .await;
+        let updated = registry.get("test-123").await.unwrap();
+        assert_eq!(updated.status, AgentStatus::Completed);
+        assert_eq!(updated.output, Some("Done!".to_string()));
+
+        // Check running list is empty now
+        let running = registry.list_running().await;
+        assert!(running.is_empty());
+    }
+}
