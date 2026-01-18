@@ -30,6 +30,7 @@ async fn run_git(workspace: &PathBuf, args: &[&str]) -> Result<String, String> {
 }
 
 /// Helper to run gh (GitHub CLI) commands
+#[allow(dead_code)]
 async fn run_gh(workspace: &PathBuf, args: &[&str]) -> Result<String, String> {
     let output = Command::new("gh")
         .args(args)

@@ -17,6 +17,7 @@ use super::Agent;
 /// Agent specialized for file operations
 pub struct FileAgent {
     id: String,
+    #[allow(dead_code)]
     workspace: PathBuf,
     tools: Vec<Arc<dyn Tool>>,
 }

@@ -115,6 +115,7 @@ impl ApprovalPolicy for DefaultApprovalPolicy {
 
 /// Approval handler that prompts the user
 pub struct ApprovalHandler {
+    #[allow(dead_code)]
     policy: Box<dyn ApprovalPolicy>,
     session_approvals: std::collections::HashSet<String>,
 }

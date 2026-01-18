@@ -154,8 +154,11 @@ async fn run_one_shot(
     let provider = create_provider_from_config(&config_manager, provider_type, model)?
         .with_system_prompt(SYSTEM_PROMPT);
 
-    // Create tool registry
-    let tool_registry = create_tool_registry(workspace, provider_type);
+    // Get API key for subagents
+    let api_key = get_api_key(&config_manager, provider_type);
+
+    // Create tool registry with API key for subagent execution
+    let tool_registry = create_tool_registry(workspace, provider_type, api_key.as_deref());
     let tool_definitions = tool_registry.list();
 
     // Chat history
@@ -214,8 +217,11 @@ async fn run_chat(
         }
     };
 
-    // Create tool registry
-    let tool_registry = create_tool_registry(workspace, provider_type);
+    // Get API key for subagents
+    let api_key = get_api_key(&config_manager, provider_type);
+
+    // Create tool registry with API key for subagent execution
+    let tool_registry = create_tool_registry(workspace, provider_type, api_key.as_deref());
     let tool_definitions = tool_registry.list();
 
     // Create skill registry for slash commands
@@ -484,7 +490,11 @@ async fn handle_slash_command(cmd: &str, workspace: &PathBuf, registry: &SkillRe
 }
 
 /// Create tool registry with all available tools
-fn create_tool_registry(workspace: &PathBuf, provider_type: ProviderType) -> ToolRegistry {
+fn create_tool_registry(
+    workspace: &PathBuf,
+    provider_type: ProviderType,
+    api_key: Option<&str>,
+) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
 
     // Filesystem tools
@@ -514,14 +524,38 @@ fn create_tool_registry(workspace: &PathBuf, provider_type: ProviderType) -> Too
     // Code intelligence tools
     registry.register(std::sync::Arc::new(LspTool::new(workspace.clone())));
 
-    // Agent/Task tools
+    // Agent/Task tools - pass API key for subagent execution
     let agent_registry = std::sync::Arc::new(AgentInstanceRegistry::new());
-    registry.register(std::sync::Arc::new(
-        TaskTool::new(agent_registry.clone(), workspace.clone()).with_provider(provider_type),
-    ));
+    let mut task_tool = TaskTool::new(agent_registry.clone(), workspace.clone())
+        .with_provider(provider_type);
+    if let Some(key) = api_key {
+        task_tool = task_tool.with_api_key(key.to_string());
+    }
+    registry.register(std::sync::Arc::new(task_tool));
     registry.register(std::sync::Arc::new(TaskOutputTool::new(agent_registry)));
 
     registry
+}
+
+/// Get API key from config or environment
+fn get_api_key(config_manager: &ConfigManager, provider_type: ProviderType) -> Option<String> {
+    let provider_name = provider_type.to_string();
+
+    // Try config first
+    if let Some(provider_config) = config_manager.config().providers.get(&provider_name) {
+        if let Some(key) = provider_config.get_api_key() {
+            return Some(key);
+        }
+    }
+
+    // Fall back to environment variable
+    if let Some(env_var) = provider_type.api_key_env() {
+        if let Ok(key) = std::env::var(env_var) {
+            return Some(key);
+        }
+    }
+
+    None
 }
 
 /// Create a provider from config, falling back to environment variables

@@ -302,7 +302,8 @@ mod integration_tests {
         // 2. Count tokens
         let counter = TokenCounter::new(ProviderType::Anthropic);
         let token_count = counter.count(&prompt);
-        assert!(token_count >= 0);
+        // Token count is usize, so it's always >= 0; just verify it's reasonable
+        assert!(token_count < 1_000_000, "Token count should be reasonable");
         println!("Context tokens: {}", token_count);
 
         // 3. Check if summarization needed

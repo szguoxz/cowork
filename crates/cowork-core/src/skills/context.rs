@@ -10,6 +10,7 @@ use super::{BoxFuture, Skill, SkillContext, SkillInfo, SkillResult};
 
 /// /compact command - Summarize conversation with optional preservation instructions
 pub struct CompactSkill {
+    #[allow(dead_code)]
     workspace: PathBuf,
 }
 
@@ -82,6 +83,7 @@ impl Skill for CompactSkill {
 
 /// /clear command - Reset conversation while keeping memory files
 pub struct ClearSkill {
+    #[allow(dead_code)]
     workspace: PathBuf,
 }
 

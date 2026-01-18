@@ -317,7 +317,8 @@ impl ContextGatherer {
         sections.join("\n\n")
     }
 
-    /// Read CLAUDE.md content
+    /// Read CLAUDE.md content (legacy single-file support)
+    #[allow(dead_code)]
     async fn read_claude_md(&self) -> Option<String> {
         let paths = [
             self.workspace.join("CLAUDE.md"),
