@@ -10,7 +10,7 @@ name = "cowork"
 path = "src/main.rs"
 
 [dependencies]
-cowork-core = { path = "../cowork-core", default-features = false, features = [] }
+cowork-core = { path = "../cowork-core", features = ["lsp", "tiktoken"] }
 cowork-mcp = { path = "../cowork-mcp" }
 
 tokio = { version = "1", features = ["full"] }
