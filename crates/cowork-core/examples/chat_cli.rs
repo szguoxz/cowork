@@ -10,7 +10,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use cowork_core::provider::{GenAIProvider, LlmMessage, ProviderType};
-use cowork_core::tools::{Tool, ToolRegistry, ToolDefinition};
+use cowork_core::tools::ToolRegistry;
 use cowork_core::tools::filesystem::{ReadFile, WriteFile, GlobFiles, GrepFiles};
 use cowork_core::tools::shell::ExecuteCommand;
 

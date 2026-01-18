@@ -2,6 +2,9 @@
 
 use std::sync::Arc;
 
+use cowork_core::context::{
+    ContextMonitor, ContextUsage, Message, MessageRole, MonitorConfig,
+};
 use cowork_core::provider::{
     create_provider, LlmMessage, LlmProvider, LlmRequest, ProviderType,
 };
@@ -47,6 +50,10 @@ pub struct ChatSession {
     pub provider: Arc<dyn LlmProvider>,
     pub system_prompt: String,
     pub available_tools: Vec<ToolDefinition>,
+    /// Context monitor for tracking token usage
+    context_monitor: Option<ContextMonitor>,
+    /// Provider type for the session
+    provider_type: ProviderType,
 }
 
 impl ChatSession {
@@ -57,7 +64,64 @@ impl ChatSession {
             provider,
             system_prompt: default_system_prompt(),
             available_tools: default_tools(),
+            context_monitor: None,
+            provider_type: ProviderType::Anthropic,
         }
+    }
+
+    /// Create a new session with a specific provider type
+    pub fn with_provider_type(provider: Arc<dyn LlmProvider>, provider_type: ProviderType) -> Self {
+        let context_monitor = Some(ContextMonitor::new(provider_type.clone()));
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            messages: Vec::new(),
+            provider,
+            system_prompt: default_system_prompt(),
+            available_tools: default_tools(),
+            context_monitor,
+            provider_type,
+        }
+    }
+
+    /// Get current context usage
+    pub fn context_usage(&self) -> Option<ContextUsage> {
+        let monitor = self.context_monitor.as_ref()?;
+
+        // Convert ChatMessages to context Messages
+        let context_messages: Vec<Message> = self
+            .messages
+            .iter()
+            .map(|m| Message {
+                role: match m.role.as_str() {
+                    "user" => MessageRole::User,
+                    "assistant" => MessageRole::Assistant,
+                    "system" => MessageRole::System,
+                    _ => MessageRole::Tool,
+                },
+                content: m.content.clone(),
+                timestamp: m.timestamp,
+            })
+            .collect();
+
+        Some(monitor.calculate_usage(&context_messages, &self.system_prompt, None))
+    }
+
+    /// Check if context should be compacted
+    pub fn should_compact(&self) -> bool {
+        self.context_usage()
+            .map(|u| u.should_compact)
+            .unwrap_or(false)
+    }
+
+    /// Enable context monitoring with optional custom config
+    pub fn enable_context_monitoring(&mut self, config: Option<MonitorConfig>) {
+        let cfg = config.unwrap_or_default();
+        self.context_monitor = Some(ContextMonitor::with_config(self.provider_type.clone(), cfg));
+    }
+
+    /// Get the provider type
+    pub fn provider_type(&self) -> ProviderType {
+        self.provider_type.clone()
     }
 
     /// Add a user message and get an assistant response

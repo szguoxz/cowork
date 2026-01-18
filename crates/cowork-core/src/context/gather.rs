@@ -1,14 +1,111 @@
 //! Project context gathering
 //!
 //! Gathers relevant project context like CLAUDE.md, git status, etc.
+//! Implements Claude Code's 4-tier memory hierarchy:
+//!
+//! | Priority | Tier       | Location                                    |
+//! |----------|------------|---------------------------------------------|
+//! | 1        | Enterprise | `/etc/claude-code/CLAUDE.md`                |
+//! | 2        | Project    | `./CLAUDE.md`, `./.claude/CLAUDE.md`        |
+//! | 3        | Rules      | `./.claude/rules/*.md` (glob patterns)      |
+//! | 4        | User       | `~/.claude/CLAUDE.md`, `./CLAUDE.local.md`  |
 
-use std::path::Path;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+/// Memory tier priority levels (lower = higher priority)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum MemoryTier {
+    /// Enterprise-level configuration (e.g., /etc/claude-code/CLAUDE.md)
+    Enterprise = 1,
+    /// Project-level configuration (e.g., ./CLAUDE.md)
+    Project = 2,
+    /// Rules directory (e.g., ./.claude/rules/*.md)
+    Rules = 3,
+    /// User-level configuration (e.g., ~/.claude/CLAUDE.md)
+    User = 4,
+}
+
+impl std::fmt::Display for MemoryTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MemoryTier::Enterprise => write!(f, "enterprise"),
+            MemoryTier::Project => write!(f, "project"),
+            MemoryTier::Rules => write!(f, "rules"),
+            MemoryTier::User => write!(f, "user"),
+        }
+    }
+}
+
+/// A single memory file with its content and metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryFile {
+    /// Path to the file
+    pub path: PathBuf,
+    /// Content of the file
+    pub content: String,
+    /// Which tier this file belongs to
+    pub tier: MemoryTier,
+    /// Size in bytes
+    pub size: usize,
+}
+
+/// Complete memory hierarchy with all loaded files
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MemoryHierarchy {
+    /// All memory files, sorted by priority (enterprise first)
+    pub files: Vec<MemoryFile>,
+    /// Combined content from all files, with section headers
+    pub combined_content: String,
+    /// Total size of all memory content
+    pub total_size: usize,
+}
+
+impl MemoryHierarchy {
+    /// Check if any memory files were found
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+
+    /// Get the number of memory files
+    pub fn file_count(&self) -> usize {
+        self.files.len()
+    }
+
+    /// Get files from a specific tier
+    pub fn files_in_tier(&self, tier: MemoryTier) -> Vec<&MemoryFile> {
+        self.files.iter().filter(|f| f.tier == tier).collect()
+    }
+
+    /// Format as a summary string
+    pub fn summary(&self) -> String {
+        if self.files.is_empty() {
+            return "No memory files found.".to_string();
+        }
+
+        let mut summary = format!("Memory hierarchy: {} files, {} bytes total\n", self.files.len(), self.total_size);
+
+        for tier in [MemoryTier::Enterprise, MemoryTier::Project, MemoryTier::Rules, MemoryTier::User] {
+            let tier_files: Vec<_> = self.files.iter().filter(|f| f.tier == tier).collect();
+            if !tier_files.is_empty() {
+                summary.push_str(&format!("\n  [{}]:\n", tier));
+                for file in tier_files {
+                    summary.push_str(&format!("    - {} ({} bytes)\n", file.path.display(), file.size));
+                }
+            }
+        }
+
+        summary
+    }
+}
 
 /// Gathered project context
 #[derive(Debug, Clone, Default)]
 pub struct ProjectContext {
-    /// Content from CLAUDE.md if found
+    /// Content from CLAUDE.md if found (legacy single-file support)
     pub claude_md: Option<String>,
+    /// Full memory hierarchy
+    pub memory_hierarchy: Option<MemoryHierarchy>,
     /// Current git branch
     pub git_branch: Option<String>,
     /// Git status summary
@@ -25,7 +122,7 @@ pub struct ProjectContext {
 
 /// Gathers project context from a workspace
 pub struct ContextGatherer {
-    workspace: std::path::PathBuf,
+    workspace: PathBuf,
 }
 
 impl ContextGatherer {
@@ -39,8 +136,12 @@ impl ContextGatherer {
     pub async fn gather(&self) -> ProjectContext {
         let mut context = ProjectContext::default();
 
-        // Read CLAUDE.md if present
-        context.claude_md = self.read_claude_md().await;
+        // Gather the full memory hierarchy
+        let hierarchy = self.gather_memory_hierarchy().await;
+        if !hierarchy.is_empty() {
+            context.claude_md = Some(hierarchy.combined_content.clone());
+            context.memory_hierarchy = Some(hierarchy);
+        }
 
         // Get git info
         if let Some(git_info) = self.gather_git_info().await {
@@ -58,6 +159,162 @@ impl ContextGatherer {
         context.key_files = self.find_key_files().await;
 
         context
+    }
+
+    /// Gather the 4-tier memory hierarchy
+    ///
+    /// Priority order (1 = highest):
+    /// 1. Enterprise: /etc/claude-code/CLAUDE.md
+    /// 2. Project: ./CLAUDE.md, ./.claude/CLAUDE.md
+    /// 3. Rules: ./.claude/rules/*.md
+    /// 4. User: ~/.claude/CLAUDE.md, ./CLAUDE.local.md
+    pub async fn gather_memory_hierarchy(&self) -> MemoryHierarchy {
+        let mut files = Vec::new();
+
+        // Tier 1: Enterprise
+        let enterprise_paths = [
+            PathBuf::from("/etc/claude-code/CLAUDE.md"),
+            PathBuf::from("/etc/cowork/CLAUDE.md"),
+        ];
+
+        for path in &enterprise_paths {
+            if let Ok(content) = tokio::fs::read_to_string(path).await {
+                let size = content.len();
+                files.push(MemoryFile {
+                    path: path.clone(),
+                    content,
+                    tier: MemoryTier::Enterprise,
+                    size,
+                });
+            }
+        }
+
+        // Tier 2: Project
+        let project_paths = [
+            self.workspace.join("CLAUDE.md"),
+            self.workspace.join(".claude/CLAUDE.md"),
+            self.workspace.join(".cowork/CLAUDE.md"),
+        ];
+
+        for path in &project_paths {
+            if let Ok(content) = tokio::fs::read_to_string(path).await {
+                let size = content.len();
+                files.push(MemoryFile {
+                    path: path.clone(),
+                    content,
+                    tier: MemoryTier::Project,
+                    size,
+                });
+            }
+        }
+
+        // Tier 3: Rules (.claude/rules/*.md)
+        let rules_dirs = [
+            self.workspace.join(".claude/rules"),
+            self.workspace.join(".cowork/rules"),
+        ];
+
+        for rules_dir in &rules_dirs {
+            if rules_dir.exists() {
+                if let Ok(mut entries) = tokio::fs::read_dir(rules_dir).await {
+                    let mut rule_paths = Vec::new();
+
+                    while let Ok(Some(entry)) = entries.next_entry().await {
+                        let path = entry.path();
+                        if path.extension().map(|e| e == "md").unwrap_or(false) {
+                            rule_paths.push(path);
+                        }
+                    }
+
+                    // Sort rule files alphabetically for consistent ordering
+                    rule_paths.sort();
+
+                    for path in rule_paths {
+                        if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                            let size = content.len();
+                            files.push(MemoryFile {
+                                path,
+                                content,
+                                tier: MemoryTier::Rules,
+                                size,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Tier 4: User
+        let mut user_paths = vec![
+            self.workspace.join("CLAUDE.local.md"),
+            self.workspace.join(".claude/CLAUDE.local.md"),
+        ];
+
+        // Add home directory paths
+        if let Some(home) = dirs::home_dir() {
+            user_paths.push(home.join(".claude/CLAUDE.md"));
+            user_paths.push(home.join(".cowork/CLAUDE.md"));
+        }
+
+        for path in &user_paths {
+            if let Ok(content) = tokio::fs::read_to_string(path).await {
+                let size = content.len();
+                files.push(MemoryFile {
+                    path: path.clone(),
+                    content,
+                    tier: MemoryTier::User,
+                    size,
+                });
+            }
+        }
+
+        // Sort by tier (priority order)
+        files.sort_by_key(|f| f.tier);
+
+        // Calculate total size and build combined content
+        let total_size: usize = files.iter().map(|f| f.size).sum();
+        let combined_content = self.build_combined_content(&files);
+
+        MemoryHierarchy {
+            files,
+            combined_content,
+            total_size,
+        }
+    }
+
+    /// Build combined content from memory files with section headers
+    fn build_combined_content(&self, files: &[MemoryFile]) -> String {
+        if files.is_empty() {
+            return String::new();
+        }
+
+        let mut sections = Vec::new();
+        let mut current_tier: Option<MemoryTier> = None;
+
+        for file in files {
+            // Add tier header when tier changes
+            if current_tier != Some(file.tier) {
+                current_tier = Some(file.tier);
+                let tier_header = match file.tier {
+                    MemoryTier::Enterprise => "=== Enterprise Configuration ===",
+                    MemoryTier::Project => "=== Project Instructions ===",
+                    MemoryTier::Rules => "=== Project Rules ===",
+                    MemoryTier::User => "=== User Configuration ===",
+                };
+                sections.push(tier_header.to_string());
+            }
+
+            // Add file header for rules tier (multiple files)
+            if file.tier == MemoryTier::Rules {
+                if let Some(filename) = file.path.file_name() {
+                    sections.push(format!("\n--- {} ---", filename.to_string_lossy()));
+                }
+            }
+
+            sections.push(file.content.clone());
+        }
+
+        sections.join("\n\n")
     }
 
     /// Read CLAUDE.md content

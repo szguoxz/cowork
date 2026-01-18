@@ -9,7 +9,7 @@ use crate::approval::{ApprovalPolicy, ApprovalRequest};
 use crate::context::Context;
 use crate::error::{Error, Result};
 
-use super::{StepResult, Task, TaskStatus, TaskStep, TaskSummary};
+use super::{Task, TaskStatus, TaskSummary};
 
 /// Events emitted during task execution
 #[derive(Debug, Clone)]

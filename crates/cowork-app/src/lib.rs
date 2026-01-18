@@ -98,6 +98,11 @@ pub fn run() {
             commands::execute_skill,
             commands::list_skills,
             commands::execute_command_string,
+            // Context management commands
+            commands::get_context_usage,
+            commands::compact_session,
+            commands::clear_session,
+            commands::get_memory_hierarchy,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

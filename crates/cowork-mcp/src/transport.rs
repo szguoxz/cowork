@@ -6,7 +6,6 @@ use std::io;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
-use crate::protocol::{JsonRpcRequest, JsonRpcResponse};
 
 /// Transport trait for MCP communication
 #[async_trait]

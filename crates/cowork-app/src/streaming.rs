@@ -2,7 +2,7 @@
 //!
 //! Provides token-by-token streaming of LLM responses to the frontend.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
@@ -70,6 +70,7 @@ pub struct StreamingMessage {
 /// Tracks a tool call being streamed
 struct StreamingToolCall {
     id: String,
+    #[allow(dead_code)]
     name: String,
     arguments_json: String,
 }

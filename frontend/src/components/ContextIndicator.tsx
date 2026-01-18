@@ -1,0 +1,367 @@
+import { useState, useEffect, useCallback } from 'react'
+import { Database, AlertTriangle, Trash2, Minimize2 } from 'lucide-react'
+
+// Check if we're running in Tauri
+const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+
+// Dynamic imports for Tauri APIs
+const getTauriApi = async () => {
+  if (!isTauri) return null
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const { listen } = await import('@tauri-apps/api/event')
+    return { invoke, listen }
+  } catch {
+    return null
+  }
+}
+
+interface ContextBreakdown {
+  system_tokens: number
+  conversation_tokens: number
+  tool_tokens: number
+  memory_tokens: number
+}
+
+interface ContextUsage {
+  used_tokens: number
+  limit_tokens: number
+  used_percentage: number
+  remaining_tokens: number
+  should_compact: boolean
+  breakdown: ContextBreakdown
+}
+
+interface ContextIndicatorProps {
+  sessionId: string | null
+  onCompact?: () => void
+  onClear?: () => void
+}
+
+// Mock data for browser testing
+const mockUsage: ContextUsage = {
+  used_tokens: 45000,
+  limit_tokens: 200000,
+  used_percentage: 0.225,
+  remaining_tokens: 155000,
+  should_compact: false,
+  breakdown: {
+    system_tokens: 5000,
+    conversation_tokens: 35000,
+    tool_tokens: 3000,
+    memory_tokens: 2000,
+  },
+}
+
+export default function ContextIndicator({ sessionId, onCompact, onClear }: ContextIndicatorProps) {
+  const [usage, setUsage] = useState<ContextUsage | null>(isTauri ? null : mockUsage)
+  const [isExpanded, setIsExpanded] = useState(false)
+  const [isCompacting, setIsCompacting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetchUsage = useCallback(async () => {
+    if (!isTauri) {
+      // Use mock data in browser
+      setUsage(mockUsage)
+      return
+    }
+
+    if (!sessionId) return
+
+    try {
+      const api = await getTauriApi()
+      if (!api) return
+
+      const contextUsage = await api.invoke<ContextUsage>('get_context_usage', { sessionId })
+      setUsage(contextUsage)
+      setError(null)
+    } catch (err) {
+      console.error('Failed to fetch context usage:', err)
+      setError(String(err))
+    }
+  }, [sessionId])
+
+  // Fetch usage on mount and when sessionId changes
+  useEffect(() => {
+    fetchUsage()
+  }, [fetchUsage])
+
+  // Listen for context events
+  useEffect(() => {
+    if (!isTauri || !sessionId) return
+
+    let unlistenContext: Promise<() => void> | null = null
+    let unlistenLoop: Promise<() => void> | null = null
+
+    const setupListeners = async () => {
+      const api = await getTauriApi()
+      if (!api) return
+
+      unlistenContext = api.listen<{ type: string; usage?: ContextUsage }>(
+        `context:${sessionId}`,
+        (event) => {
+          if (event.payload.type === 'usage_updated' && event.payload.usage) {
+            setUsage(event.payload.usage)
+          } else if (event.payload.type === 'compact_completed') {
+            setIsCompacting(false)
+            fetchUsage()
+          }
+        }
+      )
+
+      // Also refresh on loop events
+      unlistenLoop = api.listen<{ type: string }>(
+        `loop:${sessionId}`,
+        (event) => {
+          if (event.payload.type === 'loop_completed' || event.payload.type === 'iteration_complete') {
+            fetchUsage()
+          }
+        }
+      )
+    }
+
+    setupListeners()
+
+    return () => {
+      unlistenContext?.then((fn) => fn())
+      unlistenLoop?.then((fn) => fn())
+    }
+  }, [sessionId, fetchUsage])
+
+  const handleCompact = async () => {
+    if (isCompacting) return
+
+    if (!isTauri) {
+      // Mock compact in browser
+      setIsCompacting(true)
+      setTimeout(() => {
+        setUsage({
+          ...mockUsage,
+          used_tokens: 15000,
+          used_percentage: 0.075,
+          remaining_tokens: 185000,
+          breakdown: { ...mockUsage.breakdown, conversation_tokens: 8000 },
+        })
+        setIsCompacting(false)
+        onCompact?.()
+      }, 1000)
+      return
+    }
+
+    if (!sessionId) return
+
+    setIsCompacting(true)
+    try {
+      const api = await getTauriApi()
+      if (!api) return
+
+      await api.invoke('compact_session', { sessionId })
+      await fetchUsage()
+      onCompact?.()
+    } catch (err) {
+      console.error('Failed to compact:', err)
+      setError(String(err))
+    } finally {
+      setIsCompacting(false)
+    }
+  }
+
+  const handleClear = async () => {
+    if (!isTauri) {
+      // Mock clear in browser
+      setUsage({
+        ...mockUsage,
+        used_tokens: 5000,
+        used_percentage: 0.025,
+        remaining_tokens: 195000,
+        breakdown: { ...mockUsage.breakdown, conversation_tokens: 0, tool_tokens: 0 },
+      })
+      onClear?.()
+      return
+    }
+
+    if (!sessionId) return
+
+    try {
+      const api = await getTauriApi()
+      if (!api) return
+
+      await api.invoke('clear_session', { sessionId })
+      await fetchUsage()
+      onClear?.()
+    } catch (err) {
+      console.error('Failed to clear:', err)
+      setError(String(err))
+    }
+  }
+
+  if (!usage) {
+    return null
+  }
+
+  // Determine color based on usage
+  const getProgressColor = () => {
+    if (usage.used_percentage >= 0.9) return 'bg-red-500'
+    if (usage.used_percentage >= 0.75) return 'bg-yellow-500'
+    if (usage.used_percentage >= 0.5) return 'bg-blue-500'
+    return 'bg-green-500'
+  }
+
+  const formatTokens = (tokens: number) => {
+    if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
+    if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
+    return tokens.toString()
+  }
+
+  return (
+    <div className="relative">
+      {/* Compact indicator button */}
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className={`
+          flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm
+          transition-colors duration-200
+          ${usage.should_compact
+            ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 border border-yellow-300 dark:border-yellow-700'
+            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
+          }
+          hover:bg-gray-200 dark:hover:bg-gray-700
+        `}
+        title="Context usage"
+      >
+        {usage.should_compact ? (
+          <AlertTriangle className="w-4 h-4" />
+        ) : (
+          <Database className="w-4 h-4" />
+        )}
+
+        {/* Mini progress bar */}
+        <div className="w-16 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+          <div
+            className={`h-full ${getProgressColor()} transition-all duration-300`}
+            style={{ width: `${Math.min(usage.used_percentage * 100, 100)}%` }}
+          />
+        </div>
+
+        <span className="font-mono text-xs">
+          {(usage.used_percentage * 100).toFixed(0)}%
+        </span>
+      </button>
+
+      {/* Expanded panel */}
+      {isExpanded && (
+        <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50">
+          <div className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-gray-900 dark:text-white">Context Usage</h3>
+              <button
+                onClick={() => setIsExpanded(false)}
+                className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              >
+                <Minimize2 className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Main progress bar */}
+            <div className="mb-4">
+              <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                <span>{formatTokens(usage.used_tokens)} used</span>
+                <span>{formatTokens(usage.remaining_tokens)} remaining</span>
+              </div>
+              <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                <div
+                  className={`h-full ${getProgressColor()} transition-all duration-300`}
+                  style={{ width: `${Math.min(usage.used_percentage * 100, 100)}%` }}
+                />
+              </div>
+              <div className="text-center text-xs text-gray-500 dark:text-gray-400 mt-1">
+                {formatTokens(usage.limit_tokens)} total capacity
+              </div>
+            </div>
+
+            {/* Breakdown */}
+            <div className="space-y-2 mb-4">
+              <h4 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                Breakdown
+              </h4>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">System:</span>
+                  <span className="font-mono text-gray-900 dark:text-white">
+                    {formatTokens(usage.breakdown.system_tokens)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Memory:</span>
+                  <span className="font-mono text-gray-900 dark:text-white">
+                    {formatTokens(usage.breakdown.memory_tokens)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Conversation:</span>
+                  <span className="font-mono text-gray-900 dark:text-white">
+                    {formatTokens(usage.breakdown.conversation_tokens)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Tools:</span>
+                  <span className="font-mono text-gray-900 dark:text-white">
+                    {formatTokens(usage.breakdown.tool_tokens)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Warning message */}
+            {usage.should_compact && (
+              <div className="mb-4 p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded border border-yellow-200 dark:border-yellow-800">
+                <p className="text-xs text-yellow-800 dark:text-yellow-200">
+                  Context is getting full. Consider compacting to summarize older messages.
+                </p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-2">
+              <button
+                onClick={handleCompact}
+                disabled={isCompacting}
+                className={`
+                  flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm
+                  transition-colors duration-200
+                  ${usage.should_compact
+                    ? 'bg-yellow-500 text-white hover:bg-yellow-600'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  }
+                  disabled:opacity-50 disabled:cursor-not-allowed
+                `}
+              >
+                {isCompacting ? (
+                  <span className="animate-spin">...</span>
+                ) : (
+                  <Minimize2 className="w-4 h-4" />
+                )}
+                Compact
+              </button>
+              <button
+                onClick={handleClear}
+                className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm
+                  bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300
+                  hover:bg-red-200 dark:hover:bg-red-900/50
+                  transition-colors duration-200"
+                title="Clear conversation"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Error message */}
+            {error && (
+              <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

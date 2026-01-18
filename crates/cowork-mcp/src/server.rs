@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::protocol::{methods, JsonRpcError, JsonRpcRequest, JsonRpcResponse, RequestId};
-use crate::transport::Transport;
 use crate::{McpPrompt, McpResource, McpTool, ServerCapabilities, PROTOCOL_VERSION};
 
 /// Handler for MCP requests

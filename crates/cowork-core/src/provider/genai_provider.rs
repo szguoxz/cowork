@@ -173,6 +173,21 @@ impl GenAIProvider {
         }
     }
 
+    /// Create a provider with API key and optional custom base URL
+    ///
+    /// Note: Custom base_url support is limited and depends on the provider.
+    /// For most providers, the default API endpoint is used.
+    pub fn with_config(
+        provider_type: ProviderType,
+        api_key: &str,
+        model: Option<&str>,
+        _base_url: Option<&str>,
+    ) -> Self {
+        // Note: base_url is accepted but not fully supported by genai yet
+        // Future: implement custom endpoint support per provider
+        Self::with_api_key(provider_type, api_key, model)
+    }
+
     /// Set the system prompt
     pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.system_prompt = Some(prompt.into());

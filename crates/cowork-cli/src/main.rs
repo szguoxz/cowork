@@ -7,6 +7,7 @@ use console::style;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input};
 use indicatif::{ProgressBar, ProgressStyle};
 
+use cowork_core::config::ConfigManager;
 use cowork_core::provider::{CompletionResult, GenAIProvider, LlmMessage, ProviderType};
 use cowork_core::skills::SkillRegistry;
 use cowork_core::tools::filesystem::{
@@ -39,6 +40,14 @@ struct Cli {
     /// Model to use (defaults to provider's default)
     #[arg(short, long)]
     model: Option<String>,
+
+    /// Auto-approve all tool calls (use with caution!)
+    #[arg(long)]
+    auto_approve: bool,
+
+    /// Execute a single prompt and exit (non-interactive mode)
+    #[arg(long)]
+    one_shot: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -104,8 +113,13 @@ async fn main() -> anyhow::Result<()> {
         "anthropic" | _ => ProviderType::Anthropic,
     };
 
+    // Handle one-shot mode
+    if let Some(prompt) = cli.one_shot {
+        return run_one_shot(&workspace, provider_type, cli.model.as_deref(), &prompt, cli.auto_approve).await;
+    }
+
     match cli.command {
-        Some(Commands::Chat) => run_chat(&workspace, provider_type, cli.model.as_deref()).await?,
+        Some(Commands::Chat) => run_chat(&workspace, provider_type, cli.model.as_deref(), cli.auto_approve).await?,
         Some(Commands::Run { command }) => run_command(&workspace, &command).await?,
         Some(Commands::List { path }) => list_files(&workspace, &path).await?,
         Some(Commands::Read { path }) => read_file(&workspace, &path).await?,
@@ -114,8 +128,44 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Tools) => show_tools(),
         Some(Commands::Config) => show_config(&workspace),
-        None => run_chat(&workspace, provider_type, cli.model.as_deref()).await?,
+        None => run_chat(&workspace, provider_type, cli.model.as_deref(), cli.auto_approve).await?,
     }
+
+    Ok(())
+}
+
+/// Run a single prompt non-interactively (for scripting/testing)
+async fn run_one_shot(
+    workspace: &PathBuf,
+    provider_type: ProviderType,
+    model: Option<&str>,
+    prompt: &str,
+    auto_approve: bool,
+) -> anyhow::Result<()> {
+    // Load config
+    let config_manager = ConfigManager::new()?;
+
+    // Create provider from config or environment
+    let provider = create_provider_from_config(&config_manager, provider_type, model)?
+        .with_system_prompt(SYSTEM_PROMPT);
+
+    // Create tool registry
+    let tool_registry = create_tool_registry(workspace);
+    let tool_definitions = tool_registry.list();
+
+    // Chat history
+    let mut messages: Vec<LlmMessage> = Vec::new();
+
+    // Process the single message
+    process_ai_message(
+        prompt,
+        &provider,
+        &tool_registry,
+        &tool_definitions,
+        &mut messages,
+        auto_approve,
+    )
+    .await?;
 
     Ok(())
 }
@@ -124,32 +174,40 @@ async fn run_chat(
     workspace: &PathBuf,
     provider_type: ProviderType,
     model: Option<&str>,
+    auto_approve: bool,
 ) -> anyhow::Result<()> {
     println!("{}", style("Cowork - AI Coding Assistant").bold().cyan());
     println!(
         "{}",
         style(format!("Provider: {:?}", provider_type)).dim()
     );
+    if auto_approve {
+        println!(
+            "{}",
+            style("Warning: Auto-approve mode is ON - all tool calls will be approved automatically!").yellow().bold()
+        );
+    }
     println!(
         "{}",
         style("Type 'help' for commands, 'exit' to quit, or just chat with the AI").dim()
     );
     println!();
 
-    // Check for API key
-    if let Some(env_var) = provider_type.api_key_env() {
-        if std::env::var(env_var).is_err() {
+    // Load config
+    let config_manager = ConfigManager::new()?;
+
+    // Create provider from config or environment
+    let provider = match create_provider_from_config(&config_manager, provider_type, model) {
+        Ok(p) => p.with_system_prompt(SYSTEM_PROMPT),
+        Err(e) => {
             println!(
                 "{}",
-                style(format!("Warning: {} not set. Please set it or the AI won't work.", env_var))
-                    .yellow()
+                style(format!("Warning: {}. The AI may not work.", e)).yellow()
             );
             println!();
+            GenAIProvider::new(provider_type, model).with_system_prompt(SYSTEM_PROMPT)
         }
-    }
-
-    // Create provider
-    let provider = GenAIProvider::new(provider_type, model).with_system_prompt(SYSTEM_PROMPT);
+    };
 
     // Create tool registry
     let tool_registry = create_tool_registry(workspace);
@@ -219,6 +277,7 @@ async fn run_chat(
                     &tool_registry,
                     &tool_definitions,
                     &mut messages,
+                    auto_approve,
                 )
                 .await?;
             }
@@ -237,6 +296,7 @@ async fn process_ai_message(
     tool_registry: &ToolRegistry,
     tool_definitions: &[ToolDefinition],
     messages: &mut Vec<LlmMessage>,
+    auto_approve: bool,
 ) -> anyhow::Result<()> {
     // Add user message
     messages.push(LlmMessage {
@@ -295,7 +355,11 @@ async fn process_ai_message(
                     // Check if tool needs approval
                     let needs_approval = tool_needs_approval(&call.name);
 
-                    let approved = if needs_approval {
+                    let approved = if auto_approve {
+                        // Auto-approve all tools
+                        println!("  {} (auto-approved)", style("Auto-approve mode").yellow());
+                        true
+                    } else if needs_approval {
                         Confirm::with_theme(&ColorfulTheme::default())
                             .with_prompt("Approve this tool call?")
                             .default(true)
@@ -354,21 +418,26 @@ async fn process_ai_message(
                 }
 
                 // Add tool results to messages for context
-                // Format as assistant message with tool results
+                // Format as a user message with the tool execution results
+                // This simulates the system reporting back what happened
                 let results_summary: Vec<String> = tool_results
                     .iter()
                     .map(|(name, result, success)| {
                         if *success {
-                            format!("Tool {} result: {}", name, result)
+                            format!("[Tool '{}' executed successfully]\nResult: {}", name, result)
                         } else {
-                            format!("Tool {} failed: {}", name, result)
+                            format!("[Tool '{}' failed]\nError: {}", name, result)
                         }
                     })
                     .collect();
 
+                // Add as user message so the AI knows to continue with next steps
                 messages.push(LlmMessage {
-                    role: "assistant".to_string(),
-                    content: format!("I used these tools:\n{}", results_summary.join("\n")),
+                    role: "user".to_string(),
+                    content: format!(
+                        "Tool execution results:\n\n{}\n\nPlease continue with the next step of the task.",
+                        results_summary.join("\n\n")
+                    ),
                 });
 
                 // Continue the loop to let AI process tool results
@@ -421,6 +490,51 @@ fn create_tool_registry(workspace: &PathBuf) -> ToolRegistry {
     registry.register(std::sync::Arc::new(ExecuteCommand::new(workspace.clone())));
 
     registry
+}
+
+/// Create a provider from config, falling back to environment variables
+fn create_provider_from_config(
+    config_manager: &ConfigManager,
+    provider_type: ProviderType,
+    model: Option<&str>,
+) -> anyhow::Result<GenAIProvider> {
+    let provider_name = provider_type.to_string();
+
+    // Try to get provider config from config file
+    if let Some(provider_config) = config_manager.config().providers.get(&provider_name) {
+        // Get API key from config or environment
+        let api_key = provider_config.get_api_key().ok_or_else(|| {
+            anyhow::anyhow!(
+                "No API key configured for {}. Set it in config or via {}",
+                provider_name,
+                provider_type.api_key_env().unwrap_or("environment variable")
+            )
+        })?;
+
+        // Use model from argument, or from config
+        let model = model.unwrap_or(&provider_config.model);
+
+        // Create provider with config (supports custom base_url)
+        Ok(GenAIProvider::with_config(
+            provider_type,
+            &api_key,
+            Some(model),
+            provider_config.base_url.as_deref(),
+        ))
+    } else {
+        // No config for this provider, try environment variable
+        if let Some(env_var) = provider_type.api_key_env() {
+            if let Ok(api_key) = std::env::var(env_var) {
+                return Ok(GenAIProvider::with_api_key(provider_type, &api_key, model));
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "No configuration found for provider '{}'. Add it to config file or set {}",
+            provider_name,
+            provider_type.api_key_env().unwrap_or("API key")
+        ))
+    }
 }
 
 fn print_help() {

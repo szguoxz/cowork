@@ -17,6 +17,7 @@ async-trait.workspace = true
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml = "0.9"
 toml.workspace = true
 
 # File operations
@@ -45,15 +46,19 @@ uuid.workspace = true
 chrono.workspace = true
 dirs = "5"
 
+# Token counting
+tiktoken-rs = { version = "0.6", optional = true }
+
 # Internal
 cowork-mcp = { workspace = true, optional = true }
 cowork-sandbox = { workspace = true, optional = true }
 
 [features]
-default = ["browser", "mcp", "sandbox"]
+default = ["browser", "mcp", "sandbox", "tiktoken"]
 browser = ["dep:chromiumoxide"]
 mcp = ["dep:cowork-mcp"]
 sandbox = ["dep:cowork-sandbox"]
+tiktoken = ["dep:tiktoken-rs"]
 
 [dev-dependencies]
 tempfile = "3"

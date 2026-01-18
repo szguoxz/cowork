@@ -8,11 +8,13 @@
 //! - Project context gathering
 
 pub mod gather;
+pub mod monitor;
 pub mod summarizer;
 pub mod tokens;
 
-pub use gather::{ContextGatherer, ProjectContext};
-pub use summarizer::{ConversationSummarizer, SummarizerConfig};
+pub use gather::{ContextGatherer, MemoryFile, MemoryHierarchy, MemoryTier, ProjectContext};
+pub use monitor::{ContextBreakdown, ContextMonitor, ContextUsage, MonitorConfig};
+pub use summarizer::{CompactConfig, CompactResult, ConversationSummarizer, SummarizerConfig};
 pub use tokens::TokenCounter;
 
 use serde::{Deserialize, Serialize};
@@ -73,14 +75,14 @@ impl Workspace {
 }
 
 /// A message in the conversation history
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Message {
     pub role: MessageRole,
     pub content: String,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MessageRole {
     User,
     Assistant,

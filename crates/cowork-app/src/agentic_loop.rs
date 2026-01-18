@@ -5,6 +5,7 @@
 //! - Automatically executes safe/read-only tools
 //! - Pauses for user approval on destructive tools
 //! - Emits events to the frontend for real-time updates
+//! - Monitors context usage and triggers auto-compact when needed
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -13,8 +14,11 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, RwLock};
 
-use cowork_core::provider::{LlmMessage, LlmProvider, LlmRequest};
-use cowork_core::tools::ToolDefinition;
+use cowork_core::context::{
+    CompactConfig, CompactResult, ContextMonitor, ContextUsage, ConversationSummarizer,
+    Message, MessageRole, MonitorConfig, SummarizerConfig,
+};
+use cowork_core::provider::{LlmMessage, LlmRequest, ProviderType};
 
 use crate::chat::{ChatMessage, ChatSession, ToolCallInfo, ToolCallStatus};
 
@@ -82,6 +86,23 @@ pub enum LoopEvent {
     LoopError {
         session_id: String,
         error: String,
+    },
+    /// Context usage update
+    ContextUsage {
+        session_id: String,
+        usage: ContextUsage,
+    },
+    /// Auto-compact started
+    AutoCompactStarted {
+        session_id: String,
+        tokens_before: usize,
+    },
+    /// Auto-compact completed
+    AutoCompactCompleted {
+        session_id: String,
+        tokens_before: usize,
+        tokens_after: usize,
+        messages_removed: usize,
     },
 }
 
@@ -191,6 +212,27 @@ impl ApprovalConfig {
     }
 }
 
+/// Configuration for context management in the loop
+#[derive(Debug, Clone)]
+pub struct ContextConfig {
+    /// Whether auto-compact is enabled
+    pub auto_compact_enabled: bool,
+    /// Configuration for the context monitor
+    pub monitor_config: MonitorConfig,
+    /// Configuration for the summarizer
+    pub summarizer_config: SummarizerConfig,
+}
+
+impl Default for ContextConfig {
+    fn default() -> Self {
+        Self {
+            auto_compact_enabled: true,
+            monitor_config: MonitorConfig::default(),
+            summarizer_config: SummarizerConfig::default(),
+        }
+    }
+}
+
 /// The agentic loop executor
 pub struct AgenticLoop {
     session_id: String,
@@ -200,12 +242,18 @@ pub struct AgenticLoop {
     command_rx: mpsc::Receiver<LoopCommand>,
     command_tx: mpsc::Sender<LoopCommand>,
     max_iterations: usize,
+    // Context management
+    context_config: ContextConfig,
+    context_monitor: Option<ContextMonitor>,
+    summarizer: ConversationSummarizer,
 }
 
 impl AgenticLoop {
     /// Create a new agentic loop for a session
     pub fn new(session_id: String, app_handle: AppHandle, approval_config: ApprovalConfig) -> Self {
         let (command_tx, command_rx) = mpsc::channel(32);
+        let context_config = ContextConfig::default();
+        let summarizer = ConversationSummarizer::new(context_config.summarizer_config.clone());
 
         Self {
             session_id,
@@ -215,7 +263,176 @@ impl AgenticLoop {
             command_rx,
             command_tx,
             max_iterations: 100, // Safety limit
+            context_config,
+            context_monitor: None,
+            summarizer,
         }
+    }
+
+    /// Create a new agentic loop with custom context configuration
+    pub fn with_context_config(
+        session_id: String,
+        app_handle: AppHandle,
+        approval_config: ApprovalConfig,
+        context_config: ContextConfig,
+    ) -> Self {
+        let (command_tx, command_rx) = mpsc::channel(32);
+        let summarizer = ConversationSummarizer::new(context_config.summarizer_config.clone());
+
+        Self {
+            session_id,
+            app_handle,
+            state: Arc::new(RwLock::new(LoopState::Idle)),
+            approval_config,
+            command_rx,
+            command_tx,
+            max_iterations: 100,
+            context_config,
+            context_monitor: None,
+            summarizer,
+        }
+    }
+
+    /// Set the provider type for context monitoring
+    pub fn set_provider_type(&mut self, provider_type: ProviderType) {
+        self.context_monitor = Some(ContextMonitor::with_config(
+            provider_type,
+            self.context_config.monitor_config.clone(),
+        ));
+    }
+
+    /// Enable or disable auto-compact
+    pub fn set_auto_compact(&mut self, enabled: bool) {
+        self.context_config.auto_compact_enabled = enabled;
+    }
+
+    /// Check context usage and perform auto-compact if needed
+    ///
+    /// Returns true if auto-compact was performed
+    async fn check_and_compact_context(&mut self, session: &mut ChatSession) -> Result<bool, String> {
+        // First, check if we should evaluate context (periodic check)
+        let should_check = {
+            match &mut self.context_monitor {
+                Some(m) => m.should_check(),
+                None => return Ok(false),
+            }
+        };
+
+        if !should_check {
+            return Ok(false);
+        }
+
+        // Convert ChatMessages to context Messages for the monitor
+        let context_messages: Vec<Message> = session
+            .messages
+            .iter()
+            .map(|m| Message {
+                role: match m.role.as_str() {
+                    "user" => MessageRole::User,
+                    "assistant" => MessageRole::Assistant,
+                    "system" => MessageRole::System,
+                    _ => MessageRole::Tool,
+                },
+                content: m.content.clone(),
+                timestamp: m.timestamp,
+            })
+            .collect();
+
+        // Calculate current usage (immutable borrow is fine here)
+        let usage = {
+            let monitor = self.context_monitor.as_ref().unwrap();
+            monitor.calculate_usage(&context_messages, &session.system_prompt, None)
+        };
+
+        // Emit context usage event
+        self.emit_event(LoopEvent::ContextUsage {
+            session_id: self.session_id.clone(),
+            usage: usage.clone(),
+        });
+
+        // Check if auto-compact should trigger
+        if !usage.should_compact || !self.context_config.auto_compact_enabled {
+            return Ok(false);
+        }
+
+        // Perform auto-compact
+        tracing::info!(
+            "Auto-compact triggered: {:.1}% context used ({} tokens)",
+            usage.used_percentage * 100.0,
+            usage.used_tokens
+        );
+
+        self.emit_event(LoopEvent::AutoCompactStarted {
+            session_id: self.session_id.clone(),
+            tokens_before: usage.used_tokens,
+        });
+
+        // Compact using simple summarization (no LLM to avoid recursion)
+        let compact_config = CompactConfig::auto().without_llm();
+
+        // Get counter reference for compaction
+        let compact_result = {
+            let monitor = self.context_monitor.as_ref().unwrap();
+            self.summarizer
+                .compact(&context_messages, monitor.counter(), compact_config, None)
+                .await
+                .map_err(|e| e.to_string())?
+        };
+
+        // Apply compaction to session
+        self.apply_compact_result(session, &compact_result);
+
+        self.emit_event(LoopEvent::AutoCompactCompleted {
+            session_id: self.session_id.clone(),
+            tokens_before: compact_result.tokens_before,
+            tokens_after: compact_result.tokens_after,
+            messages_removed: compact_result.messages_summarized,
+        });
+
+        tracing::info!(
+            "Auto-compact complete: {} -> {} tokens ({} messages summarized)",
+            compact_result.tokens_before,
+            compact_result.tokens_after,
+            compact_result.messages_summarized
+        );
+
+        Ok(true)
+    }
+
+    /// Apply compact result to the session
+    fn apply_compact_result(&self, session: &mut ChatSession, result: &CompactResult) {
+        // Create summary as a system message
+        let summary_msg = ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: "system".to_string(),
+            content: result.summary.content.clone(),
+            tool_calls: Vec::new(),
+            timestamp: result.summary.timestamp,
+        };
+
+        // Convert kept messages back to ChatMessages
+        let kept_chat_messages: Vec<ChatMessage> = result
+            .kept_messages
+            .iter()
+            .map(|m| ChatMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                role: match m.role {
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                    MessageRole::System => "system",
+                    MessageRole::Tool => "tool",
+                }
+                .to_string(),
+                content: m.content.clone(),
+                tool_calls: Vec::new(),
+                timestamp: m.timestamp,
+            })
+            .collect();
+
+        // Replace session messages: summary + kept messages
+        session.messages.clear();
+        session.messages.push(summary_msg);
+        session.messages.extend(kept_chat_messages);
     }
 
     /// Get a sender for commands
@@ -274,6 +491,11 @@ impl AgenticLoop {
             if iteration > self.max_iterations {
                 self.set_state(LoopState::Error).await;
                 return Err("Max iteration limit reached".to_string());
+            }
+
+            // Check context usage and auto-compact if needed
+            if let Err(e) = self.check_and_compact_context(session).await {
+                tracing::warn!("Context check failed: {}", e);
             }
 
             // Check if there are pending tool calls

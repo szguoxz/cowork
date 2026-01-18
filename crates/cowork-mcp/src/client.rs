@@ -1,6 +1,5 @@
 //! MCP Client implementation
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -159,6 +158,7 @@ pub struct ServerInfo {
 #[derive(Debug, serde::Deserialize)]
 struct InitializeResult {
     #[serde(rename = "protocolVersion")]
+    #[allow(dead_code)]
     protocol_version: String,
     capabilities: ServerCapabilities,
     #[serde(rename = "serverInfo")]

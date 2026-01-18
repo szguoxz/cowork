@@ -6,7 +6,9 @@
 //! This system is inspired by Claude Code's plugin/command system where skills are
 //! essentially prompt templates that get expanded with context and sent to the LLM.
 
+pub mod context;
 pub mod git;
+pub mod loader;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -119,10 +121,22 @@ impl SkillRegistry {
         registry.register(Arc::new(git::PushSkill::new(workspace.clone())));
         registry.register(Arc::new(git::PullRequestSkill::new(workspace.clone())));
         registry.register(Arc::new(git::ReviewSkill::new(workspace.clone())));
-        registry.register(Arc::new(git::CleanGoneSkill::new(workspace)));
+        registry.register(Arc::new(git::CleanGoneSkill::new(workspace.clone())));
+
+        // Register context management skills
+        registry.register(Arc::new(context::CompactSkill::new(workspace.clone())));
+        registry.register(Arc::new(context::ClearSkill::new(workspace.clone())));
+        registry.register(Arc::new(context::ContextSkill::new(workspace.clone())));
 
         // Register help skill
         registry.register(Arc::new(HelpSkill::new()));
+
+        // Load dynamic skills from filesystem
+        // Project skills override user skills with the same name
+        let skill_loader = loader::SkillLoader::new(&workspace);
+        for skill in skill_loader.load_all() {
+            registry.register(skill);
+        }
 
         registry
     }
@@ -207,24 +221,33 @@ impl Skill for HelpSkill {
             let help_text = r#"
 Available Commands:
 
-/commit           - Stage changes and create a git commit with a generated message
-/commit-push-pr   - Commit, push, and create a pull request in one step
-/push             - Push commits to the remote repository
-/pr [title]       - Create a pull request with auto-generated description
-/review           - Review staged changes and provide feedback
-/clean-gone       - Clean up local branches deleted from remote
-/help             - Show this help message
+Git Commands:
+  /commit           - Stage changes and create a git commit with a generated message
+  /commit-push-pr   - Commit, push, and create a pull request in one step
+  /push             - Push commits to the remote repository
+  /pr [title]       - Create a pull request with auto-generated description
+  /review           - Review staged changes and provide feedback
+  /clean-gone       - Clean up local branches deleted from remote
+
+Context Commands:
+  /compact [focus]  - Summarize conversation (optionally preserve specific content)
+  /clear            - Clear conversation history, keep memory files
+  /context          - Show context usage statistics and memory hierarchy
+
+General:
+  /help             - Show this help message
 
 Keyboard Shortcuts:
-
-Y               - Approve all pending tool calls
-N               - Reject all pending tool calls
-Escape          - Cancel the current operation
-Ctrl+Enter      - Send message
+  Y               - Approve all pending tool calls
+  N               - Reject all pending tool calls
+  Escape          - Cancel the current operation
+  Ctrl+Enter      - Send message
 
 Tips:
 - Commands can be combined with additional instructions
 - Example: "/commit and then push to remote"
+- Example: "/compact keep the API design decisions"
+- Context is auto-compacted when usage exceeds 75%
 "#;
 
             SkillResult::success(help_text.trim())

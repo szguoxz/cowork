@@ -1,12 +1,11 @@
 //! Tauri commands exposed to the frontend
 
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use crate::agentic_loop::{
-    AgenticLoop, ApprovalConfig, ApprovalLevel, ApprovalDecision, DefaultToolExecutor,
-    LoopCommand, LoopEvent, LoopHandle, LoopState,
+    AgenticLoop, ApprovalConfig, ApprovalLevel, DefaultToolExecutor,
+    LoopHandle, LoopState,
 };
 use crate::chat::{create_provider_from_config, ChatMessage, ChatSession, ToolCallInfo, ToolCallStatus};
 use crate::state::{AppState, Settings, TaskState, TaskStatus};
@@ -49,7 +48,7 @@ pub struct TaskRequest {
 #[tauri::command]
 pub async fn execute_task(
     request: TaskRequest,
-    state: State<'_, AppState>,
+    _state: State<'_, AppState>,
 ) -> Result<TaskState, String> {
     let task_id = uuid::Uuid::new_v4().to_string();
 
@@ -71,14 +70,14 @@ pub async fn execute_task(
 
 /// Get status of a running task
 #[tauri::command]
-pub async fn get_task_status(task_id: String) -> Result<TaskState, String> {
+pub async fn get_task_status(_task_id: String) -> Result<TaskState, String> {
     // In a real implementation, look up task from storage
-    Err(format!("Task {} not found", task_id))
+    Err("Task not found".to_string())
 }
 
 /// Cancel a running task
 #[tauri::command]
-pub async fn cancel_task(task_id: String) -> Result<(), String> {
+pub async fn cancel_task(_task_id: String) -> Result<(), String> {
     // In a real implementation, signal cancellation
     Ok(())
 }
@@ -841,4 +840,224 @@ pub async fn send_message_stream(
     session.messages.push(assistant_msg);
 
     Ok(message_id)
+}
+
+// ============================================================================
+// Context Management Commands
+// ============================================================================
+
+/// Context usage information for the frontend
+#[derive(Debug, Clone, Serialize)]
+pub struct ContextUsageInfo {
+    pub used_tokens: usize,
+    pub limit_tokens: usize,
+    pub used_percentage: f64,
+    pub remaining_tokens: usize,
+    pub should_compact: bool,
+    pub system_tokens: usize,
+    pub conversation_tokens: usize,
+    pub tool_tokens: usize,
+    pub memory_tokens: usize,
+}
+
+/// Get context usage for a session
+#[tauri::command]
+pub async fn get_context_usage(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<ContextUsageInfo, String> {
+    use cowork_core::context::{ContextMonitor, Message, MessageRole};
+    use cowork_core::provider::ProviderType;
+
+    let sessions = state.sessions.read().await;
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
+
+    // Create a monitor (default to Anthropic for now)
+    let monitor = ContextMonitor::new(ProviderType::Anthropic);
+
+    // Convert ChatMessages to context Messages
+    let context_messages: Vec<Message> = session
+        .messages
+        .iter()
+        .map(|m| Message {
+            role: match m.role.as_str() {
+                "user" => MessageRole::User,
+                "assistant" => MessageRole::Assistant,
+                "system" => MessageRole::System,
+                _ => MessageRole::Tool,
+            },
+            content: m.content.clone(),
+            timestamp: m.timestamp,
+        })
+        .collect();
+
+    let usage = monitor.calculate_usage(&context_messages, &session.system_prompt, None);
+
+    Ok(ContextUsageInfo {
+        used_tokens: usage.used_tokens,
+        limit_tokens: usage.limit_tokens,
+        used_percentage: usage.used_percentage,
+        remaining_tokens: usage.remaining_tokens,
+        should_compact: usage.should_compact,
+        system_tokens: usage.breakdown.system_tokens,
+        conversation_tokens: usage.breakdown.conversation_tokens,
+        tool_tokens: usage.breakdown.tool_tokens,
+        memory_tokens: usage.breakdown.memory_tokens,
+    })
+}
+
+/// Compact result for the frontend
+#[derive(Debug, Clone, Serialize)]
+pub struct CompactResultInfo {
+    pub tokens_before: usize,
+    pub tokens_after: usize,
+    pub messages_summarized: usize,
+    pub messages_kept: usize,
+}
+
+/// Compact a session's conversation
+#[tauri::command]
+pub async fn compact_session(
+    session_id: String,
+    preserve_instructions: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<CompactResultInfo, String> {
+    use cowork_core::context::{
+        CompactConfig, ContextMonitor, ConversationSummarizer, Message, MessageRole, SummarizerConfig,
+    };
+    use cowork_core::provider::ProviderType;
+
+    let mut sessions = state.sessions.write().await;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
+
+    // Create monitor and summarizer
+    let monitor = ContextMonitor::new(ProviderType::Anthropic);
+    let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
+
+    // Convert ChatMessages to context Messages
+    let context_messages: Vec<Message> = session
+        .messages
+        .iter()
+        .map(|m| Message {
+            role: match m.role.as_str() {
+                "user" => MessageRole::User,
+                "assistant" => MessageRole::Assistant,
+                "system" => MessageRole::System,
+                _ => MessageRole::Tool,
+            },
+            content: m.content.clone(),
+            timestamp: m.timestamp,
+        })
+        .collect();
+
+    // Create compact config
+    let config = CompactConfig::from_command(preserve_instructions).without_llm();
+
+    // Perform compaction
+    let result = summarizer
+        .compact(&context_messages, monitor.counter(), config, None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Apply to session
+    let summary_msg = ChatMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        role: "system".to_string(),
+        content: result.summary.content.clone(),
+        tool_calls: Vec::new(),
+        timestamp: result.summary.timestamp,
+    };
+
+    let kept_chat_messages: Vec<ChatMessage> = result
+        .kept_messages
+        .iter()
+        .map(|m| ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: match m.role {
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                MessageRole::System => "system",
+                MessageRole::Tool => "tool",
+            }
+            .to_string(),
+            content: m.content.clone(),
+            tool_calls: Vec::new(),
+            timestamp: m.timestamp,
+        })
+        .collect();
+
+    session.messages.clear();
+    session.messages.push(summary_msg);
+    session.messages.extend(kept_chat_messages);
+
+    Ok(CompactResultInfo {
+        tokens_before: result.tokens_before,
+        tokens_after: result.tokens_after,
+        messages_summarized: result.messages_summarized,
+        messages_kept: result.messages_kept,
+    })
+}
+
+/// Clear a session's conversation
+#[tauri::command]
+pub async fn clear_session(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.write().await;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
+
+    // Clear all messages
+    session.messages.clear();
+
+    Ok(())
+}
+
+/// Memory file information for the frontend
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryFileInfo {
+    pub path: String,
+    pub tier: String,
+    pub size: usize,
+}
+
+/// Memory hierarchy information for the frontend
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryHierarchyInfo {
+    pub files: Vec<MemoryFileInfo>,
+    pub total_size: usize,
+    pub combined_content: String,
+}
+
+/// Get memory hierarchy for the workspace
+#[tauri::command]
+pub async fn get_memory_hierarchy(
+    state: State<'_, AppState>,
+) -> Result<MemoryHierarchyInfo, String> {
+    use cowork_core::context::ContextGatherer;
+
+    let gatherer = ContextGatherer::new(&state.workspace_path);
+    let hierarchy = gatherer.gather_memory_hierarchy().await;
+
+    let files: Vec<MemoryFileInfo> = hierarchy
+        .files
+        .iter()
+        .map(|f| MemoryFileInfo {
+            path: f.path.to_string_lossy().to_string(),
+            tier: f.tier.to_string(),
+            size: f.size,
+        })
+        .collect();
+
+    Ok(MemoryHierarchyInfo {
+        files,
+        total_size: hierarchy.total_size,
+        combined_content: hierarchy.combined_content,
+    })
 }

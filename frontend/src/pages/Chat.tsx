@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { Send, Loader2, Check, X, Terminal, AlertCircle } from 'lucide-react'
+import ContextIndicator from '../components/ContextIndicator'
 
 interface ToolCall {
   id: string
@@ -266,15 +267,24 @@ export default function Chat() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <header className="h-14 border-b border-gray-200 dark:border-gray-700 flex items-center px-4">
-        <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
-          Cowork Assistant
-        </h1>
-        {sessionId && (
-          <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
-            Session: {sessionId.slice(0, 8)}...
-          </span>
-        )}
+      <header className="h-14 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-4">
+        <div className="flex items-center">
+          <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
+            Cowork Assistant
+          </h1>
+          {sessionId && (
+            <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+              Session: {sessionId.slice(0, 8)}...
+            </span>
+          )}
+        </div>
+
+        {/* Context Indicator */}
+        <ContextIndicator
+          sessionId={sessionId}
+          onCompact={refreshMessages}
+          onClear={refreshMessages}
+        />
       </header>
 
       {/* Error Banner */}
