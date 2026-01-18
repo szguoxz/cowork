@@ -1035,6 +1035,142 @@ pub struct MemoryHierarchyInfo {
     pub combined_content: String,
 }
 
+/// Quick start / help information for the frontend
+#[derive(Debug, Clone, Serialize)]
+pub struct QuickStartInfo {
+    pub version: String,
+    pub sections: Vec<HelpSection>,
+}
+
+/// A section of help content
+#[derive(Debug, Clone, Serialize)]
+pub struct HelpSection {
+    pub title: String,
+    pub content: String,
+}
+
+/// Get quick start / help information
+#[tauri::command]
+pub async fn get_quick_start() -> Result<QuickStartInfo, String> {
+    Ok(QuickStartInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        sections: vec![
+            HelpSection {
+                title: "Getting Started".to_string(),
+                content: r#"Welcome to Cowork! Here's how to get started:
+
+1. **Set up your API key**
+   - Go to Settings (gear icon) and enter your API key
+   - Supported providers: Anthropic (Claude), OpenAI (GPT-4)
+
+2. **Start chatting**
+   - Type your message and press Enter or click Send
+   - The AI can read files, write code, and execute commands
+
+3. **Approve tool actions**
+   - When the AI wants to make changes, you'll see a prompt
+   - Click Approve (Y) or Reject (N) for each action"#.to_string(),
+            },
+            HelpSection {
+                title: "Slash Commands".to_string(),
+                content: r#"Use slash commands for common workflows:
+
+**Git Commands**
+  /commit         - Create a commit with auto-generated message
+  /push           - Push commits to remote
+  /pr             - Create a pull request
+  /status         - Show git status
+  /diff           - Show current changes
+
+**Development**
+  /test           - Run project tests
+  /build          - Build the project
+  /lint           - Run linter
+  /format         - Format code
+
+**Session**
+  /clear          - Clear conversation
+  /compact        - Summarize to reduce context
+  /memory         - Manage CLAUDE.md files
+  /help           - Show all commands"#.to_string(),
+            },
+            HelpSection {
+                title: "Keyboard Shortcuts".to_string(),
+                content: r#"**During Approval Prompts**
+  Y           - Approve action
+  N           - Reject action
+  A           - Approve all pending
+  Escape      - Cancel current operation
+
+**In Chat**
+  Enter       - Send message
+  Ctrl+Enter  - New line
+  Up/Down     - Navigate history"#.to_string(),
+            },
+            HelpSection {
+                title: "Configuration".to_string(),
+                content: r#"**Config File Location**
+  ~/.config/cowork/config.toml
+
+**Example Configuration**
+```toml
+default_provider = "anthropic"
+
+[providers.anthropic]
+provider_type = "anthropic"
+model = "claude-sonnet-4-20250514"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[approval]
+auto_approve_level = "medium"
+```
+
+**Approval Levels**
+  none    - Approve everything manually
+  low     - Auto-approve reads only
+  medium  - Auto-approve reads and simple writes
+  high    - Auto-approve most actions
+  all     - Auto-approve everything"#.to_string(),
+            },
+            HelpSection {
+                title: "Memory Files".to_string(),
+                content: r#"Create CLAUDE.md files to provide persistent instructions:
+
+**Project Instructions** (shared with team)
+  ./CLAUDE.md
+  ./.claude/CLAUDE.md
+
+**Personal Settings** (gitignored)
+  ./CLAUDE.local.md
+
+**Global User Settings**
+  ~/.claude/CLAUDE.md
+
+**Example CLAUDE.md**
+```markdown
+# Project Instructions
+
+## Tech Stack
+- Rust with async/await
+- SQLite for data storage
+
+## Conventions
+- Use snake_case for functions
+- Add doc comments to public items
+```"#.to_string(),
+            },
+            HelpSection {
+                title: "Tips".to_string(),
+                content: r#"- **Be specific**: "Add a logout button to the navbar" works better than "add logout"
+- **Iterate**: Ask follow-up questions to refine the solution
+- **Review changes**: Always review AI-generated code before committing
+- **Use /compact**: If the conversation gets long, use /compact to summarize
+- **Memory files**: Put project conventions in CLAUDE.md so the AI remembers them"#.to_string(),
+            },
+        ],
+    })
+}
+
 /// Get memory hierarchy for the workspace
 #[tauri::command]
 pub async fn get_memory_hierarchy(

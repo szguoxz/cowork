@@ -11,7 +11,10 @@ pub mod dev;
 pub mod git;
 pub mod loader;
 pub mod mcp;
+pub mod memory;
+pub mod permissions;
 pub mod session;
+pub mod vim;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -158,6 +161,15 @@ impl SkillRegistry {
         registry.register(Arc::new(session::ModelSkill::new(workspace.clone())));
         registry.register(Arc::new(session::ProviderSkill::new(workspace.clone())));
 
+        // Register memory management skill
+        registry.register(Arc::new(memory::MemorySkill::new(workspace.clone())));
+
+        // Register permissions skill
+        registry.register(Arc::new(permissions::PermissionsSkill::new(workspace.clone())));
+
+        // Register vim mode skill
+        registry.register(Arc::new(vim::VimSkill::new(workspace.clone())));
+
         // Register MCP skill if manager is provided
         if let Some(manager) = mcp_manager {
             registry.register(Arc::new(mcp::McpSkill::new(manager)));
@@ -285,6 +297,9 @@ Session Commands:
   /config           - View current configuration
   /model            - Show or switch the active model
   /provider         - Show or switch the active provider
+  /memory           - Manage CLAUDE.md memory files
+  /permissions      - View tool permission settings
+  /vim              - Toggle vim keybindings mode
 
 MCP Server Commands:
   /mcp list         - List configured MCP servers and status
@@ -297,11 +312,72 @@ MCP Server Commands:
 General:
   /help             - Show this help message
 
+Command Line Options:
+  cowork [OPTIONS] [COMMAND]
+
+  Options:
+    -w, --workspace <PATH>  Workspace directory (default: .)
+    -p, --provider <NAME>   LLM provider: anthropic, openai (default: anthropic)
+    -m, --model <MODEL>     Model to use (default: provider's default)
+    -v, --verbose           Verbose output
+        --auto-approve      Auto-approve all tool calls (use with caution!)
+        --one-shot <PROMPT> Execute single prompt and exit
+
+  Commands:
+    chat     Interactive chat mode (default)
+    run      Execute a shell command
+    list     List files in workspace
+    read     Read a file
+    search   Search for files
+    tools    Show available tools
+    config   Show configuration
+
+  Examples:
+    cowork                              # Start interactive chat
+    cowork -p openai -m gpt-4o          # Use OpenAI with GPT-4o
+    cowork --one-shot "explain main.rs" # Single prompt, then exit
+    cowork tools                        # List available tools
+    cowork config                       # Show current config
+
 Keyboard Shortcuts:
   Y               - Approve all pending tool calls
   N               - Reject all pending tool calls
   Escape          - Cancel the current operation
   Ctrl+Enter      - Send message
+
+Configuration:
+  Config file: ~/.config/cowork/config.toml
+
+  Example config:
+    default_provider = "anthropic"
+
+    [providers.anthropic]
+    provider_type = "anthropic"
+    model = "claude-sonnet-4-20250514"
+    api_key_env = "ANTHROPIC_API_KEY"
+
+    [providers.openai]
+    provider_type = "openai"
+    model = "gpt-4o"
+    api_key_env = "OPENAI_API_KEY"
+
+    [approval]
+    auto_approve_level = "medium"  # none, low, medium, high, all
+
+    [browser]
+    headless = true
+
+    [general]
+    log_level = "info"
+
+  To edit: $EDITOR ~/.config/cowork/config.toml
+  See /config for current settings, /permissions for approval levels.
+
+Memory Files:
+  Project instructions: ./CLAUDE.md or ./.claude/CLAUDE.md
+  Personal settings:    ./CLAUDE.local.md (gitignored)
+  User global:          ~/.claude/CLAUDE.md
+  See /memory for details.
 
 Tips:
 - Commands can be combined with additional instructions

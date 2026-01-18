@@ -197,14 +197,22 @@ async fn run_chat(
             style("Warning: Auto-approve mode is ON - all tool calls will be approved automatically!").yellow().bold()
         );
     }
+    println!();
+
+    // Load config
+    let config_manager = ConfigManager::new()?;
+
+    // Check if API key is configured - show setup instructions if not
+    if !has_api_key_configured(&config_manager, provider_type) {
+        show_setup_instructions(provider_type);
+        return Ok(());
+    }
+
     println!(
         "{}",
         style("Type 'help' for commands, 'exit' to quit, or just chat with the AI").dim()
     );
     println!();
-
-    // Load config
-    let config_manager = ConfigManager::new()?;
 
     // Initialize MCP server manager and auto-start enabled servers
     let mcp_manager = std::sync::Arc::new(
@@ -917,6 +925,73 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     }
+}
+
+/// Check if an API key is configured for the given provider
+fn has_api_key_configured(config_manager: &ConfigManager, provider_type: ProviderType) -> bool {
+    let provider_name = provider_type.to_string();
+
+    // Check config first
+    if let Some(provider_config) = config_manager.config().providers.get(&provider_name) {
+        if provider_config.get_api_key().is_some() {
+            return true;
+        }
+    }
+
+    // Check environment variable
+    if let Some(env_var) = provider_type.api_key_env() {
+        if std::env::var(env_var).is_ok() {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Show setup instructions when no API key is configured
+fn show_setup_instructions(provider_type: ProviderType) {
+    println!("{}", style("Welcome to Cowork!").bold().cyan());
+    println!();
+    println!("{}", style("Setup Required").bold().yellow());
+    println!("No API key configured. Please set one up before using Cowork.");
+    println!();
+
+    let (env_var, _signup_url) = match provider_type {
+        ProviderType::Anthropic => ("ANTHROPIC_API_KEY", "https://console.anthropic.com/"),
+        ProviderType::OpenAI => ("OPENAI_API_KEY", "https://platform.openai.com/"),
+        ProviderType::Gemini => ("GOOGLE_API_KEY", "https://aistudio.google.com/"),
+        _ => ("API_KEY", "your provider's website"),
+    };
+
+    println!("{}", style("Option 1: Environment Variable (Quick)").bold());
+    println!("  export {}=\"your-api-key-here\"", style(env_var).cyan());
+    println!();
+
+    println!("{}", style("Option 2: Config File (Persistent)").bold());
+    println!("  Edit: {}", style("~/.config/cowork/config.toml").cyan());
+    println!();
+    println!("  Example config:");
+    println!("  {}", style("─".repeat(50)).dim());
+    println!(r#"  default_provider = "anthropic"
+
+  [providers.anthropic]
+  provider_type = "anthropic"
+  model = "claude-sonnet-4-20250514"
+  api_key = "your-api-key-here"
+
+  [approval]
+  auto_approve_level = "medium""#);
+    println!("  {}", style("─".repeat(50)).dim());
+    println!();
+
+    println!("{}", style("Get your API key:").bold());
+    println!("  Anthropic (Claude): {}", style("https://console.anthropic.com/").cyan());
+    println!("  OpenAI (GPT-4):     {}", style("https://platform.openai.com/").cyan());
+    println!();
+
+    println!("{}", style("After configuring, run 'cowork' again to start.").dim());
+    println!();
+    println!("For more help: {}", style("cowork --help").cyan());
 }
 
 const SYSTEM_PROMPT: &str = r#"You are Cowork, an AI coding assistant. You help developers with software engineering tasks.

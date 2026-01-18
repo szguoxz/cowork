@@ -103,6 +103,8 @@ pub fn run() {
             commands::compact_session,
             commands::clear_session,
             commands::get_memory_hierarchy,
+            // Help commands
+            commands::get_quick_start,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
