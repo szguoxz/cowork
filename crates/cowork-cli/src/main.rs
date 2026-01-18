@@ -11,9 +11,13 @@ use cowork_core::config::ConfigManager;
 use cowork_core::provider::{CompletionResult, GenAIProvider, LlmMessage, ProviderType};
 use cowork_core::skills::SkillRegistry;
 use cowork_core::tools::filesystem::{
-    GlobFiles, GrepFiles, ListDirectory, ReadFile, SearchFiles, WriteFile,
+    DeleteFile, EditFile, GlobFiles, GrepFiles, ListDirectory, MoveFile, ReadFile, SearchFiles,
+    WriteFile,
 };
+use cowork_core::tools::notebook::NotebookEdit;
 use cowork_core::tools::shell::ExecuteCommand;
+use cowork_core::tools::task::TodoWrite;
+use cowork_core::tools::web::{WebFetch, WebSearch};
 use cowork_core::tools::{Tool, ToolDefinition, ToolRegistry};
 
 #[derive(Parser)]
@@ -458,7 +462,8 @@ async fn process_ai_message(
 fn tool_needs_approval(tool_name: &str) -> bool {
     match tool_name {
         // Read-only tools - auto-approve
-        "read_file" | "glob" | "grep" | "list_directory" | "search_files" => false,
+        "read_file" | "glob" | "grep" | "list_directory" | "search_files" | "web_fetch"
+        | "web_search" | "todo_write" => false,
         // Write/execute tools - need approval
         _ => true,
     }
@@ -481,13 +486,29 @@ async fn handle_slash_command(cmd: &str, workspace: &PathBuf, registry: &SkillRe
 fn create_tool_registry(workspace: &PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
 
+    // Filesystem tools
     registry.register(std::sync::Arc::new(ReadFile::new(workspace.clone())));
     registry.register(std::sync::Arc::new(WriteFile::new(workspace.clone())));
+    registry.register(std::sync::Arc::new(EditFile::new(workspace.clone())));
     registry.register(std::sync::Arc::new(GlobFiles::new(workspace.clone())));
     registry.register(std::sync::Arc::new(GrepFiles::new(workspace.clone())));
     registry.register(std::sync::Arc::new(ListDirectory::new(workspace.clone())));
     registry.register(std::sync::Arc::new(SearchFiles::new(workspace.clone())));
+    registry.register(std::sync::Arc::new(DeleteFile::new(workspace.clone())));
+    registry.register(std::sync::Arc::new(MoveFile::new(workspace.clone())));
+
+    // Shell tools
     registry.register(std::sync::Arc::new(ExecuteCommand::new(workspace.clone())));
+
+    // Web tools
+    registry.register(std::sync::Arc::new(WebFetch::new()));
+    registry.register(std::sync::Arc::new(WebSearch::new()));
+
+    // Notebook tools
+    registry.register(std::sync::Arc::new(NotebookEdit::new(workspace.clone())));
+
+    // Task management tools
+    registry.register(std::sync::Arc::new(TodoWrite::new()));
 
     registry
 }
@@ -745,18 +766,25 @@ fn show_tools() {
     println!();
 
     let tools = [
+        // Filesystem
         ("read_file", "Read file contents", "None"),
-        ("write_file", "Write content to a file", "Low"),
+        ("write_file", "Create or overwrite a file", "High"),
+        ("edit", "Surgical string replacement", "High"),
+        ("glob", "Find files by pattern", "None"),
+        ("grep", "Search file contents", "None"),
         ("list_directory", "List directory contents", "None"),
-        ("delete_file", "Delete a file or directory", "High"),
-        ("move_file", "Move or rename files", "Low"),
         ("search_files", "Search for files", "None"),
+        ("delete_file", "Delete a file", "High"),
+        ("move_file", "Move or rename files", "Low"),
+        // Shell
         ("execute_command", "Run shell commands", "Medium"),
-        ("browser_navigate", "Navigate browser to URL", "Low"),
-        ("browser_screenshot", "Take browser screenshot", "None"),
-        ("browser_click", "Click element in browser", "Low"),
-        ("read_pdf", "Extract text from PDF", "None"),
-        ("read_office_doc", "Read Office documents", "None"),
+        // Web
+        ("web_fetch", "Fetch URL content", "Low"),
+        ("web_search", "Search the web", "Low"),
+        // Notebook
+        ("notebook_edit", "Edit Jupyter notebooks", "High"),
+        // Task management
+        ("todo_write", "Manage task list", "None"),
     ];
 
     for (name, desc, approval) in tools {
@@ -806,22 +834,41 @@ fn format_size(bytes: u64) -> String {
 
 const SYSTEM_PROMPT: &str = r#"You are Cowork, an AI coding assistant. You help developers with software engineering tasks.
 
-You have access to these tools:
-- read_file: Read file contents
-- write_file: Write content to a file
-- glob: Search for files by pattern (e.g., "**/*.rs")
+## Available Tools
+
+### File Operations
+- read_file: Read file contents (supports offset/limit for large files)
+- write_file: Create or completely overwrite a file
+- edit: Surgical string replacement in files. PREFER THIS over write_file for modifications - requires unique old_string or use replace_all for renaming
+- glob: Find files by pattern (e.g., "**/*.rs", "src/**/*.ts")
 - grep: Search file contents with regex patterns
 - list_directory: List directory contents
 - search_files: Search for files by name or content
-- execute_command: Run shell commands
+- delete_file: Delete a file
+- move_file: Move or rename a file
 
-When the user asks you to perform a task:
-1. Think about what information you need first
-2. Use read-only tools (read_file, glob, grep, list_directory, search_files) to understand the codebase
-3. Plan your changes carefully
-4. Use write_file or execute_command to make changes
-5. Verify your changes worked
+### Shell Execution
+- execute_command: Run shell commands (build, test, git, etc.)
 
-Be concise and helpful. If a task is unclear, ask for clarification.
-When writing code, follow the existing style in the codebase.
-Always explain what you're doing and why."#;
+### Web Access
+- web_fetch: Fetch URL content and extract text
+- web_search: Search the web (requires API key configuration)
+
+### Jupyter Notebooks
+- notebook_edit: Edit, insert, or delete cells in .ipynb files
+
+### Task Management
+- todo_write: Track progress with a structured todo list
+
+## Workflow Guidelines
+
+1. **Understand first**: Use read-only tools (read_file, glob, grep) to understand the codebase before making changes
+2. **Use edit for modifications**: When changing existing files, use the `edit` tool with old_string/new_string for surgical precision. Only use write_file for creating new files.
+3. **Be precise with edit**: The old_string must be unique in the file, or use replace_all=true. Include enough context (surrounding lines) to make it unique.
+4. **Verify changes**: After modifications, verify your changes worked (read the file, run tests, etc.)
+5. **Explain your reasoning**: Tell the user what you're doing and why
+
+## Slash Commands
+Users can use slash commands like /commit, /pr, /review, /help for common workflows.
+
+Be concise and helpful. Follow existing code style. Ask for clarification if needed."#;
