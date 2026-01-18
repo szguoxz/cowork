@@ -57,20 +57,60 @@ impl std::str::FromStr for AgentType {
     }
 }
 
-/// Model selection for subagents
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// Model tier selection for subagents (provider-agnostic)
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum AgentModel {
-    Sonnet,
-    Opus,
-    Haiku,
+pub enum ModelTier {
+    /// Fast model for quick tasks (e.g., Haiku, gpt-4o-mini)
+    Fast,
+    /// Balanced model for general tasks (e.g., Sonnet, gpt-4o)
+    Balanced,
+    /// Powerful model for complex reasoning (e.g., Opus, o1)
+    Powerful,
 }
 
-impl Default for AgentModel {
+impl Default for ModelTier {
     fn default() -> Self {
-        AgentModel::Sonnet
+        ModelTier::Balanced
     }
 }
+
+impl std::str::FromStr for ModelTier {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            // Provider-agnostic names
+            "fast" => Ok(ModelTier::Fast),
+            "balanced" => Ok(ModelTier::Balanced),
+            "powerful" => Ok(ModelTier::Powerful),
+            // Legacy Anthropic-style aliases for backwards compatibility
+            "haiku" => Ok(ModelTier::Fast),
+            "sonnet" => Ok(ModelTier::Balanced),
+            "opus" => Ok(ModelTier::Powerful),
+            _ => Err(format!("Unknown model tier: {}", s)),
+        }
+    }
+}
+
+impl AgentType {
+    /// Get the recommended default model tier for this agent type
+    pub fn default_tier(&self) -> ModelTier {
+        match self {
+            // Explore is read-only, fast operations - use fast model
+            AgentType::Explore => ModelTier::Fast,
+            // Bash is simple command execution - use fast model
+            AgentType::Bash => ModelTier::Fast,
+            // Plan needs reasoning for architecture - use balanced
+            AgentType::Plan => ModelTier::Balanced,
+            // General purpose needs full capabilities - use balanced
+            AgentType::GeneralPurpose => ModelTier::Balanced,
+        }
+    }
+}
+
+// Type alias for backwards compatibility
+pub type AgentModel = ModelTier;
 
 /// Running agent instance
 #[derive(Debug, Clone)]
@@ -149,6 +189,7 @@ pub struct TaskTool {
     workspace: PathBuf,
     provider_type: ProviderType,
     api_key: Option<String>,
+    model_tiers: Option<crate::config::ModelTiers>,
 }
 
 impl TaskTool {
@@ -159,6 +200,7 @@ impl TaskTool {
             workspace,
             provider_type: ProviderType::Anthropic,
             api_key: None,
+            model_tiers: None,
         }
     }
 
@@ -171,6 +213,12 @@ impl TaskTool {
     /// Set the API key for subagent execution
     pub fn with_api_key(mut self, api_key: String) -> Self {
         self.api_key = Some(api_key);
+        self
+    }
+
+    /// Set custom model tiers for subagent execution
+    pub fn with_model_tiers(mut self, model_tiers: crate::config::ModelTiers) -> Self {
+        self.model_tiers = Some(model_tiers);
         self
     }
 }
@@ -207,8 +255,8 @@ impl Tool for TaskTool {
                 },
                 "model": {
                     "type": "string",
-                    "description": "Model to use: sonnet (default), opus (most capable), haiku (fast/cheap)",
-                    "enum": ["sonnet", "opus", "haiku"]
+                    "description": "Model tier: fast (quick tasks), balanced (default), powerful (complex reasoning). Also accepts: haiku, sonnet, opus as aliases.",
+                    "enum": ["fast", "balanced", "powerful", "haiku", "sonnet", "opus"]
                 },
                 "resume": {
                     "type": "string",
@@ -247,11 +295,11 @@ impl Tool for TaskTool {
             .parse()
             .map_err(|e: String| ToolError::InvalidParams(e))?;
 
-        let model = match params["model"].as_str() {
-            Some("opus") => AgentModel::Opus,
-            Some("haiku") => AgentModel::Haiku,
-            _ => AgentModel::Sonnet,
-        };
+        // Parse model tier, falling back to agent type's recommended default
+        let model = params["model"]
+            .as_str()
+            .and_then(|s| s.parse::<ModelTier>().ok())
+            .unwrap_or_else(|| agent_type.default_tier());
 
         let run_in_background = params["run_in_background"].as_bool().unwrap_or(false);
         let _max_turns = params["max_turns"].as_u64().unwrap_or(50);
@@ -302,6 +350,11 @@ impl Tool for TaskTool {
 
         if let Some(ref key) = self.api_key {
             config = config.with_api_key(key.clone());
+        }
+
+        // Use custom model tiers if provided, otherwise executor uses provider defaults
+        if let Some(ref tiers) = self.model_tiers {
+            config = config.with_model_tiers(tiers.clone());
         }
 
         if run_in_background {
@@ -510,7 +563,7 @@ mod tests {
             agent_type: AgentType::Explore,
             description: "Test agent".to_string(),
             prompt: "Do something".to_string(),
-            model: AgentModel::Sonnet,
+            model: ModelTier::Balanced,
             status: AgentStatus::Completed,
             output: Some("Completed successfully".to_string()),
             output_file: None,
@@ -542,7 +595,7 @@ mod tests {
             agent_type: AgentType::Explore,
             description: "Test agent".to_string(),
             prompt: "Do something".to_string(),
-            model: AgentModel::Sonnet,
+            model: ModelTier::Balanced,
             status: AgentStatus::Completed,
             output: Some("Test output result".to_string()),
             output_file: None,
@@ -586,7 +639,7 @@ mod tests {
             agent_type: AgentType::Explore,
             description: "Test agent".to_string(),
             prompt: "Do something".to_string(),
-            model: AgentModel::Sonnet,
+            model: ModelTier::Balanced,
             status: AgentStatus::Running,
             output: None,
             output_file: None,

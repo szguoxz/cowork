@@ -204,6 +204,7 @@ timeout_secs = 600
             api_key: Some("test-key".to_string()),
             api_key_env: None,
             model: "claude-sonnet".to_string(),
+            model_tiers: None,
             base_url: Some("https://custom.api.com".to_string()),
             default_max_tokens: 2048,
             default_temperature: 0.8,

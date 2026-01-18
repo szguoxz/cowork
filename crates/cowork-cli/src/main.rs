@@ -154,11 +154,12 @@ async fn run_one_shot(
     let provider = create_provider_from_config(&config_manager, provider_type, model)?
         .with_system_prompt(SYSTEM_PROMPT);
 
-    // Get API key for subagents
+    // Get API key and model tiers for subagents
     let api_key = get_api_key(&config_manager, provider_type);
+    let model_tiers = get_model_tiers(&config_manager, provider_type);
 
-    // Create tool registry with API key for subagent execution
-    let tool_registry = create_tool_registry(workspace, provider_type, api_key.as_deref());
+    // Create tool registry with API key and model tiers for subagent execution
+    let tool_registry = create_tool_registry(workspace, provider_type, api_key.as_deref(), Some(model_tiers));
     let tool_definitions = tool_registry.list();
 
     // Chat history
@@ -217,11 +218,12 @@ async fn run_chat(
         }
     };
 
-    // Get API key for subagents
+    // Get API key and model tiers for subagents
     let api_key = get_api_key(&config_manager, provider_type);
+    let model_tiers = get_model_tiers(&config_manager, provider_type);
 
-    // Create tool registry with API key for subagent execution
-    let tool_registry = create_tool_registry(workspace, provider_type, api_key.as_deref());
+    // Create tool registry with API key and model tiers for subagent execution
+    let tool_registry = create_tool_registry(workspace, provider_type, api_key.as_deref(), Some(model_tiers));
     let tool_definitions = tool_registry.list();
 
     // Create skill registry for slash commands
@@ -494,6 +496,7 @@ fn create_tool_registry(
     workspace: &PathBuf,
     provider_type: ProviderType,
     api_key: Option<&str>,
+    model_tiers: Option<cowork_core::config::ModelTiers>,
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
 
@@ -524,12 +527,15 @@ fn create_tool_registry(
     // Code intelligence tools
     registry.register(std::sync::Arc::new(LspTool::new(workspace.clone())));
 
-    // Agent/Task tools - pass API key for subagent execution
+    // Agent/Task tools - pass API key and model tiers for subagent execution
     let agent_registry = std::sync::Arc::new(AgentInstanceRegistry::new());
     let mut task_tool = TaskTool::new(agent_registry.clone(), workspace.clone())
         .with_provider(provider_type);
     if let Some(key) = api_key {
         task_tool = task_tool.with_api_key(key.to_string());
+    }
+    if let Some(tiers) = model_tiers {
+        task_tool = task_tool.with_model_tiers(tiers);
     }
     registry.register(std::sync::Arc::new(task_tool));
     registry.register(std::sync::Arc::new(TaskOutputTool::new(agent_registry)));
@@ -556,6 +562,22 @@ fn get_api_key(config_manager: &ConfigManager, provider_type: ProviderType) -> O
     }
 
     None
+}
+
+/// Get model tiers from config or use provider defaults
+fn get_model_tiers(
+    config_manager: &ConfigManager,
+    provider_type: ProviderType,
+) -> cowork_core::config::ModelTiers {
+    let provider_name = provider_type.to_string();
+
+    // Check config for custom model_tiers
+    if let Some(provider_config) = config_manager.config().providers.get(&provider_name) {
+        return provider_config.get_model_tiers();
+    }
+
+    // Fall back to provider defaults
+    cowork_core::config::ModelTiers::for_provider(&provider_name)
 }
 
 /// Create a provider from config, falling back to environment variables

@@ -84,6 +84,126 @@ impl Config {
     }
 }
 
+/// Model tiers for subagent execution
+/// Maps capability tiers to specific model names for each provider
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelTiers {
+    /// Fast model for quick, simple tasks (e.g., Haiku, gpt-4o-mini)
+    pub fast: String,
+    /// Balanced model for general tasks (e.g., Sonnet, gpt-4o)
+    pub balanced: String,
+    /// Powerful model for complex reasoning (e.g., Opus, o1)
+    pub powerful: String,
+}
+
+impl ModelTiers {
+    /// Default tiers for Anthropic
+    pub fn anthropic() -> Self {
+        Self {
+            fast: "claude-3-5-haiku-20241022".to_string(),
+            balanced: "claude-sonnet-4-20250514".to_string(),
+            powerful: "claude-sonnet-4-20250514".to_string(),
+        }
+    }
+
+    /// Default tiers for OpenAI
+    pub fn openai() -> Self {
+        Self {
+            fast: "gpt-4o-mini".to_string(),
+            balanced: "gpt-4o".to_string(),
+            powerful: "gpt-4o".to_string(),
+        }
+    }
+
+    /// Default tiers for Gemini
+    pub fn gemini() -> Self {
+        Self {
+            fast: "gemini-2.0-flash".to_string(),
+            balanced: "gemini-2.0-flash".to_string(),
+            powerful: "gemini-1.5-pro".to_string(),
+        }
+    }
+
+    /// Default tiers for DeepSeek
+    pub fn deepseek() -> Self {
+        Self {
+            fast: "deepseek-chat".to_string(),
+            balanced: "deepseek-chat".to_string(),
+            powerful: "deepseek-reasoner".to_string(),
+        }
+    }
+
+    /// Default tiers for Groq (fast inference)
+    pub fn groq() -> Self {
+        Self {
+            fast: "llama-3.1-8b-instant".to_string(),
+            balanced: "llama-3.3-70b-versatile".to_string(),
+            powerful: "llama-3.3-70b-versatile".to_string(),
+        }
+    }
+
+    /// Default tiers for xAI (Grok)
+    pub fn xai() -> Self {
+        Self {
+            fast: "grok-2".to_string(),
+            balanced: "grok-2".to_string(),
+            powerful: "grok-2".to_string(),
+        }
+    }
+
+    /// Default tiers for Cohere
+    pub fn cohere() -> Self {
+        Self {
+            fast: "command-r".to_string(),
+            balanced: "command-r-plus".to_string(),
+            powerful: "command-r-plus".to_string(),
+        }
+    }
+
+    /// Default tiers for Perplexity
+    pub fn perplexity() -> Self {
+        Self {
+            fast: "llama-3.1-sonar-small-128k-online".to_string(),
+            balanced: "llama-3.1-sonar-large-128k-online".to_string(),
+            powerful: "llama-3.1-sonar-large-128k-online".to_string(),
+        }
+    }
+
+    /// Default tiers for Ollama (placeholder - users should configure)
+    pub fn ollama() -> Self {
+        Self {
+            fast: "llama3.2:3b".to_string(),
+            balanced: "llama3.2".to_string(),
+            powerful: "llama3.3:70b".to_string(),
+        }
+    }
+
+    /// Get default tiers for a provider type
+    pub fn for_provider(provider_type: &str) -> Self {
+        match provider_type.to_lowercase().as_str() {
+            "anthropic" => Self::anthropic(),
+            "openai" => Self::openai(),
+            "gemini" | "google" => Self::gemini(),
+            "deepseek" => Self::deepseek(),
+            "groq" => Self::groq(),
+            "xai" | "grok" => Self::xai(),
+            "cohere" => Self::cohere(),
+            "perplexity" => Self::perplexity(),
+            "ollama" => Self::ollama(),
+            _ => Self::anthropic(), // Fallback
+        }
+    }
+
+    /// Get the model name for a given tier
+    pub fn get_model(&self, tier: &str) -> &str {
+        match tier.to_lowercase().as_str() {
+            "fast" | "haiku" => &self.fast,
+            "powerful" | "opus" => &self.powerful,
+            _ => &self.balanced, // Default to balanced
+        }
+    }
+}
+
 /// LLM Provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -96,8 +216,11 @@ pub struct ProviderConfig {
     /// Environment variable name for API key
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key_env: Option<String>,
-    /// Model to use
+    /// Model to use (default/primary model)
     pub model: String,
+    /// Model tiers for subagent execution (fast/balanced/powerful)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_tiers: Option<ModelTiers>,
     /// Base URL for the API (optional, for self-hosted)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
@@ -121,6 +244,7 @@ impl ProviderConfig {
             api_key: None,
             api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
             model: "claude-sonnet-4-20250514".to_string(),
+            model_tiers: None, // Uses ModelTiers::anthropic() as default
             base_url: None,
             default_max_tokens: 4096,
             default_temperature: 0.7,
@@ -134,6 +258,7 @@ impl ProviderConfig {
             api_key: None,
             api_key_env: Some("OPENAI_API_KEY".to_string()),
             model: "gpt-4o".to_string(),
+            model_tiers: None, // Uses ModelTiers::openai() as default
             base_url: None,
             default_max_tokens: 4096,
             default_temperature: 0.7,
@@ -147,6 +272,7 @@ impl ProviderConfig {
             api_key: None,
             api_key_env: Some("GEMINI_API_KEY".to_string()),
             model: "gemini-1.5-pro".to_string(),
+            model_tiers: None, // Uses ModelTiers::gemini() as default
             base_url: None,
             default_max_tokens: 4096,
             default_temperature: 0.7,
@@ -160,6 +286,7 @@ impl ProviderConfig {
             api_key: None,
             api_key_env: Some("GROQ_API_KEY".to_string()),
             model: "llama-3.3-70b-versatile".to_string(),
+            model_tiers: None, // Uses ModelTiers::groq() as default
             base_url: None,
             default_max_tokens: 4096,
             default_temperature: 0.7,
@@ -173,6 +300,7 @@ impl ProviderConfig {
             api_key: None,
             api_key_env: Some("DEEPSEEK_API_KEY".to_string()),
             model: "deepseek-chat".to_string(),
+            model_tiers: None, // Uses ModelTiers::deepseek() as default
             base_url: None,
             default_max_tokens: 4096,
             default_temperature: 0.7,
@@ -186,10 +314,18 @@ impl ProviderConfig {
             api_key: None,
             api_key_env: Some("COHERE_API_KEY".to_string()),
             model: "command-r-plus".to_string(),
+            model_tiers: None, // Uses ModelTiers::cohere() as default
             base_url: None,
             default_max_tokens: 4096,
             default_temperature: 0.7,
         }
+    }
+
+    /// Get model tiers, falling back to provider defaults
+    pub fn get_model_tiers(&self) -> ModelTiers {
+        self.model_tiers
+            .clone()
+            .unwrap_or_else(|| ModelTiers::for_provider(&self.provider_type))
     }
 }
 

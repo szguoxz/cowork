@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 
+use crate::config::ModelTiers;
 use crate::error::Result;
 use crate::provider::{create_provider, CompletionResult, LlmMessage, ProviderType};
 use crate::tools::filesystem::{
@@ -20,7 +21,7 @@ use crate::tools::task::TodoWrite;
 use crate::tools::web::{WebFetch, WebSearch};
 use crate::tools::ToolRegistry;
 
-use super::{AgentInstanceRegistry, AgentModel, AgentStatus, AgentType};
+use super::{AgentInstanceRegistry, AgentStatus, AgentType, ModelTier};
 
 /// Configuration for agent execution
 #[derive(Debug, Clone)]
@@ -33,6 +34,8 @@ pub struct AgentExecutionConfig {
     pub api_key: Option<String>,
     /// Maximum number of agentic turns before stopping
     pub max_turns: u64,
+    /// Model tiers for selecting models (config-driven or defaults)
+    pub model_tiers: ModelTiers,
 }
 
 impl AgentExecutionConfig {
@@ -42,11 +45,14 @@ impl AgentExecutionConfig {
             provider_type: ProviderType::Anthropic,
             api_key: None,
             max_turns: 50,
+            model_tiers: ModelTiers::anthropic(),
         }
     }
 
     pub fn with_provider(mut self, provider_type: ProviderType) -> Self {
         self.provider_type = provider_type;
+        // Update model tiers to match provider defaults
+        self.model_tiers = ModelTiers::for_provider(&provider_type.to_string());
         self
     }
 
@@ -57,6 +63,11 @@ impl AgentExecutionConfig {
 
     pub fn with_max_turns(mut self, max_turns: u64) -> Self {
         self.max_turns = max_turns;
+        self
+    }
+
+    pub fn with_model_tiers(mut self, model_tiers: ModelTiers) -> Self {
+        self.model_tiers = model_tiers;
         self
     }
 }
@@ -163,25 +174,15 @@ pub fn get_system_prompt(agent_type: &AgentType) -> &'static str {
     }
 }
 
-/// Get the model string for an agent model
-pub fn get_model_for_agent(model: &AgentModel, provider_type: ProviderType) -> &'static str {
-    match provider_type {
-        ProviderType::Anthropic => match model {
-            AgentModel::Opus => "claude-3-opus-20240229",
-            AgentModel::Sonnet => "claude-sonnet-4-20250514",
-            AgentModel::Haiku => "claude-3-5-haiku-20241022",
-        },
-        ProviderType::OpenAI => match model {
-            AgentModel::Opus => "gpt-4o",
-            AgentModel::Sonnet => "gpt-4o",
-            AgentModel::Haiku => "gpt-4o-mini",
-        },
-        ProviderType::Gemini => match model {
-            AgentModel::Opus => "gemini-1.5-pro",
-            AgentModel::Sonnet => "gemini-2.0-flash",
-            AgentModel::Haiku => "gemini-1.5-flash",
-        },
-        _ => provider_type.default_model(),
+/// Get the model string for a model tier using config-driven tiers
+///
+/// This function uses the ModelTiers configuration to select the appropriate
+/// model for the given tier, allowing provider-specific customization.
+pub fn get_model_for_tier(tier: &ModelTier, model_tiers: &ModelTiers) -> String {
+    match tier {
+        ModelTier::Fast => model_tiers.fast.clone(),
+        ModelTier::Balanced => model_tiers.balanced.clone(),
+        ModelTier::Powerful => model_tiers.powerful.clone(),
     }
 }
 
@@ -242,20 +243,20 @@ pub fn create_agent_tool_registry(agent_type: &AgentType, workspace: &PathBuf) -
 /// or reaches the maximum number of turns.
 pub async fn execute_agent_loop(
     agent_type: &AgentType,
-    model: &AgentModel,
+    model: &ModelTier,
     prompt: &str,
     config: &AgentExecutionConfig,
     registry: Arc<AgentInstanceRegistry>,
     agent_id: &str,
 ) -> Result<String> {
-    // Create provider with appropriate model
-    let model_str = get_model_for_agent(model, config.provider_type);
+    // Create provider with appropriate model (config-driven)
+    let model_str = get_model_for_tier(model, &config.model_tiers);
     let system_prompt = get_system_prompt(agent_type);
 
     let provider = create_provider(
         config.provider_type,
         config.api_key.as_deref(),
-        Some(model_str),
+        Some(&model_str),
         Some(system_prompt),
     )?;
 
@@ -360,7 +361,7 @@ pub async fn execute_agent_loop(
 /// Spawns the agent loop as a tokio task and writes output to a file.
 pub fn execute_agent_background(
     agent_type: AgentType,
-    model: AgentModel,
+    model: ModelTier,
     prompt: String,
     config: AgentExecutionConfig,
     registry: Arc<AgentInstanceRegistry>,
@@ -450,29 +451,42 @@ mod tests {
     }
 
     #[test]
-    fn test_get_model_for_agent() {
-        // Anthropic
+    fn test_get_model_for_tier() {
+        // Test with Anthropic tiers
+        let anthropic_tiers = ModelTiers::anthropic();
         assert_eq!(
-            get_model_for_agent(&AgentModel::Sonnet, ProviderType::Anthropic),
+            get_model_for_tier(&ModelTier::Balanced, &anthropic_tiers),
             "claude-sonnet-4-20250514"
         );
         assert_eq!(
-            get_model_for_agent(&AgentModel::Opus, ProviderType::Anthropic),
-            "claude-3-opus-20240229"
+            get_model_for_tier(&ModelTier::Powerful, &anthropic_tiers),
+            "claude-sonnet-4-20250514"
         );
         assert_eq!(
-            get_model_for_agent(&AgentModel::Haiku, ProviderType::Anthropic),
+            get_model_for_tier(&ModelTier::Fast, &anthropic_tiers),
             "claude-3-5-haiku-20241022"
         );
 
-        // OpenAI
+        // Test with OpenAI tiers
+        let openai_tiers = ModelTiers::openai();
         assert_eq!(
-            get_model_for_agent(&AgentModel::Sonnet, ProviderType::OpenAI),
+            get_model_for_tier(&ModelTier::Balanced, &openai_tiers),
             "gpt-4o"
         );
         assert_eq!(
-            get_model_for_agent(&AgentModel::Haiku, ProviderType::OpenAI),
+            get_model_for_tier(&ModelTier::Fast, &openai_tiers),
             "gpt-4o-mini"
+        );
+
+        // Test with DeepSeek tiers
+        let deepseek_tiers = ModelTiers::deepseek();
+        assert_eq!(
+            get_model_for_tier(&ModelTier::Fast, &deepseek_tiers),
+            "deepseek-chat"
+        );
+        assert_eq!(
+            get_model_for_tier(&ModelTier::Powerful, &deepseek_tiers),
+            "deepseek-reasoner"
         );
     }
 
