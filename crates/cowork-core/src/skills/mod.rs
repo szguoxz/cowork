@@ -9,11 +9,13 @@
 pub mod context;
 pub mod dev;
 pub mod git;
+pub mod installer;
 pub mod loader;
 pub mod mcp;
 pub mod memory;
 pub mod permissions;
 pub mod session;
+pub mod skill_cmd;
 pub mod vim;
 
 use serde::{Deserialize, Serialize};
@@ -175,6 +177,9 @@ impl SkillRegistry {
             registry.register(Arc::new(mcp::McpSkill::new(manager)));
         }
 
+        // Register skill management command
+        registry.register(Arc::new(skill_cmd::SkillCmdSkill::new(workspace.clone())));
+
         // Register help skill
         registry.register(Arc::new(HelpSkill::new()));
 
@@ -308,6 +313,12 @@ MCP Server Commands:
   /mcp start <name>     - Start an MCP server
   /mcp stop <name>      - Stop a running server
   /mcp tools [server]   - List tools from MCP servers
+
+Skill Management:
+  /skill list           - List installed custom skills
+  /skill add <url>      - Install a skill from a zip URL
+  /skill remove <name>  - Remove an installed skill
+  /skill info <name>    - Show details about a skill
 
 General:
   /help             - Show this help message

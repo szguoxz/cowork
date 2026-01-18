@@ -105,6 +105,17 @@ pub fn run() {
             commands::get_memory_hierarchy,
             // Help commands
             commands::get_quick_start,
+            // MCP server management
+            commands::list_mcp_servers,
+            commands::list_mcp_tools,
+            commands::add_mcp_server,
+            commands::start_mcp_server,
+            commands::stop_mcp_server,
+            commands::remove_mcp_server,
+            // Skill installation
+            commands::list_installed_skills,
+            commands::install_skill,
+            commands::remove_skill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

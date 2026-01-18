@@ -45,6 +45,7 @@ url = "2"
 uuid.workspace = true
 chrono.workspace = true
 dirs = "5"
+zip = "2"
 
 # Token counting
 tiktoken-rs = { version = "0.6", optional = true }

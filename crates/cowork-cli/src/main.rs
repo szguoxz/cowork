@@ -1,10 +1,11 @@
 //! Cowork CLI - Multi-agent assistant command line tool
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use console::style;
-use dialoguer::{theme::ColorfulTheme, Confirm, Input};
+use dialoguer::{theme::ColorfulTheme, Input, Select};
 use indicatif::{ProgressBar, ProgressStyle};
 
 use cowork_core::config::ConfigManager;
@@ -166,6 +167,10 @@ async fn run_one_shot(
     // Chat history
     let mut messages: Vec<LlmMessage> = Vec::new();
 
+    // Session state (for one-shot, just use auto_approve setting)
+    let mut session_approved_tools: HashSet<String> = HashSet::new();
+    let mut session_approve_all = auto_approve;
+
     // Process the single message
     process_ai_message(
         prompt,
@@ -173,7 +178,8 @@ async fn run_one_shot(
         &tool_registry,
         &tool_definitions,
         &mut messages,
-        auto_approve,
+        &mut session_approved_tools,
+        &mut session_approve_all,
     )
     .await?;
 
@@ -246,6 +252,11 @@ async fn run_chat(
     // Chat history
     let mut messages: Vec<LlmMessage> = Vec::new();
 
+    // Session-approved tools (auto-approve these for the rest of the session)
+    let mut session_approved_tools: HashSet<String> = HashSet::new();
+    // If true, auto-approve all tools for the session
+    let mut session_approve_all = auto_approve;
+
     loop {
         let input: String = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("You")
@@ -304,7 +315,8 @@ async fn run_chat(
                     &tool_registry,
                     &tool_definitions,
                     &mut messages,
-                    auto_approve,
+                    &mut session_approved_tools,
+                    &mut session_approve_all,
                 )
                 .await?;
             }
@@ -323,7 +335,8 @@ async fn process_ai_message(
     tool_registry: &ToolRegistry,
     tool_definitions: &[ToolDefinition],
     messages: &mut Vec<LlmMessage>,
-    auto_approve: bool,
+    session_approved_tools: &mut HashSet<String>,
+    session_approve_all: &mut bool,
 ) -> anyhow::Result<()> {
     // Add user message
     messages.push(LlmMessage {
@@ -364,37 +377,79 @@ async fn process_ai_message(
                 // AI wants to use tools
                 println!(
                     "{}",
-                    style(format!("AI wants to use {} tool(s):", calls.len())).cyan()
+                    style(format!("AI wants to use {} tool(s)", calls.len())).cyan()
                 );
 
                 let mut tool_results = Vec::new();
 
                 for call in &calls {
+                    // Display tool call in a formatted box
                     println!();
-                    println!("  {} {}", style("Tool:").bold(), style(&call.name).yellow());
-                    println!(
-                        "  {} {}",
-                        style("Args:").bold(),
-                        serde_json::to_string_pretty(&call.arguments)
-                            .unwrap_or_else(|_| call.arguments.to_string())
-                    );
+                    println!("{}", style("┌─ Tool Call ─────────────────────────────────────").dim());
+                    println!("│ {} {}", style("Tool:").bold(), style(&call.name).yellow().bold());
+
+                    // Format arguments nicely
+                    let args_str = serde_json::to_string_pretty(&call.arguments)
+                        .unwrap_or_else(|_| call.arguments.to_string());
+                    for (i, line) in args_str.lines().enumerate() {
+                        if i == 0 {
+                            println!("│ {} {}", style("Args:").bold(), line);
+                        } else {
+                            println!("│       {}", line);
+                        }
+                    }
+                    println!("{}", style("└─────────────────────────────────────────────────").dim());
 
                     // Check if tool needs approval
                     let needs_approval = tool_needs_approval(&call.name);
 
-                    let approved = if auto_approve {
-                        // Auto-approve all tools
-                        println!("  {} (auto-approved)", style("Auto-approve mode").yellow());
+                    // Determine approval status
+                    let approved = if *session_approve_all {
+                        // Session auto-approve all
+                        println!("  {} {}", style("✓").green(), style("Auto-approved (session)").dim());
                         true
-                    } else if needs_approval {
-                        Confirm::with_theme(&ColorfulTheme::default())
-                            .with_prompt("Approve this tool call?")
-                            .default(true)
-                            .interact()?
+                    } else if session_approved_tools.contains(&call.name) {
+                        // This tool type is session-approved
+                        println!("  {} {}", style("✓").green(), style(format!("Auto-approved ({} for session)", call.name)).dim());
+                        true
+                    } else if !needs_approval {
+                        // Read-only tools auto-approved
+                        println!("  {} {}", style("✓").green(), style("Auto-approved (read-only)").dim());
+                        true
                     } else {
-                        // Auto-approve read-only tools
-                        println!("  {} (auto-approved)", style("Read-only").dim());
-                        true
+                        // Need user approval - show options
+                        let options: Vec<String> = vec![
+                            "Yes - approve this call".to_string(),
+                            "No - reject this call".to_string(),
+                            format!("Always - auto-approve '{}' for session", call.name),
+                            "Approve all - auto-approve everything for session".to_string(),
+                        ];
+
+                        let selection = Select::with_theme(&ColorfulTheme::default())
+                            .with_prompt("Approve?")
+                            .items(&options)
+                            .default(0)
+                            .interact()?;
+
+                        match selection {
+                            0 => true,  // Yes
+                            1 => false, // No
+                            2 => {
+                                // Always - add to session approved
+                                session_approved_tools.insert(call.name.clone());
+                                println!("  {} '{}' will be auto-approved for this session",
+                                    style("✓").green(), call.name);
+                                true
+                            }
+                            3 => {
+                                // Approve all
+                                *session_approve_all = true;
+                                println!("  {} All tools will be auto-approved for this session",
+                                    style("✓").green());
+                                true
+                            }
+                            _ => false,
+                        }
                     };
 
                     if approved {
@@ -417,7 +472,7 @@ async fn process_ai_message(
                                     } else {
                                         result_str.clone()
                                     };
-                                    println!("  {} {}", style("Result:").bold(), truncated);
+                                    println!("  {} {}", style("Result:").bold().green(), truncated);
 
                                     tool_results.push((call.name.clone(), result_str, true));
                                 }
@@ -435,7 +490,7 @@ async fn process_ai_message(
                             tool_results.push((call.name.clone(), error_msg, false));
                         }
                     } else {
-                        println!("  {}", style("Rejected by user").yellow());
+                        println!("  {}", style("✗ Rejected by user").yellow());
                         tool_results.push((
                             call.name.clone(),
                             "User rejected this tool call".to_string(),

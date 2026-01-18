@@ -1197,3 +1197,244 @@ pub async fn get_memory_hierarchy(
         combined_content: hierarchy.combined_content,
     })
 }
+
+// ============================================================================
+// MCP Server Management Commands
+// ============================================================================
+
+/// MCP server information for the frontend
+#[derive(Debug, Clone, Serialize)]
+pub struct McpServerInfo {
+    pub name: String,
+    pub command: String,
+    pub enabled: bool,
+    pub status: String,
+    pub tool_count: usize,
+    pub error: Option<String>,
+}
+
+/// MCP tool information for the frontend
+#[derive(Debug, Clone, Serialize)]
+pub struct McpToolInfo {
+    pub name: String,
+    pub description: String,
+    pub server: String,
+}
+
+/// List all MCP servers
+#[tauri::command]
+pub async fn list_mcp_servers(
+    state: State<'_, AppState>,
+) -> Result<Vec<McpServerInfo>, String> {
+    use cowork_core::mcp_manager::McpServerManager;
+
+    let config_manager = state.config_manager.read().await;
+    let manager = McpServerManager::with_configs(config_manager.config().mcp_servers.clone());
+
+    let servers = manager.list_servers();
+    Ok(servers
+        .into_iter()
+        .map(|s| McpServerInfo {
+            name: s.name,
+            command: s.command,
+            enabled: s.enabled,
+            status: format!("{:?}", s.status).to_lowercase(),
+            tool_count: s.tool_count,
+            error: match s.status {
+                cowork_core::mcp_manager::McpServerStatus::Failed(msg) => Some(msg),
+                _ => None,
+            },
+        })
+        .collect())
+}
+
+/// List all tools from MCP servers
+#[tauri::command]
+pub async fn list_mcp_tools(
+    state: State<'_, AppState>,
+) -> Result<Vec<McpToolInfo>, String> {
+    use cowork_core::mcp_manager::McpServerManager;
+
+    let config_manager = state.config_manager.read().await;
+    let manager = McpServerManager::with_configs(config_manager.config().mcp_servers.clone());
+
+    let tools = manager.get_all_tools();
+    Ok(tools
+        .into_iter()
+        .map(|t| McpToolInfo {
+            name: t.name,
+            description: t.description,
+            server: t.server,
+        })
+        .collect())
+}
+
+/// Add a new MCP server
+#[tauri::command]
+pub async fn add_mcp_server(
+    name: String,
+    command: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    use cowork_core::config::McpServerConfig;
+
+    let mut config_manager = state.config_manager.write().await;
+
+    // Check if URL or command
+    let config = if command.starts_with("http://") || command.starts_with("https://") {
+        McpServerConfig::new_http(command)
+    } else {
+        McpServerConfig::new(command)
+    };
+
+    config_manager
+        .config_mut()
+        .mcp_servers
+        .insert(name, config);
+
+    config_manager
+        .save()
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    Ok(())
+}
+
+/// Start an MCP server
+#[tauri::command]
+pub async fn start_mcp_server(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    use cowork_core::mcp_manager::McpServerManager;
+
+    let config_manager = state.config_manager.read().await;
+    let manager = McpServerManager::with_configs(config_manager.config().mcp_servers.clone());
+
+    manager
+        .start_server(&name)
+        .map_err(|e| format!("Failed to start server: {}", e))?;
+
+    Ok(())
+}
+
+/// Stop an MCP server
+#[tauri::command]
+pub async fn stop_mcp_server(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    use cowork_core::mcp_manager::McpServerManager;
+
+    let config_manager = state.config_manager.read().await;
+    let manager = McpServerManager::with_configs(config_manager.config().mcp_servers.clone());
+
+    manager
+        .stop_server(&name)
+        .map_err(|e| format!("Failed to stop server: {}", e))?;
+
+    Ok(())
+}
+
+/// Remove an MCP server
+#[tauri::command]
+pub async fn remove_mcp_server(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut config_manager = state.config_manager.write().await;
+
+    config_manager.config_mut().mcp_servers.remove(&name);
+
+    config_manager
+        .save()
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    Ok(())
+}
+
+// ============================================================================
+// Skill Installation Commands
+// ============================================================================
+
+/// Installed skill information for the frontend
+#[derive(Debug, Clone, Serialize)]
+pub struct InstalledSkillInfo {
+    pub name: String,
+    pub description: String,
+    pub location: String,
+    pub path: String,
+}
+
+/// List installed skills
+#[tauri::command]
+pub async fn list_installed_skills(
+    state: State<'_, AppState>,
+) -> Result<Vec<InstalledSkillInfo>, String> {
+    use cowork_core::skills::installer::SkillInstaller;
+
+    let installer = SkillInstaller::new(state.workspace_path.clone());
+    let skills = installer.list_installed();
+
+    Ok(skills
+        .into_iter()
+        .map(|s| InstalledSkillInfo {
+            name: s.name,
+            description: s.description,
+            location: format!("{:?}", s.location).to_lowercase(),
+            path: s.path.to_string_lossy().to_string(),
+        })
+        .collect())
+}
+
+/// Install a skill from URL
+#[tauri::command]
+pub async fn install_skill(
+    url: String,
+    location: String,
+    force: bool,
+    state: State<'_, AppState>,
+) -> Result<InstalledSkillInfo, String> {
+    use cowork_core::skills::installer::{InstallLocation, SkillInstaller};
+
+    let installer = SkillInstaller::new(state.workspace_path.clone());
+
+    let loc = match location.as_str() {
+        "global" => InstallLocation::Global,
+        _ => InstallLocation::Project,
+    };
+
+    let result = installer
+        .install_from_url(&url, loc, force)
+        .map_err(|e| format!("Failed to install skill: {}", e))?;
+
+    Ok(InstalledSkillInfo {
+        name: result.name,
+        description: result.description,
+        location: format!("{:?}", result.location).to_lowercase(),
+        path: result.path.to_string_lossy().to_string(),
+    })
+}
+
+/// Remove an installed skill
+#[tauri::command]
+pub async fn remove_skill(
+    name: String,
+    location: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    use cowork_core::skills::installer::{InstallLocation, SkillInstaller};
+
+    let installer = SkillInstaller::new(state.workspace_path.clone());
+
+    let loc = match location.as_str() {
+        "global" => Some(InstallLocation::Global),
+        "project" => Some(InstallLocation::Project),
+        _ => None,
+    };
+
+    installer
+        .uninstall(&name, loc)
+        .map_err(|e| format!("Failed to remove skill: {}", e))?;
+
+    Ok(())
+}

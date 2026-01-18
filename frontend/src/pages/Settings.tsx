@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Save, RefreshCw } from 'lucide-react'
+import { Settings as SettingsIcon, Save, RefreshCw } from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
+import { Select } from '../components/ui/select'
 
 interface Settings {
   provider: {
@@ -24,7 +28,7 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   const loadSettings = async () => {
     setLoading(true)
@@ -32,7 +36,7 @@ export default function SettingsPage() {
       const result = await invoke<Settings>('get_settings')
       setSettings(result)
     } catch (err) {
-      setMessage(`Error loading settings: ${err}`)
+      setMessage({ type: 'error', text: `Error loading settings: ${err}` })
     } finally {
       setLoading(false)
     }
@@ -44,10 +48,10 @@ export default function SettingsPage() {
     try {
       await invoke('update_settings', { settings })
       await invoke('save_settings')
-      setMessage('Settings saved successfully!')
+      setMessage({ type: 'success', text: 'Settings saved successfully!' })
       setTimeout(() => setMessage(null), 3000)
     } catch (err) {
-      setMessage(`Error saving settings: ${err}`)
+      setMessage({ type: 'error', text: `Error saving settings: ${err}` })
     } finally {
       setSaving(false)
     }
@@ -60,7 +64,7 @@ export default function SettingsPage() {
   if (loading || !settings) {
     return (
       <div className="flex items-center justify-center h-full">
-        <RefreshCw className="w-8 h-8 animate-spin text-gray-400" />
+        <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground" />
       </div>
     )
   }
@@ -68,50 +72,49 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <header className="h-14 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-4">
-        <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
-          Settings
-        </h1>
-        <button
-          onClick={saveSettings}
-          disabled={saving}
-          className="
-            flex items-center gap-2 px-4 py-2 rounded-lg
-            bg-primary-600 text-white hover:bg-primary-700
-            disabled:opacity-50 transition-colors
-          "
-        >
-          <Save className="w-4 h-4" />
-          Save
-        </button>
+      <header className="h-14 border-b border-border flex items-center justify-between px-6">
+        <div className="flex items-center gap-3">
+          <SettingsIcon className="w-5 h-5 text-primary" />
+          <h1 className="text-lg font-semibold">Settings</h1>
+        </div>
+        <Button onClick={saveSettings} disabled={saving}>
+          {saving ? (
+            <RefreshCw className="w-4 h-4 animate-spin" />
+          ) : (
+            <Save className="w-4 h-4" />
+          )}
+          Save Changes
+        </Button>
       </header>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
-        {message && (
-          <div className={`
-            mb-4 p-3 rounded-lg
-            ${message.includes('Error')
-              ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-              : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-            }
-          `}>
-            {message}
-          </div>
-        )}
+        <div className="max-w-2xl mx-auto space-y-6">
+          {/* Message */}
+          {message && (
+            <div className={`
+              p-4 rounded-lg animate-in
+              ${message.type === 'error'
+                ? 'bg-destructive/10 text-destructive border border-destructive/20'
+                : 'bg-green-500/10 text-green-600 border border-green-500/20'
+              }
+            `}>
+              {message.text}
+            </div>
+          )}
 
-        <div className="space-y-8 max-w-2xl">
           {/* Provider Settings */}
-          <section>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase mb-4">
-              LLM Provider
-            </h2>
-            <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>LLM Provider</CardTitle>
+              <CardDescription>
+                Configure your AI provider and model settings
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Provider
-                </label>
-                <select
+                <label className="text-sm font-medium mb-1.5 block">Provider</label>
+                <Select
                   value={settings.provider.provider_type}
                   onChange={(e) =>
                     setSettings({
@@ -119,11 +122,6 @@ export default function SettingsPage() {
                       provider: { ...settings.provider, provider_type: e.target.value },
                     })
                   }
-                  className="
-                    w-full rounded-lg border border-gray-300 dark:border-gray-600
-                    bg-white dark:bg-gray-800 px-3 py-2
-                    text-gray-900 dark:text-white
-                  "
                 >
                   <option value="anthropic">Anthropic (Claude)</option>
                   <option value="openai">OpenAI (GPT)</option>
@@ -133,14 +131,12 @@ export default function SettingsPage() {
                   <option value="deepseek">DeepSeek</option>
                   <option value="xai">xAI (Grok)</option>
                   <option value="ollama">Ollama (Local)</option>
-                </select>
+                </Select>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  API Key
-                </label>
-                <input
+                <label className="text-sm font-medium mb-1.5 block">API Key</label>
+                <Input
                   type="password"
                   value={settings.provider.api_key || ''}
                   onChange={(e) =>
@@ -149,23 +145,16 @@ export default function SettingsPage() {
                       provider: { ...settings.provider, api_key: e.target.value || null },
                     })
                   }
-                  className="
-                    w-full rounded-lg border border-gray-300 dark:border-gray-600
-                    bg-white dark:bg-gray-800 px-3 py-2
-                    text-gray-900 dark:text-white
-                  "
                   placeholder="Enter your API key"
                 />
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                <p className="mt-1.5 text-xs text-muted-foreground">
                   You can also set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable.
                 </p>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Model
-                </label>
-                <input
+                <label className="text-sm font-medium mb-1.5 block">Model</label>
+                <Input
                   type="text"
                   value={settings.provider.model}
                   onChange={(e) =>
@@ -174,27 +163,24 @@ export default function SettingsPage() {
                       provider: { ...settings.provider, model: e.target.value },
                     })
                   }
-                  className="
-                    w-full rounded-lg border border-gray-300 dark:border-gray-600
-                    bg-white dark:bg-gray-800 px-3 py-2
-                    text-gray-900 dark:text-white
-                  "
+                  placeholder="e.g., claude-sonnet-4-20250514"
                 />
               </div>
-            </div>
-          </section>
+            </CardContent>
+          </Card>
 
           {/* Approval Settings */}
-          <section>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase mb-4">
-              Approval Policy
-            </h2>
-            <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Approval Policy</CardTitle>
+              <CardDescription>
+                Control how tool calls are approved
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Auto-approve Level
-                </label>
-                <select
+                <label className="text-sm font-medium mb-1.5 block">Auto-approve Level</label>
+                <Select
                   value={settings.approval.auto_approve_level}
                   onChange={(e) =>
                     setSettings({
@@ -202,20 +188,15 @@ export default function SettingsPage() {
                       approval: { ...settings.approval, auto_approve_level: e.target.value },
                     })
                   }
-                  className="
-                    w-full rounded-lg border border-gray-300 dark:border-gray-600
-                    bg-white dark:bg-gray-800 px-3 py-2
-                    text-gray-900 dark:text-white
-                  "
                 >
                   <option value="none">None (Ask for everything)</option>
                   <option value="low">Low (Auto-approve reads)</option>
                   <option value="medium">Medium (Auto-approve safe operations)</option>
                   <option value="high">High (Auto-approve most operations)</option>
-                </select>
+                </Select>
               </div>
 
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={settings.approval.show_confirmation_dialogs}
@@ -228,26 +209,25 @@ export default function SettingsPage() {
                       },
                     })
                   }
-                  className="rounded border-gray-300"
+                  className="w-4 h-4 rounded border-input"
                 />
-                <span className="text-sm text-gray-700 dark:text-gray-300">
-                  Show confirmation dialogs
-                </span>
+                <span className="text-sm">Show confirmation dialogs</span>
               </label>
-            </div>
-          </section>
+            </CardContent>
+          </Card>
 
           {/* UI Settings */}
-          <section>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase mb-4">
-              User Interface
-            </h2>
-            <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>User Interface</CardTitle>
+              <CardDescription>
+                Customize the appearance
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Theme
-                </label>
-                <select
+                <label className="text-sm font-medium mb-1.5 block">Theme</label>
+                <Select
                   value={settings.ui.theme}
                   onChange={(e) =>
                     setSettings({
@@ -255,19 +235,14 @@ export default function SettingsPage() {
                       ui: { ...settings.ui, theme: e.target.value },
                     })
                   }
-                  className="
-                    w-full rounded-lg border border-gray-300 dark:border-gray-600
-                    bg-white dark:bg-gray-800 px-3 py-2
-                    text-gray-900 dark:text-white
-                  "
                 >
                   <option value="system">System</option>
                   <option value="light">Light</option>
                   <option value="dark">Dark</option>
-                </select>
+                </Select>
               </div>
 
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={settings.ui.show_tool_calls}
@@ -277,14 +252,12 @@ export default function SettingsPage() {
                       ui: { ...settings.ui, show_tool_calls: e.target.checked },
                     })
                   }
-                  className="rounded border-gray-300"
+                  className="w-4 h-4 rounded border-input"
                 />
-                <span className="text-sm text-gray-700 dark:text-gray-300">
-                  Show tool calls in chat
-                </span>
+                <span className="text-sm">Show tool calls in chat</span>
               </label>
-            </div>
-          </section>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>
