@@ -38,7 +38,7 @@ anyhow.workspace = true
 tracing.workspace = true
 
 # HTTP client for API calls
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 url = "2"
 
 # Utils

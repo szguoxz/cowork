@@ -1,6 +1,7 @@
 //! MCP (Model Context Protocol) Server Manager
 //!
 //! Manages the lifecycle of MCP servers: starting, stopping, and discovering tools.
+//! Supports both stdio (local process) and HTTP (remote server) transports.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -26,6 +27,21 @@ pub enum McpServerStatus {
     Failed(String),
 }
 
+/// Connection handle for an MCP server
+enum McpConnection {
+    /// Stdio connection to local process
+    Stdio(Child),
+    /// HTTP connection to remote server
+    Http {
+        /// Base URL of the server
+        url: String,
+        /// HTTP client
+        client: reqwest::blocking::Client,
+        /// Headers to include in requests
+        headers: HashMap<String, String>,
+    },
+}
+
 /// Information about a running MCP server
 #[derive(Debug)]
 pub struct McpServerInstance {
@@ -35,10 +51,19 @@ pub struct McpServerInstance {
     pub config: McpServerConfig,
     /// Current status
     pub status: McpServerStatus,
-    /// Child process handle (if running)
-    process: Option<Child>,
+    /// Connection handle (stdio process or HTTP client)
+    connection: Option<McpConnection>,
     /// Tools provided by this server
     pub tools: Vec<McpToolInfo>,
+}
+
+impl std::fmt::Debug for McpConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            McpConnection::Stdio(_) => write!(f, "Stdio(...)"),
+            McpConnection::Http { url, .. } => write!(f, "Http({})", url),
+        }
+    }
 }
 
 /// Information about a tool provided by an MCP server
@@ -120,7 +145,7 @@ impl McpServerManager {
                 name: name.clone(),
                 config,
                 status: McpServerStatus::Stopped,
-                process: None,
+                connection: None,
                 tools: Vec::new(),
             });
         }
@@ -136,7 +161,7 @@ impl McpServerManager {
             name,
             config,
             status: McpServerStatus::Stopped,
-            process: None,
+            connection: None,
             tools: Vec::new(),
         });
     }
@@ -164,87 +189,134 @@ impl McpServerManager {
 
         instance.status = McpServerStatus::Starting;
 
-        // Build command
-        let mut cmd = Command::new(&instance.config.command);
-        cmd.args(&instance.config.args)
-            .envs(&instance.config.env)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        // Check if this is HTTP or stdio transport
+        if instance.config.is_http() {
+            // HTTP transport
+            let url = instance.config.url.clone()
+                .ok_or_else(|| mcp_error("HTTP transport requires a URL"))?;
 
-        // Spawn process
-        let mut child = cmd.spawn()
-            .map_err(|e| mcp_error(format!("Failed to start MCP server '{}': {}", name, e)))?;
+            let client = reqwest::blocking::Client::new();
+            let headers = instance.config.headers.clone();
 
-        // Try to initialize the MCP connection
-        // Send initialize request
-        let init_request = McpRequest {
-            jsonrpc: "2.0",
-            id: self.next_request_id(),
-            method: "initialize".to_string(),
-            params: Some(serde_json::json!({
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "cowork",
-                    "version": "0.1.0"
-                }
-            })),
-        };
+            // Test connection with initialize request
+            let init_request = McpRequest {
+                jsonrpc: "2.0",
+                id: self.next_request_id(),
+                method: "initialize".to_string(),
+                params: Some(serde_json::json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "cowork",
+                        "version": "0.1.0"
+                    }
+                })),
+            };
 
-        if let Some(ref mut stdin) = child.stdin {
-            let msg = serde_json::to_string(&init_request)
-                .map_err(|e| mcp_error(format!("Failed to serialize init request: {}", e)))?;
-            writeln!(stdin, "{}", msg)
-                .map_err(|e| mcp_error(format!("Failed to write to MCP server: {}", e)))?;
-            stdin.flush()
-                .map_err(|e| mcp_error(format!("Failed to flush to MCP server: {}", e)))?;
-        }
+            let mut request = client.post(&url);
+            for (key, value) in &headers {
+                request = request.header(key, value);
+            }
+            request = request.header("Content-Type", "application/json");
 
-        // Read initialize response
-        if let Some(ref mut stdout) = child.stdout {
-            let mut reader = BufReader::new(stdout);
-            let mut line = String::new();
+            let response = request.json(&init_request).send()
+                .map_err(|e| mcp_error(format!("Failed to connect to MCP server '{}': {}", name, e)))?;
 
-            // Set a timeout for reading (simple approach - just try to read)
-            match reader.read_line(&mut line) {
-                Ok(0) => {
-                    instance.status = McpServerStatus::Failed("Server closed connection".to_string());
-                    return Err(mcp_error("MCP server closed connection during init"));
-                }
-                Ok(_) => {
-                    let response: McpResponse = serde_json::from_str(&line)
-                        .map_err(|e| mcp_error(format!("Invalid init response: {}", e)))?;
+            if !response.status().is_success() {
+                instance.status = McpServerStatus::Failed(format!("HTTP {}", response.status()));
+                return Err(mcp_error(format!("MCP server returned HTTP {}", response.status())));
+            }
 
-                    if let Some(err) = response.error {
-                        instance.status = McpServerStatus::Failed(err.message.clone());
-                        return Err(mcp_error(format!("MCP init failed ({}): {}", err.code, err.message)));
+            let mcp_response: McpResponse = response.json()
+                .map_err(|e| mcp_error(format!("Invalid init response: {}", e)))?;
+
+            if let Some(err) = mcp_response.error {
+                instance.status = McpServerStatus::Failed(err.message.clone());
+                return Err(mcp_error(format!("MCP init failed ({}): {}", err.code, err.message)));
+            }
+
+            instance.connection = Some(McpConnection::Http { url, client, headers });
+            instance.status = McpServerStatus::Running;
+        } else {
+            // Stdio transport
+            let mut cmd = Command::new(&instance.config.command);
+            cmd.args(&instance.config.args)
+                .envs(&instance.config.env)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            let mut child = cmd.spawn()
+                .map_err(|e| mcp_error(format!("Failed to start MCP server '{}': {}", name, e)))?;
+
+            // Send initialize request
+            let init_request = McpRequest {
+                jsonrpc: "2.0",
+                id: self.next_request_id(),
+                method: "initialize".to_string(),
+                params: Some(serde_json::json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "cowork",
+                        "version": "0.1.0"
+                    }
+                })),
+            };
+
+            if let Some(ref mut stdin) = child.stdin {
+                let msg = serde_json::to_string(&init_request)
+                    .map_err(|e| mcp_error(format!("Failed to serialize init request: {}", e)))?;
+                writeln!(stdin, "{}", msg)
+                    .map_err(|e| mcp_error(format!("Failed to write to MCP server: {}", e)))?;
+                stdin.flush()
+                    .map_err(|e| mcp_error(format!("Failed to flush to MCP server: {}", e)))?;
+            }
+
+            // Read initialize response
+            if let Some(ref mut stdout) = child.stdout {
+                let mut reader = BufReader::new(stdout);
+                let mut line = String::new();
+
+                match reader.read_line(&mut line) {
+                    Ok(0) => {
+                        instance.status = McpServerStatus::Failed("Server closed connection".to_string());
+                        return Err(mcp_error("MCP server closed connection during init"));
+                    }
+                    Ok(_) => {
+                        let response: McpResponse = serde_json::from_str(&line)
+                            .map_err(|e| mcp_error(format!("Invalid init response: {}", e)))?;
+
+                        if let Some(err) = response.error {
+                            instance.status = McpServerStatus::Failed(err.message.clone());
+                            return Err(mcp_error(format!("MCP init failed ({}): {}", err.code, err.message)));
+                        }
+                    }
+                    Err(e) => {
+                        instance.status = McpServerStatus::Failed(e.to_string());
+                        return Err(mcp_error(format!("Failed to read from MCP server: {}", e)));
                     }
                 }
-                Err(e) => {
-                    instance.status = McpServerStatus::Failed(e.to_string());
-                    return Err(mcp_error(format!("Failed to read from MCP server: {}", e)));
-                }
             }
+
+            // Send initialized notification
+            let initialized_notif = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            });
+
+            if let Some(ref mut stdin) = child.stdin {
+                let msg = serde_json::to_string(&initialized_notif)
+                    .map_err(|e| mcp_error(format!("Failed to serialize notification: {}", e)))?;
+                writeln!(stdin, "{}", msg)
+                    .map_err(|e| mcp_error(format!("Failed to write notification: {}", e)))?;
+                stdin.flush()
+                    .map_err(|e| mcp_error(format!("Failed to flush notification: {}", e)))?;
+            }
+
+            instance.connection = Some(McpConnection::Stdio(child));
+            instance.status = McpServerStatus::Running;
         }
-
-        // Send initialized notification
-        let initialized_notif = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized"
-        });
-
-        if let Some(ref mut stdin) = child.stdin {
-            let msg = serde_json::to_string(&initialized_notif)
-                .map_err(|e| mcp_error(format!("Failed to serialize notification: {}", e)))?;
-            writeln!(stdin, "{}", msg)
-                .map_err(|e| mcp_error(format!("Failed to write notification: {}", e)))?;
-            stdin.flush()
-                .map_err(|e| mcp_error(format!("Failed to flush notification: {}", e)))?;
-        }
-
-        instance.process = Some(child);
-        instance.status = McpServerStatus::Running;
 
         // Discover tools from this server
         drop(servers); // Release lock before calling discover_tools
@@ -260,13 +332,21 @@ impl McpServerManager {
         let instance = servers.get_mut(name)
             .ok_or_else(|| mcp_error(format!("MCP server '{}' not found", name)))?;
 
-        if let Some(ref mut process) = instance.process {
-            // Try graceful shutdown first
-            let _ = process.kill();
-            let _ = process.wait();
+        if let Some(ref mut conn) = instance.connection {
+            match conn {
+                McpConnection::Stdio(process) => {
+                    // Try graceful shutdown first
+                    let _ = process.kill();
+                    let _ = process.wait();
+                }
+                McpConnection::Http { .. } => {
+                    // HTTP connections don't need explicit shutdown
+                    // Just drop the client
+                }
+            }
         }
 
-        instance.process = None;
+        instance.connection = None;
         instance.status = McpServerStatus::Stopped;
         instance.tools.clear();
 
@@ -311,12 +391,20 @@ impl McpServerManager {
     pub fn list_servers(&self) -> Vec<McpServerInfo> {
         let servers = self.servers.lock().unwrap();
         servers.values()
-            .map(|s| McpServerInfo {
-                name: s.name.clone(),
-                command: s.config.command.clone(),
-                enabled: s.config.enabled,
-                status: s.status.clone(),
-                tool_count: s.tools.len(),
+            .map(|s| {
+                // Use URL for HTTP servers, command for stdio
+                let command = if s.config.is_http() {
+                    s.config.url.clone().unwrap_or_default()
+                } else {
+                    s.config.command.clone()
+                };
+                McpServerInfo {
+                    name: s.name.clone(),
+                    command,
+                    enabled: s.config.enabled,
+                    status: s.status.clone(),
+                    tool_count: s.tools.len(),
+                }
             })
             .collect()
     }
@@ -354,81 +442,116 @@ impl McpServerManager {
             params: None,
         };
 
-        if let Some(ref mut stdin) = instance.process.as_mut().and_then(|p| p.stdin.as_mut()) {
-            let msg = serde_json::to_string(&tools_request)
-                .map_err(|e| mcp_error(format!("Failed to serialize tools request: {}", e)))?;
-            writeln!(stdin, "{}", msg)
-                .map_err(|e| mcp_error(format!("Failed to write to MCP server: {}", e)))?;
-            stdin.flush()
-                .map_err(|e| mcp_error(format!("Failed to flush to MCP server: {}", e)))?;
-        } else {
-            return Err(mcp_error("MCP server stdin not available"));
-        }
-
-        // Read tools response
-        // Note: This is a simplified implementation. A production version would
-        // handle async I/O and proper message framing.
-        if let Some(stdout) = instance.process.as_mut().and_then(|p| p.stdout.take()) {
-            let mut reader = BufReader::new(stdout);
-            let mut line = String::new();
-
-            match reader.read_line(&mut line) {
-                Ok(0) => {
-                    return Err(mcp_error("MCP server closed connection"));
+        let response_result: Option<Value> = match &mut instance.connection {
+            Some(McpConnection::Http { url, client, headers }) => {
+                // HTTP transport
+                let mut request = client.post(url.as_str());
+                for (key, value) in headers.iter() {
+                    request = request.header(key, value);
                 }
-                Ok(_) => {
-                    let response: McpResponse = serde_json::from_str(&line)
-                        .map_err(|e| mcp_error(format!("Invalid tools response: {}", e)))?;
+                request = request.header("Content-Type", "application/json");
 
-                    if let Some(err) = response.error {
-                        return Err(mcp_error(format!("Tools list failed: {}", err.message)));
-                    }
+                let response = request.json(&tools_request).send()
+                    .map_err(|e| mcp_error(format!("Failed to send tools request: {}", e)))?;
 
-                    if let Some(result) = response.result {
-                        if let Some(tools) = result.get("tools").and_then(|t| t.as_array()) {
-                            instance.tools = tools.iter()
-                                .filter_map(|t| {
-                                    Some(McpToolInfo {
-                                        name: t.get("name")?.as_str()?.to_string(),
-                                        description: t.get("description")
-                                            .and_then(|d| d.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
-                                        input_schema: t.get("inputSchema")
-                                            .cloned()
-                                            .unwrap_or(Value::Null),
-                                        server: name.to_string(),
-                                    })
-                                })
-                                .collect();
+                let mcp_response: McpResponse = response.json()
+                    .map_err(|e| mcp_error(format!("Invalid tools response: {}", e)))?;
+
+                if let Some(err) = mcp_response.error {
+                    return Err(mcp_error(format!("Tools list failed: {}", err.message)));
+                }
+
+                mcp_response.result
+            }
+            Some(McpConnection::Stdio(process)) => {
+                // Stdio transport
+                if let Some(ref mut stdin) = process.stdin {
+                    let msg = serde_json::to_string(&tools_request)
+                        .map_err(|e| mcp_error(format!("Failed to serialize tools request: {}", e)))?;
+                    writeln!(stdin, "{}", msg)
+                        .map_err(|e| mcp_error(format!("Failed to write to MCP server: {}", e)))?;
+                    stdin.flush()
+                        .map_err(|e| mcp_error(format!("Failed to flush to MCP server: {}", e)))?;
+                } else {
+                    return Err(mcp_error("MCP server stdin not available"));
+                }
+
+                // Read response
+                if let Some(stdout) = process.stdout.take() {
+                    let mut reader = BufReader::new(stdout);
+                    let mut line = String::new();
+
+                    match reader.read_line(&mut line) {
+                        Ok(0) => {
+                            return Err(mcp_error("MCP server closed connection"));
+                        }
+                        Ok(_) => {
+                            let response: McpResponse = serde_json::from_str(&line)
+                                .map_err(|e| mcp_error(format!("Invalid tools response: {}", e)))?;
+
+                            if let Some(err) = response.error {
+                                return Err(mcp_error(format!("Tools list failed: {}", err.message)));
+                            }
+
+                            response.result
+                        }
+                        Err(e) => {
+                            return Err(mcp_error(format!("Failed to read tools: {}", e)));
                         }
                     }
-                }
-                Err(e) => {
-                    return Err(mcp_error(format!("Failed to read tools: {}", e)));
+                } else {
+                    None
                 }
             }
+            None => {
+                return Err(mcp_error("MCP server not connected"));
+            }
+        };
 
-            // Put stdout back
-            if let Some(process) = instance.process.as_mut() {
-                // This is a limitation of the current design - we can't easily put
-                // the stdout back. A better design would use async channels.
-                let _ = process;
+        // Parse tools from response
+        if let Some(result) = response_result {
+            if let Some(tools) = result.get("tools").and_then(|t| t.as_array()) {
+                instance.tools = tools.iter()
+                    .filter_map(|t| {
+                        Some(McpToolInfo {
+                            name: t.get("name")?.as_str()?.to_string(),
+                            description: t.get("description")
+                                .and_then(|d| d.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            input_schema: t.get("inputSchema")
+                                .cloned()
+                                .unwrap_or(Value::Null),
+                            server: name.to_string(),
+                        })
+                    })
+                    .collect();
             }
         }
 
         Ok(())
     }
 
-    /// Execute a tool call on an MCP server
+    /// Execute a tool call on an MCP server (lazy-starts if needed)
     pub fn call_tool(&self, server_name: &str, tool_name: &str, arguments: Value) -> Result<Value> {
+        // Check if server needs to be started (lazy start)
+        {
+            let servers = self.servers.lock().unwrap();
+            let instance = servers.get(server_name)
+                .ok_or_else(|| mcp_error(format!("MCP server '{}' not found", server_name)))?;
+
+            if instance.status != McpServerStatus::Running {
+                // Need to start - release lock first to avoid deadlock
+                drop(servers);
+                tracing::info!("Lazy-starting MCP server '{}'", server_name);
+                self.start_server(server_name)?;
+            }
+        }
+
+        // Now proceed with the call
         let mut servers = self.servers.lock().unwrap();
         let instance = servers.get_mut(server_name)
             .ok_or_else(|| mcp_error(format!("MCP server '{}' not found", server_name)))?;
-
-        if instance.status != McpServerStatus::Running {
-            return Err(mcp_error(format!("MCP server '{}' is not running", server_name)));
-        }
 
         // Send tools/call request
         let call_request = McpRequest {
@@ -441,28 +564,51 @@ impl McpServerManager {
             })),
         };
 
-        if let Some(ref mut stdin) = instance.process.as_mut().and_then(|p| p.stdin.as_mut()) {
-            let msg = serde_json::to_string(&call_request)
-                .map_err(|e| mcp_error(format!("Failed to serialize call request: {}", e)))?;
-            writeln!(stdin, "{}", msg)
-                .map_err(|e| mcp_error(format!("Failed to write to MCP server: {}", e)))?;
-            stdin.flush()
-                .map_err(|e| mcp_error(format!("Failed to flush to MCP server: {}", e)))?;
-        } else {
-            return Err(mcp_error("MCP server stdin not available"));
+        match &mut instance.connection {
+            Some(McpConnection::Http { url, client, headers }) => {
+                // HTTP transport - synchronous call and response
+                let mut request = client.post(url.as_str());
+                for (key, value) in headers.iter() {
+                    request = request.header(key, value);
+                }
+                request = request.header("Content-Type", "application/json");
+
+                let response = request.json(&call_request).send()
+                    .map_err(|e| mcp_error(format!("Failed to send tool call: {}", e)))?;
+
+                let mcp_response: McpResponse = response.json()
+                    .map_err(|e| mcp_error(format!("Invalid tool response: {}", e)))?;
+
+                if let Some(err) = mcp_response.error {
+                    return Err(mcp_error(format!("Tool call failed: {}", err.message)));
+                }
+
+                Ok(mcp_response.result.unwrap_or(Value::Null))
+            }
+            Some(McpConnection::Stdio(process)) => {
+                // Stdio transport
+                if let Some(ref mut stdin) = process.stdin {
+                    let msg = serde_json::to_string(&call_request)
+                        .map_err(|e| mcp_error(format!("Failed to serialize call request: {}", e)))?;
+                    writeln!(stdin, "{}", msg)
+                        .map_err(|e| mcp_error(format!("Failed to write to MCP server: {}", e)))?;
+                    stdin.flush()
+                        .map_err(|e| mcp_error(format!("Failed to flush to MCP server: {}", e)))?;
+                } else {
+                    return Err(mcp_error("MCP server stdin not available"));
+                }
+
+                // For stdio, return a placeholder - proper implementation would read response
+                Ok(serde_json::json!({
+                    "status": "call_sent",
+                    "server": server_name,
+                    "tool": tool_name
+                }))
+            }
+            None => {
+                Err(mcp_error("MCP server not connected"))
+            }
         }
-
-        // Read response
-        // Similar simplification as discover_server_tools
-        // A production implementation would use proper async I/O
-
-        // For now, return a placeholder indicating the call was made
-        // The actual response handling would require async streams
-        Ok(serde_json::json!({
-            "status": "call_sent",
-            "server": server_name,
-            "tool": tool_name
-        }))
     }
 
     /// Get the next request ID

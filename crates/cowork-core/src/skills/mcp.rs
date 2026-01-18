@@ -2,7 +2,8 @@
 //!
 //! Provides commands for managing MCP servers:
 //! - /mcp list - List configured MCP servers and their status
-//! - /mcp add <name> <command> [args...] - Add a new MCP server
+//! - /mcp add <name> <command> [args...] - Add a new stdio MCP server
+//! - /mcp add <name> <url> - Add a new HTTP MCP server
 //! - /mcp remove <name> - Remove an MCP server
 //! - /mcp start <name> - Start a specific server
 //! - /mcp stop <name> - Stop a specific server
@@ -63,13 +64,20 @@ impl McpSkill {
 
             let enabled_text = if server.enabled { "" } else { " (disabled)" };
 
+            // Show URL for HTTP servers, command for stdio
+            let connection_info = if server.command.starts_with("http://") || server.command.starts_with("https://") {
+                format!("URL: {}", server.command)
+            } else {
+                format!("Command: {}", server.command)
+            };
+
             output.push_str(&format!(
-                "  {} {} - {}{}\n    Command: {}\n    Tools: {}\n\n",
+                "  {} {} - {}{}\n    {}\n    Tools: {}\n\n",
                 status_icon,
                 server.name,
                 status_text,
                 enabled_text,
-                server.command,
+                connection_info,
                 server.tool_count
             ));
         }
@@ -81,13 +89,12 @@ impl McpSkill {
     fn cmd_add(&self, args: Vec<&str>) -> SkillResult {
         if args.len() < 2 {
             return SkillResult::error(
-                "Usage: /mcp add <name> <command> [args...]\n\nExample: /mcp add myserver npx my-mcp-server"
+                "Usage:\n  /mcp add <name> <command> [args...]  - Add stdio server\n  /mcp add <name> <url>                 - Add HTTP server\n\nExamples:\n  /mcp add filesystem npx @modelcontextprotocol/server-filesystem\n  /mcp add remote https://mcp.example.com/api"
             );
         }
 
         let name = args[0].to_string();
-        let command = args[1].to_string();
-        let server_args: Vec<String> = args[2..].iter().map(|s| s.to_string()).collect();
+        let second_arg = args[1];
 
         // Check if server already exists
         let existing = self.manager.list_servers();
@@ -98,9 +105,30 @@ impl McpSkill {
             ));
         }
 
-        // Create config
-        let config = McpServerConfig::new(command.clone())
-            .with_args(server_args.clone());
+        // Detect if this is a URL (HTTP transport) or command (stdio transport)
+        let is_url = second_arg.starts_with("http://") || second_arg.starts_with("https://");
+
+        let (config, success_msg) = if is_url {
+            // HTTP transport
+            let url = second_arg.to_string();
+            let config = McpServerConfig::new_http(url.clone());
+            let msg = format!(
+                "MCP server '{}' added (HTTP transport).\n\nURL: {}\n\nServer will start automatically when its tools are used.",
+                name, url
+            );
+            (config, msg)
+        } else {
+            // Stdio transport
+            let command = second_arg.to_string();
+            let server_args: Vec<String> = args[2..].iter().map(|s| s.to_string()).collect();
+            let config = McpServerConfig::new(command.clone())
+                .with_args(server_args.clone());
+            let msg = format!(
+                "MCP server '{}' added.\n\nCommand: {} {}\n\nServer will start automatically when its tools are used.",
+                name, command, server_args.join(" ")
+            );
+            (config, msg)
+        };
 
         // Add to manager
         self.manager.add_server(name.clone(), config.clone());
@@ -109,20 +137,11 @@ impl McpSkill {
         if let Ok(mut config_manager) = ConfigManager::new() {
             config_manager.config_mut().mcp_servers.insert(name.clone(), config);
             if let Err(e) = config_manager.save() {
-                return SkillResult::success(format!(
-                    "MCP server '{}' added (in memory only - failed to save config: {})\n\nUse `/mcp start {}` to start it.",
-                    name, e, name
-                ));
+                tracing::warn!("Failed to save MCP config: {}", e);
             }
         }
 
-        SkillResult::success(format!(
-            "MCP server '{}' added.\n\nCommand: {} {}\n\nUse `/mcp start {}` to start it.",
-            name,
-            command,
-            server_args.join(" "),
-            name
-        ))
+        SkillResult::success(success_msg)
     }
 
     /// Remove an MCP server
@@ -264,14 +283,21 @@ impl Skill for McpSkill {
 const HELP_TEXT: &str = r#"MCP Server Management Commands:
 
   /mcp list                    - List configured MCP servers
-  /mcp add <name> <cmd> [args] - Add a new MCP server
+  /mcp add <name> <cmd> [args] - Add a stdio MCP server
+  /mcp add <name> <url>        - Add an HTTP MCP server
   /mcp remove <name>           - Remove an MCP server
-  /mcp start <name>            - Start an MCP server
-  /mcp stop <name>             - Stop a running server
+  /mcp start <name>            - Start/connect an MCP server
+  /mcp stop <name>             - Stop/disconnect a server
   /mcp tools [server]          - List tools from servers
 
 Examples:
+  # Stdio transport (local process)
   /mcp add filesystem npx @modelcontextprotocol/server-filesystem
   /mcp start filesystem
+
+  # HTTP transport (remote server)
+  /mcp add remote https://mcp.example.com/api
+  /mcp start remote
+
   /mcp tools
   /mcp stop filesystem"#;

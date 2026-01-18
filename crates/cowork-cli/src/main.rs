@@ -214,19 +214,10 @@ async fn run_chat(
     );
     println!();
 
-    // Initialize MCP server manager and auto-start enabled servers
+    // Initialize MCP server manager (servers start lazily when tools are called)
     let mcp_manager = std::sync::Arc::new(
         McpServerManager::with_configs(config_manager.config().mcp_servers.clone())
     );
-
-    // Auto-start enabled MCP servers
-    let mcp_results = mcp_manager.start_enabled();
-    for (name, result) in mcp_results {
-        match result {
-            Ok(_) => println!("{}", style(format!("MCP server '{}' started", name)).dim()),
-            Err(e) => println!("{}", style(format!("MCP server '{}' failed: {}", name, e)).yellow()),
-        }
-    }
 
     // Create provider from config or environment
     let provider = match create_provider_from_config(&config_manager, provider_type, model) {

@@ -9,17 +9,43 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
+/// MCP transport type
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTransport {
+    /// Standard I/O transport (local process)
+    Stdio,
+    /// HTTP/SSE transport (remote server)
+    Http,
+}
+
+impl Default for McpTransport {
+    fn default() -> Self {
+        McpTransport::Stdio
+    }
+}
+
 /// MCP (Model Context Protocol) server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
-    /// Command to run the MCP server
+    /// Transport type (stdio or http)
+    #[serde(default)]
+    pub transport: McpTransport,
+    /// Command to run the MCP server (for stdio transport)
+    #[serde(default)]
     pub command: String,
-    /// Arguments to pass to the command
+    /// Arguments to pass to the command (for stdio transport)
     #[serde(default)]
     pub args: Vec<String>,
+    /// URL of the MCP server (for http transport)
+    #[serde(default)]
+    pub url: Option<String>,
     /// Environment variables for the server
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// HTTP headers for remote servers
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
     /// Whether this server is enabled (auto-starts on CLI startup)
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -30,14 +56,35 @@ fn default_true() -> bool {
 }
 
 impl McpServerConfig {
-    /// Create a new MCP server config
+    /// Create a new MCP server config for stdio transport
     pub fn new(command: impl Into<String>) -> Self {
         Self {
+            transport: McpTransport::Stdio,
             command: command.into(),
             args: Vec::new(),
+            url: None,
             env: HashMap::new(),
+            headers: HashMap::new(),
             enabled: true,
         }
+    }
+
+    /// Create a new MCP server config for HTTP transport
+    pub fn new_http(url: impl Into<String>) -> Self {
+        Self {
+            transport: McpTransport::Http,
+            command: String::new(),
+            args: Vec::new(),
+            url: Some(url.into()),
+            env: HashMap::new(),
+            headers: HashMap::new(),
+            enabled: true,
+        }
+    }
+
+    /// Check if this is an HTTP transport
+    pub fn is_http(&self) -> bool {
+        self.transport == McpTransport::Http || self.url.is_some()
     }
 
     /// Add arguments to the config
@@ -49,6 +96,12 @@ impl McpServerConfig {
     /// Add an environment variable
     pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env.insert(key.into(), value.into());
+        self
+    }
+
+    /// Add an HTTP header
+    pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.insert(key.into(), value.into());
         self
     }
 
