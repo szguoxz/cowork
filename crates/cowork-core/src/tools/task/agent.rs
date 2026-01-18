@@ -3,16 +3,20 @@
 //! This tool allows spawning specialized subagents that can work autonomously
 //! on complex, multi-step tasks.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
+use crate::provider::ProviderType;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
+
+use super::executor::{self, AgentExecutionConfig};
 
 /// Agent types available for task execution
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -54,7 +58,7 @@ impl std::str::FromStr for AgentType {
 }
 
 /// Model selection for subagents
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentModel {
     Sonnet,
@@ -142,11 +146,32 @@ impl AgentInstanceRegistry {
 /// Tool for launching subagents
 pub struct TaskTool {
     registry: Arc<AgentInstanceRegistry>,
+    workspace: PathBuf,
+    provider_type: ProviderType,
+    api_key: Option<String>,
 }
 
 impl TaskTool {
-    pub fn new(registry: Arc<AgentInstanceRegistry>) -> Self {
-        Self { registry }
+    /// Create a new TaskTool with the given registry and workspace
+    pub fn new(registry: Arc<AgentInstanceRegistry>, workspace: PathBuf) -> Self {
+        Self {
+            registry,
+            workspace,
+            provider_type: ProviderType::Anthropic,
+            api_key: None,
+        }
+    }
+
+    /// Set the provider type for subagent execution
+    pub fn with_provider(mut self, provider_type: ProviderType) -> Self {
+        self.provider_type = provider_type;
+        self
+    }
+
+    /// Set the API key for subagent execution
+    pub fn with_api_key(mut self, api_key: String) -> Self {
+        self.api_key = Some(api_key);
+        self
     }
 }
 
@@ -270,9 +295,27 @@ impl Tool for TaskTool {
 
         self.registry.register(agent).await;
 
-        // For now, return immediately with agent info
-        // In a full implementation, this would spawn the agent task
+        // Create execution config
+        let mut config = AgentExecutionConfig::new(self.workspace.clone())
+            .with_provider(self.provider_type)
+            .with_max_turns(_max_turns);
+
+        if let Some(ref key) = self.api_key {
+            config = config.with_api_key(key.clone());
+        }
+
         if run_in_background {
+            // Start agent in background
+            executor::execute_agent_background(
+                agent_type,
+                model,
+                prompt.to_string(),
+                config,
+                self.registry.clone(),
+                agent_id.clone(),
+                output_file.clone().unwrap_or_default(),
+            );
+
             Ok(ToolOutput::success(json!({
                 "agent_id": agent_id,
                 "status": "running",
@@ -280,12 +323,17 @@ impl Tool for TaskTool {
                 "message": format!("Agent '{}' started in background. Use TaskOutput to check progress.", description)
             })))
         } else {
-            // Simulate agent execution (in real implementation, this would run the agent)
-            let result = execute_agent_task(&agent_type, prompt).await;
-
-            self.registry
-                .update_status(&agent_id, AgentStatus::Completed, Some(result.clone()))
-                .await;
+            // Execute agent synchronously
+            let result = executor::execute_agent_loop(
+                &agent_type,
+                &model,
+                prompt,
+                &config,
+                self.registry.clone(),
+                &agent_id,
+            )
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Agent execution failed: {}", e)))?;
 
             Ok(ToolOutput::success(json!({
                 "agent_id": agent_id,
@@ -298,36 +346,6 @@ impl Tool for TaskTool {
 
     fn approval_level(&self) -> ApprovalLevel {
         ApprovalLevel::Low
-    }
-}
-
-/// Execute an agent task (simplified implementation)
-async fn execute_agent_task(agent_type: &AgentType, prompt: &str) -> String {
-    match agent_type {
-        AgentType::Bash => {
-            format!(
-                "Bash agent would execute commands for: {}",
-                prompt
-            )
-        }
-        AgentType::GeneralPurpose => {
-            format!(
-                "General-purpose agent researched and found: {}",
-                prompt
-            )
-        }
-        AgentType::Explore => {
-            format!(
-                "Explore agent analyzed codebase for: {}",
-                prompt
-            )
-        }
-        AgentType::Plan => {
-            format!(
-                "Plan agent created implementation plan for: {}",
-                prompt
-            )
-        }
     }
 }
 
@@ -448,36 +466,24 @@ impl Tool for TaskOutputTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
-    #[tokio::test]
-    async fn test_task_tool_basic() {
+    #[test]
+    fn test_task_tool_metadata() {
         let registry = Arc::new(AgentInstanceRegistry::new());
-        let tool = TaskTool::new(registry.clone());
+        let workspace = PathBuf::from("/tmp/test-workspace");
+        let tool = TaskTool::new(registry.clone(), workspace);
 
         // Verify tool metadata
         assert_eq!(tool.name(), "task");
         assert!(tool.description().contains("agent"));
-
-        // Test execution with Explore agent
-        let params = json!({
-            "description": "Find config files",
-            "prompt": "Search for all configuration files in the project",
-            "subagent_type": "Explore"
-        });
-
-        let result = tool.execute(params).await;
-        assert!(result.is_ok());
-
-        let output = result.unwrap();
-        assert!(output.content["status"].as_str() == Some("completed"));
-        assert!(output.content["agent_id"].as_str().is_some());
-        assert!(output.content["result"].as_str().is_some());
     }
 
     #[tokio::test]
     async fn test_task_tool_background() {
         let registry = Arc::new(AgentInstanceRegistry::new());
-        let tool = TaskTool::new(registry.clone());
+        let workspace = PathBuf::from("/tmp/test-workspace");
+        let tool = TaskTool::new(registry.clone(), workspace);
 
         let params = json!({
             "description": "Background task",
@@ -493,30 +499,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_task_output_tool() {
+    async fn test_task_tool_resume() {
         let registry = Arc::new(AgentInstanceRegistry::new());
-        let task_tool = TaskTool::new(registry.clone());
-        let output_tool = TaskOutputTool::new(registry.clone());
+        let workspace = PathBuf::from("/tmp/test-workspace");
+        let tool = TaskTool::new(registry.clone(), workspace);
 
-        // First create a task
+        // Register a completed agent
+        let agent = AgentInstance {
+            id: "resume-test-123".to_string(),
+            agent_type: AgentType::Explore,
+            description: "Test agent".to_string(),
+            prompt: "Do something".to_string(),
+            model: AgentModel::Sonnet,
+            status: AgentStatus::Completed,
+            output: Some("Completed successfully".to_string()),
+            output_file: None,
+            created_at: chrono::Utc::now(),
+        };
+        registry.register(agent).await;
+
+        // Try to resume
         let params = json!({
-            "description": "Test task",
-            "prompt": "Do something",
-            "subagent_type": "general-purpose"
+            "description": "Resume task",
+            "prompt": "Continue",
+            "subagent_type": "Explore",
+            "resume": "resume-test-123"
         });
 
-        let result = task_tool.execute(params).await.unwrap();
-        let agent_id = result.content["agent_id"].as_str().unwrap().to_string();
+        let result = tool.execute(params).await.unwrap();
+        assert_eq!(result.content["resumed"].as_bool(), Some(true));
+        assert_eq!(result.content["agent_id"].as_str(), Some("resume-test-123"));
+    }
+
+    #[tokio::test]
+    async fn test_task_output_tool() {
+        let registry = Arc::new(AgentInstanceRegistry::new());
+        let output_tool = TaskOutputTool::new(registry.clone());
+
+        // First register an agent directly
+        let agent = AgentInstance {
+            id: "output-test-123".to_string(),
+            agent_type: AgentType::Explore,
+            description: "Test agent".to_string(),
+            prompt: "Do something".to_string(),
+            model: AgentModel::Sonnet,
+            status: AgentStatus::Completed,
+            output: Some("Test output result".to_string()),
+            output_file: None,
+            created_at: chrono::Utc::now(),
+        };
+        registry.register(agent).await;
 
         // Now get the output
         let output_params = json!({
-            "task_id": agent_id,
+            "task_id": "output-test-123",
             "block": false
         });
 
         let output_result = output_tool.execute(output_params).await.unwrap();
         assert_eq!(output_result.content["status"].as_str(), Some("completed"));
-        assert!(output_result.content["output"].as_str().is_some());
+        assert_eq!(
+            output_result.content["output"].as_str(),
+            Some("Test output result")
+        );
     }
 
     #[tokio::test]

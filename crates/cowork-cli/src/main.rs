@@ -516,7 +516,10 @@ fn create_tool_registry(workspace: &PathBuf) -> ToolRegistry {
 
     // Agent/Task tools
     let agent_registry = std::sync::Arc::new(AgentInstanceRegistry::new());
-    registry.register(std::sync::Arc::new(TaskTool::new(agent_registry.clone())));
+    registry.register(std::sync::Arc::new(TaskTool::new(
+        agent_registry.clone(),
+        workspace.clone(),
+    )));
     registry.register(std::sync::Arc::new(TaskOutputTool::new(agent_registry)));
 
     registry
