@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Settings as SettingsIcon, Save, RefreshCw } from 'lucide-react'
+import { Settings as SettingsIcon, Save, RefreshCw, Sparkles } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -63,21 +63,23 @@ export default function SettingsPage() {
 
   if (loading || !settings) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground" />
+      <div className="flex items-center justify-center h-full bg-background">
+        <RefreshCw className="w-8 h-8 animate-spin text-primary" />
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-background">
       {/* Header */}
-      <header className="h-14 border-b border-border flex items-center justify-between px-6">
+      <header className="h-14 border-b border-border flex items-center justify-between px-6 bg-card/50">
         <div className="flex items-center gap-3">
-          <SettingsIcon className="w-5 h-5 text-primary" />
-          <h1 className="text-lg font-semibold">Settings</h1>
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-glow-sm">
+            <SettingsIcon className="w-4 h-4 text-white" />
+          </div>
+          <h1 className="text-lg font-semibold text-foreground">Settings</h1>
         </div>
-        <Button onClick={saveSettings} disabled={saving}>
+        <Button onClick={saveSettings} disabled={saving} variant="gradient">
           {saving ? (
             <RefreshCw className="w-4 h-4 animate-spin" />
           ) : (
@@ -93,10 +95,10 @@ export default function SettingsPage() {
           {/* Message */}
           {message && (
             <div className={`
-              p-4 rounded-lg animate-in
+              p-4 rounded-xl animate-in
               ${message.type === 'error'
-                ? 'bg-destructive/10 text-destructive border border-destructive/20'
-                : 'bg-green-500/10 text-green-600 border border-green-500/20'
+                ? 'bg-error/10 text-error border border-error/20'
+                : 'bg-success/10 text-success border border-success/20'
               }
             `}>
               {message.text}
@@ -106,14 +108,17 @@ export default function SettingsPage() {
           {/* Provider Settings */}
           <Card>
             <CardHeader>
-              <CardTitle>LLM Provider</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-primary" />
+                LLM Provider
+              </CardTitle>
               <CardDescription>
                 Configure your AI provider and model settings
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="text-sm font-medium mb-1.5 block">Provider</label>
+                <label className="text-sm font-medium mb-1.5 block text-foreground">Provider</label>
                 <Select
                   value={settings.provider.provider_type}
                   onChange={(e) =>
@@ -135,7 +140,7 @@ export default function SettingsPage() {
               </div>
 
               <div>
-                <label className="text-sm font-medium mb-1.5 block">API Key</label>
+                <label className="text-sm font-medium mb-1.5 block text-foreground">API Key</label>
                 <Input
                   type="password"
                   value={settings.provider.api_key || ''}
@@ -153,7 +158,7 @@ export default function SettingsPage() {
               </div>
 
               <div>
-                <label className="text-sm font-medium mb-1.5 block">Model</label>
+                <label className="text-sm font-medium mb-1.5 block text-foreground">Model</label>
                 <Input
                   type="text"
                   value={settings.provider.model}
@@ -179,7 +184,7 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="text-sm font-medium mb-1.5 block">Auto-approve Level</label>
+                <label className="text-sm font-medium mb-1.5 block text-foreground">Auto-approve Level</label>
                 <Select
                   value={settings.approval.auto_approve_level}
                   onChange={(e) =>
@@ -196,22 +201,26 @@ export default function SettingsPage() {
                 </Select>
               </div>
 
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.approval.show_confirmation_dialogs}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      approval: {
-                        ...settings.approval,
-                        show_confirmation_dialogs: e.target.checked,
-                      },
-                    })
-                  }
-                  className="w-4 h-4 rounded border-input"
-                />
-                <span className="text-sm">Show confirmation dialogs</span>
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    checked={settings.approval.show_confirmation_dialogs}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        approval: {
+                          ...settings.approval,
+                          show_confirmation_dialogs: e.target.checked,
+                        },
+                      })
+                    }
+                    className="w-5 h-5 rounded-md border-border bg-secondary checked:bg-primary checked:border-primary transition-colors"
+                  />
+                </div>
+                <span className="text-sm text-foreground group-hover:text-primary transition-colors">
+                  Show confirmation dialogs
+                </span>
               </label>
             </CardContent>
           </Card>
@@ -226,7 +235,7 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="text-sm font-medium mb-1.5 block">Theme</label>
+                <label className="text-sm font-medium mb-1.5 block text-foreground">Theme</label>
                 <Select
                   value={settings.ui.theme}
                   onChange={(e) =>
@@ -242,19 +251,23 @@ export default function SettingsPage() {
                 </Select>
               </div>
 
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.ui.show_tool_calls}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      ui: { ...settings.ui, show_tool_calls: e.target.checked },
-                    })
-                  }
-                  className="w-4 h-4 rounded border-input"
-                />
-                <span className="text-sm">Show tool calls in chat</span>
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    checked={settings.ui.show_tool_calls}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        ui: { ...settings.ui, show_tool_calls: e.target.checked },
+                      })
+                    }
+                    className="w-5 h-5 rounded-md border-border bg-secondary checked:bg-primary checked:border-primary transition-colors"
+                  />
+                </div>
+                <span className="text-sm text-foreground group-hover:text-primary transition-colors">
+                  Show tool calls in chat
+                </span>
               </label>
             </CardContent>
           </Card>

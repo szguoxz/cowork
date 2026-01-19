@@ -12,6 +12,7 @@ import {
   Play,
   Clock,
 } from 'lucide-react'
+import { Button } from '../components/ui/button'
 
 interface SavedSession {
   id: string
@@ -140,77 +141,84 @@ export default function Sessions() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-background">
       {/* Header */}
-      <header className="h-14 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-4">
-        <div className="flex items-center gap-2">
-          <History className="w-5 h-5 text-primary-600" />
-          <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
+      <header className="h-14 border-b border-border flex items-center justify-between px-4 bg-card/50">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-glow-sm">
+            <History className="w-4 h-4 text-white" />
+          </div>
+          <h1 className="text-lg font-semibold text-foreground">
             Session History
           </h1>
         </div>
         <div className="flex items-center gap-2">
-          <button
+          <Button
             onClick={loadSessions}
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            variant="ghost"
+            size="icon"
             title="Refresh"
           >
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={handleOpenFolder}
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            variant="ghost"
+            size="icon"
             title="Open Sessions Folder"
           >
             <FolderOpen className="w-4 h-4" />
-          </button>
+          </Button>
         </div>
       </header>
 
       {/* Error Banner */}
       {error && (
-        <div className="bg-red-100 dark:bg-red-900/50 border-b border-red-200 dark:border-red-800 px-4 py-2 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-red-500" />
-          <span className="text-red-800 dark:text-red-200 text-sm">{error}</span>
+        <div className="bg-error/10 border-b border-error/20 px-4 py-2 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-error" />
+          <span className="text-error text-sm">{error}</span>
         </div>
       )}
 
       {/* Directory Info */}
       {directoryInfo && (
-        <div className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700 px-4 py-3">
+        <div className="bg-card/50 border-b border-border px-4 py-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
-              <div className="flex items-center gap-1">
+            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <div className="flex items-center gap-1.5">
                 <MessageSquare className="w-4 h-4" />
                 <span>{directoryInfo.session_count} sessions</span>
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1.5">
                 <HardDrive className="w-4 h-4" />
                 <span>{formatFileSize(directoryInfo.total_size)}</span>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button
+              <Button
                 onClick={() => handleDeleteOldSessions(30)}
-                className="text-xs px-2 py-1 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                variant="outline"
+                size="sm"
               >
                 Delete &gt;30 days
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => handleDeleteOldSessions(7)}
-                className="text-xs px-2 py-1 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                variant="outline"
+                size="sm"
               >
                 Delete &gt;7 days
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => setShowDeleteAllConfirm(true)}
-                className="text-xs px-2 py-1 rounded bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900 transition-colors"
+                variant="destructive"
+                size="sm"
               >
                 Delete All
-              </button>
+              </Button>
             </div>
           </div>
-          <div className="text-xs text-gray-500 dark:text-gray-500 mt-1 truncate">
+          <div className="text-xs text-muted-foreground/70 mt-1 truncate font-mono">
             {directoryInfo.path}
           </div>
         </div>
@@ -218,26 +226,26 @@ export default function Sessions() {
 
       {/* Delete All Confirmation */}
       {showDeleteAllConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md mx-4 shadow-xl">
-            <h3 className="text-lg font-semibold mb-2">Delete All Sessions?</h3>
-            <p className="text-gray-600 dark:text-gray-400 mb-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-2xl p-6 max-w-md mx-4 shadow-2xl animate-scale-in">
+            <h3 className="text-lg font-semibold mb-2 text-foreground">Delete All Sessions?</h3>
+            <p className="text-muted-foreground mb-4">
               This will permanently delete all {directoryInfo?.session_count || 0} saved sessions.
               This action cannot be undone.
             </p>
             <div className="flex justify-end gap-2">
-              <button
+              <Button
                 onClick={() => setShowDeleteAllConfirm(false)}
-                className="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600"
+                variant="outline"
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={handleDeleteAllSessions}
-                className="px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600"
+                variant="destructive"
               >
                 Delete All
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -247,78 +255,85 @@ export default function Sessions() {
       <div className="flex-1 overflow-y-auto p-4">
         {isLoading ? (
           <div className="flex items-center justify-center h-32">
-            <RefreshCw className="w-6 h-6 animate-spin text-gray-400" />
+            <RefreshCw className="w-6 h-6 animate-spin text-primary" />
           </div>
         ) : sessions.length === 0 ? (
-          <div className="text-center text-gray-500 dark:text-gray-400 mt-8">
-            <History className="w-12 h-12 mx-auto mb-2 opacity-50" />
-            <p>No saved sessions yet</p>
-            <p className="text-sm mt-1">
+          <div className="text-center mt-16">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500/20 to-purple-600/20 flex items-center justify-center mx-auto mb-4 border border-primary/20">
+              <History className="w-8 h-8 text-primary" />
+            </div>
+            <p className="text-lg font-medium text-foreground">No saved sessions yet</p>
+            <p className="text-sm mt-2 text-muted-foreground">
               Sessions are automatically saved as you chat
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {sessions.map((session) => (
               <div
                 key={session.id}
-                className="border border-gray-200 dark:border-gray-700 rounded-lg hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
+                className="border border-border rounded-xl hover:border-primary/30 hover:shadow-glow-sm transition-all duration-200 bg-card group"
               >
                 <div className="p-4">
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-medium text-gray-900 dark:text-white truncate">
+                      <h3 className="font-medium text-foreground truncate group-hover:text-primary transition-colors">
                         {session.title || 'Untitled Session'}
                       </h3>
-                      <div className="flex items-center gap-3 mt-1 text-sm text-gray-500 dark:text-gray-400">
-                        <div className="flex items-center gap-1">
-                          <MessageSquare className="w-3 h-3" />
+                      <div className="flex items-center gap-3 mt-1.5 text-sm text-muted-foreground">
+                        <div className="flex items-center gap-1.5">
+                          <MessageSquare className="w-3.5 h-3.5" />
                           <span>{session.message_count} messages</span>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
+                        <div className="flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5" />
                           <span>{formatRelativeTime(session.updated_at)}</span>
                         </div>
-                        <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-xs">
+                        <span className="px-2 py-0.5 rounded-full bg-secondary text-xs font-medium">
                           {session.provider_type}
                         </span>
                       </div>
-                      <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                        <Calendar className="w-3 h-3 inline mr-1" />
+                      <div className="text-xs text-muted-foreground/70 mt-1.5 flex items-center gap-1">
+                        <Calendar className="w-3 h-3" />
                         {formatDate(session.created_at)} | {formatFileSize(session.file_size)}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 ml-4">
-                      <button
+                      <Button
                         onClick={() => handleLoadSession(session.id)}
-                        className="p-2 rounded-lg bg-primary-100 text-primary-700 dark:bg-primary-900/50 dark:text-primary-300 hover:bg-primary-200 dark:hover:bg-primary-900 transition-colors"
-                        title="Load Session"
+                        variant="default"
+                        size="sm"
+                        className="shadow-glow-sm"
                       >
                         <Play className="w-4 h-4" />
-                      </button>
+                        Load
+                      </Button>
                       {deleteConfirm === session.id ? (
                         <div className="flex items-center gap-1">
-                          <button
+                          <Button
                             onClick={() => handleDeleteSession(session.id)}
-                            className="px-2 py-1 rounded bg-red-500 text-white text-xs hover:bg-red-600"
+                            variant="destructive"
+                            size="sm"
                           >
                             Confirm
-                          </button>
-                          <button
+                          </Button>
+                          <Button
                             onClick={() => setDeleteConfirm(null)}
-                            className="px-2 py-1 rounded bg-gray-200 dark:bg-gray-700 text-xs hover:bg-gray-300 dark:hover:bg-gray-600"
+                            variant="outline"
+                            size="sm"
                           >
                             Cancel
-                          </button>
+                          </Button>
                         </div>
                       ) : (
-                        <button
+                        <Button
                           onClick={() => setDeleteConfirm(session.id)}
-                          className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
-                          title="Delete Session"
+                          variant="ghost"
+                          size="icon"
+                          className="text-muted-foreground hover:text-error"
                         >
                           <Trash2 className="w-4 h-4" />
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </div>

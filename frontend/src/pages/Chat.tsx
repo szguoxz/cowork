@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { Send, Loader2, Check, X, Terminal, AlertCircle, Brain, ChevronDown, ChevronRight } from 'lucide-react'
+import { Send, Loader2, Check, X, Terminal, AlertCircle, Brain, ChevronDown, ChevronRight, Sparkles } from 'lucide-react'
 import ContextIndicator from '../components/ContextIndicator'
+import { Button } from '../components/ui/button'
 
 interface ToolCall {
   id: string
@@ -285,33 +286,42 @@ export default function Chat() {
 
   if (hasApiKey === false) {
     return (
-      <div className="flex flex-col h-full items-center justify-center p-8">
-        <AlertCircle className="w-16 h-16 text-yellow-500 mb-4" />
-        <h2 className="text-xl font-semibold mb-2">API Key Required</h2>
-        <p className="text-gray-600 dark:text-gray-400 text-center mb-4">
-          Please configure your API key in Settings to start chatting.
-        </p>
-        <p className="text-sm text-gray-500 dark:text-gray-500">
-          Set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable,
-          or configure it in the Settings page.
-        </p>
+      <div className="flex flex-col h-full items-center justify-center p-8 bg-background">
+        <div className="text-center max-w-md">
+          <div className="w-16 h-16 rounded-2xl bg-warning/10 flex items-center justify-center mx-auto mb-4">
+            <AlertCircle className="w-8 h-8 text-warning" />
+          </div>
+          <h2 className="text-xl font-semibold mb-2 text-foreground">API Key Required</h2>
+          <p className="text-muted-foreground text-center mb-4">
+            Please configure your API key in Settings to start chatting.
+          </p>
+          <p className="text-sm text-muted-foreground/70">
+            Set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable,
+            or configure it in the Settings page.
+          </p>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-background">
       {/* Header */}
-      <header className="h-14 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-4">
-        <div className="flex items-center">
-          <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Cowork Assistant
-          </h1>
-          {sessionId && (
-            <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
-              Session: {sessionId.slice(0, 8)}...
-            </span>
-          )}
+      <header className="h-14 border-b border-border flex items-center justify-between px-4 bg-card/50">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-glow-sm">
+            <Sparkles className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <h1 className="text-sm font-semibold text-foreground">
+              Cowork Assistant
+            </h1>
+            {sessionId && (
+              <span className="text-xs text-muted-foreground">
+                {sessionId.slice(0, 8)}...
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Context Indicator */}
@@ -324,9 +334,9 @@ export default function Chat() {
 
       {/* Error Banner */}
       {error && (
-        <div className="bg-red-100 dark:bg-red-900/50 border-b border-red-200 dark:border-red-800 px-4 py-2 flex items-center justify-between">
-          <span className="text-red-800 dark:text-red-200 text-sm">{error}</span>
-          <button onClick={() => setError(null)} className="text-red-600 hover:text-red-800">
+        <div className="bg-error/10 border-b border-error/20 px-4 py-2 flex items-center justify-between">
+          <span className="text-error text-sm">{error}</span>
+          <button onClick={() => setError(null)} className="text-error/70 hover:text-error transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -335,9 +345,12 @@ export default function Chat() {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && (
-          <div className="text-center text-gray-500 mt-8">
-            <p className="text-lg">Welcome to Cowork!</p>
-            <p className="text-sm mt-2">
+          <div className="text-center mt-16">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500/20 to-purple-600/20 flex items-center justify-center mx-auto mb-4 border border-primary/20">
+              <Sparkles className="w-8 h-8 text-primary" />
+            </div>
+            <p className="text-lg font-medium text-foreground">Welcome to Cowork!</p>
+            <p className="text-sm mt-2 text-muted-foreground">
               Ask me to help with files, run commands, or automate tasks.
             </p>
           </div>
@@ -350,30 +363,30 @@ export default function Chat() {
           const isThinkingCollapsed = collapsedThinking.has(message.id);
 
           return (
-          <div key={message.id} className="space-y-2">
+          <div key={message.id} className="space-y-2 animate-in">
             {/* Thinking section for assistant messages */}
             {message.role === 'assistant' && thinking && (
-              <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
+              <div className="border border-primary/20 rounded-xl overflow-hidden bg-primary/5">
                 <button
                   onClick={() => toggleMessageThinking(message.id)}
-                  className="w-full bg-purple-50 dark:bg-purple-900/30 px-3 py-2 flex items-center gap-2 text-left hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+                  className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-primary/10 transition-colors"
                 >
                   {isThinkingCollapsed ? (
-                    <ChevronRight className="w-4 h-4 text-purple-500" />
+                    <ChevronRight className="w-4 h-4 text-primary" />
                   ) : (
-                    <ChevronDown className="w-4 h-4 text-purple-500" />
+                    <ChevronDown className="w-4 h-4 text-primary" />
                   )}
-                  <Brain className="w-4 h-4 text-purple-500" />
-                  <span className="text-sm font-medium text-purple-700 dark:text-purple-300">
+                  <Brain className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-medium text-primary">
                     Thinking
                   </span>
-                  <span className="text-xs text-purple-500 dark:text-purple-400 ml-auto">
+                  <span className="text-xs text-primary/60 ml-auto">
                     {thinking.length} chars
                   </span>
                 </button>
                 {!isThinkingCollapsed && (
-                  <div className="px-3 py-2 bg-purple-50/50 dark:bg-purple-900/20 max-h-48 overflow-y-auto">
-                    <pre className="whitespace-pre-wrap font-mono text-xs text-purple-600 dark:text-purple-400">
+                  <div className="px-3 py-2 bg-primary/5 max-h-48 overflow-y-auto border-t border-primary/10">
+                    <pre className="whitespace-pre-wrap font-mono text-xs text-primary/80">
                       {thinking}
                     </pre>
                   </div>
@@ -385,14 +398,14 @@ export default function Chat() {
             <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div
                 className={`
-                  max-w-[80%] rounded-lg px-4 py-2
+                  max-w-[80%] rounded-xl px-4 py-3
                   ${message.role === 'user'
-                    ? 'bg-primary-600 text-white'
-                    : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white'
+                    ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white shadow-glow-sm'
+                    : 'bg-card border border-border text-foreground'
                   }
                 `}
               >
-                <pre className="whitespace-pre-wrap font-sans text-sm">
+                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
                   {text || '(thinking...)'}
                 </pre>
               </div>
@@ -404,22 +417,22 @@ export default function Chat() {
                 {message.tool_calls.map((tc) => (
                   <div
                     key={tc.id}
-                    className="border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden"
+                    className="border border-border rounded-xl overflow-hidden bg-card"
                   >
                     {/* Tool header */}
-                    <div className="bg-gray-100 dark:bg-gray-800 px-3 py-2 flex items-center justify-between">
+                    <div className="bg-secondary/50 px-3 py-2 flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <Terminal className="w-4 h-4 text-gray-500" />
-                        <span className="font-mono text-sm font-medium">{tc.name}</span>
+                        <Terminal className="w-4 h-4 text-muted-foreground" />
+                        <span className="font-mono text-sm font-medium text-foreground">{tc.name}</span>
                         <span
-                          className={`text-xs px-2 py-0.5 rounded ${
+                          className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                             tc.status === 'Completed'
-                              ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                              ? 'bg-success/20 text-success'
                               : tc.status === 'Failed' || tc.status === 'Rejected'
-                              ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                              ? 'bg-error/20 text-error'
                               : tc.status === 'Pending'
-                              ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
-                              : 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+                              ? 'bg-warning/20 text-warning'
+                              : 'bg-info/20 text-info'
                           }`}
                         >
                           {tc.status}
@@ -431,14 +444,14 @@ export default function Chat() {
                         <div className="flex gap-2">
                           <button
                             onClick={() => handleApprove(tc.id)}
-                            className="p-1 rounded bg-green-500 text-white hover:bg-green-600 transition-colors"
+                            className="p-1.5 rounded-lg bg-success text-white hover:bg-success/80 transition-colors"
                             title="Approve"
                           >
                             <Check className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => handleReject(tc.id)}
-                            className="p-1 rounded bg-red-500 text-white hover:bg-red-600 transition-colors"
+                            className="p-1.5 rounded-lg bg-error text-white hover:bg-error/80 transition-colors"
                             title="Reject"
                           >
                             <X className="w-4 h-4" />
@@ -448,16 +461,16 @@ export default function Chat() {
                     </div>
 
                     {/* Tool arguments */}
-                    <div className="px-3 py-2 bg-gray-50 dark:bg-gray-900 text-xs font-mono">
-                      <div className="text-gray-600 dark:text-gray-400">
+                    <div className="px-3 py-2 bg-background text-xs font-mono">
+                      <div className="text-muted-foreground">
                         {formatToolArgs(tc.arguments)}
                       </div>
                     </div>
 
                     {/* Tool result */}
                     {tc.result && (
-                      <div className="px-3 py-2 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-                        <pre className="text-xs font-mono text-gray-700 dark:text-gray-300 whitespace-pre-wrap max-h-40 overflow-y-auto">
+                      <div className="px-3 py-2 border-t border-border bg-card">
+                        <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap max-h-40 overflow-y-auto">
                           {tc.result}
                         </pre>
                       </div>
@@ -472,28 +485,28 @@ export default function Chat() {
 
         {/* Streaming thinking content */}
         {(streamingThinking || streamingText) && (
-          <div className="space-y-2">
+          <div className="space-y-2 animate-in">
             {/* Thinking section - collapsible */}
             {streamingThinking && (
-              <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
+              <div className="border border-primary/20 rounded-xl overflow-hidden bg-primary/5">
                 <button
                   onClick={() => setShowThinking(!showThinking)}
-                  className="w-full bg-purple-50 dark:bg-purple-900/30 px-3 py-2 flex items-center gap-2 text-left hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+                  className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-primary/10 transition-colors"
                 >
                   {showThinking ? (
-                    <ChevronDown className="w-4 h-4 text-purple-500" />
+                    <ChevronDown className="w-4 h-4 text-primary" />
                   ) : (
-                    <ChevronRight className="w-4 h-4 text-purple-500" />
+                    <ChevronRight className="w-4 h-4 text-primary" />
                   )}
-                  <Brain className="w-4 h-4 text-purple-500" />
-                  <span className="text-sm font-medium text-purple-700 dark:text-purple-300">
+                  <Brain className="w-4 h-4 text-primary thinking-pulse" />
+                  <span className="text-sm font-medium text-primary">
                     Thinking...
                   </span>
-                  <Loader2 className="w-3 h-3 animate-spin text-purple-500 ml-auto" />
+                  <Loader2 className="w-3 h-3 animate-spin text-primary ml-auto" />
                 </button>
                 {showThinking && (
-                  <div className="px-3 py-2 bg-purple-50/50 dark:bg-purple-900/20 max-h-48 overflow-y-auto">
-                    <pre className="whitespace-pre-wrap font-mono text-xs text-purple-600 dark:text-purple-400">
+                  <div className="px-3 py-2 bg-primary/5 max-h-48 overflow-y-auto border-t border-primary/10">
+                    <pre className="whitespace-pre-wrap font-mono text-xs text-primary/80">
                       {streamingThinking}
                     </pre>
                   </div>
@@ -504,8 +517,8 @@ export default function Chat() {
             {/* Streaming text response */}
             {streamingText && (
               <div className="flex justify-start">
-                <div className="max-w-[80%] bg-gray-200 dark:bg-gray-700 rounded-lg px-4 py-2 text-gray-900 dark:text-white">
-                  <pre className="whitespace-pre-wrap font-sans text-sm">
+                <div className="max-w-[80%] bg-card border border-border rounded-xl px-4 py-3 text-foreground">
+                  <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
                     {streamingText}
                   </pre>
                 </div>
@@ -515,9 +528,9 @@ export default function Chat() {
         )}
 
         {isLoading && !streamingText && !streamingThinking && (
-          <div className="flex justify-start">
-            <div className="bg-gray-200 dark:bg-gray-700 rounded-lg px-4 py-2">
-              <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+          <div className="flex justify-start animate-in">
+            <div className="bg-card border border-border rounded-xl px-4 py-3">
+              <Loader2 className="w-5 h-5 animate-spin text-primary" />
             </div>
           </div>
         )}
@@ -526,34 +539,34 @@ export default function Chat() {
       </div>
 
       {/* Input */}
-      <form onSubmit={handleSubmit} className="p-4 border-t border-gray-200 dark:border-gray-700">
-        <div className="flex gap-2">
+      <form onSubmit={handleSubmit} className="p-4 border-t border-border bg-card/50">
+        <div className="flex gap-3">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={sessionId ? "Ask anything..." : "Connecting..."}
             className="
-              flex-1 rounded-lg border border-gray-300 dark:border-gray-600
-              bg-white dark:bg-gray-800 px-4 py-2
-              text-gray-900 dark:text-white
-              placeholder-gray-500 dark:placeholder-gray-400
-              focus:outline-none focus:ring-2 focus:ring-primary-500
+              flex-1 rounded-xl border border-border bg-background px-4 py-3
+              text-foreground placeholder-muted-foreground
+              focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50
+              transition-all duration-200 hover:border-border-hover
             "
             disabled={isLoading || !sessionId}
           />
-          <button
+          <Button
             type="submit"
             disabled={isLoading || !input.trim() || !sessionId}
-            className="
-              px-4 py-2 rounded-lg bg-primary-600 text-white
-              hover:bg-primary-700 disabled:opacity-50
-              disabled:cursor-not-allowed transition-colors
-            "
+            variant="gradient"
+            size="lg"
+            className="px-6"
           >
             <Send className="w-5 h-5" />
-          </button>
+          </Button>
         </div>
+        <p className="text-xs text-muted-foreground mt-2 text-center">
+          Press <kbd className="px-1.5 py-0.5 rounded bg-secondary text-foreground text-xs">Ctrl+Enter</kbd> to send
+        </p>
       </form>
     </div>
   )

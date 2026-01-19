@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { MessageSquare, FolderOpen, Settings, Bot, Server, Puzzle, ChevronLeft, ChevronRight, History, HelpCircle } from 'lucide-react'
+import { MessageSquare, FolderOpen, Settings, Server, Puzzle, ChevronLeft, ChevronRight, History, HelpCircle, Sparkles } from 'lucide-react'
 import { useState } from 'react'
 
 export default function Layout() {
@@ -20,8 +20,8 @@ export default function Layout() {
     <div className="flex h-screen bg-background">
       {/* Sidebar */}
       <aside className={`
-        ${collapsed ? 'w-16' : 'w-56'}
-        bg-card border-r border-border flex flex-col
+        ${collapsed ? 'w-16' : 'w-60'}
+        bg-card/50 backdrop-blur-sm border-r border-border flex flex-col
         transition-all duration-300 ease-in-out
       `}>
         {/* Logo */}
@@ -29,11 +29,11 @@ export default function Layout() {
           h-14 border-b border-border flex items-center
           ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}
         `}>
-          <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center shrink-0">
-            <Bot className="w-5 h-5 text-primary-foreground" />
+          <div className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shrink-0 shadow-glow-sm">
+            <Sparkles className="w-5 h-5 text-white" />
           </div>
           {!collapsed && (
-            <span className="font-semibold text-foreground">Cowork</span>
+            <span className="font-semibold text-foreground tracking-tight">Cowork</span>
           )}
         </div>
 
@@ -49,16 +49,16 @@ export default function Layout() {
                 to={item.path}
                 className={`
                   flex items-center gap-3 px-3 py-2.5 rounded-lg
-                  transition-colors duration-200
+                  transition-all duration-200
                   ${isActive
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                    ? 'bg-primary/10 text-primary border border-primary/20 shadow-glow-sm'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
                   }
                   ${collapsed ? 'justify-center' : ''}
                 `}
                 title={collapsed ? item.label : undefined}
               >
-                <Icon className="w-5 h-5 shrink-0" />
+                <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-primary' : ''}`} />
                 {!collapsed && (
                   <span className="text-sm font-medium">{item.label}</span>
                 )}
@@ -73,8 +73,8 @@ export default function Layout() {
             onClick={() => setCollapsed(!collapsed)}
             className={`
               flex items-center gap-3 px-3 py-2.5 rounded-lg w-full
-              text-muted-foreground hover:text-foreground hover:bg-accent
-              transition-colors duration-200
+              text-muted-foreground hover:text-foreground hover:bg-white/5
+              transition-all duration-200
               ${collapsed ? 'justify-center' : ''}
             `}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -92,7 +92,7 @@ export default function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1 overflow-hidden bg-background">
         <Outlet />
       </main>
     </div>
