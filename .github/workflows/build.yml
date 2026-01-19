@@ -1,112 +1,113 @@
 name: Build
 
+# When to run this workflow
 on:
+  # Run on pushes to main/master branch
   push:
-    branches: [master, main]
-    tags: ['v*']
+    branches: [main, master]
+  # Run on pull requests
   pull_request:
-    branches: [master, main]
+    branches: [main, master]
+  # Run when a release is created
+  release:
+    types: [created]
+  # Allow manual trigger from GitHub UI
   workflow_dispatch:
 
-env:
-  CARGO_TERM_COLOR: always
-
+# Build for all 3 platforms
 jobs:
-  build-tauri:
+  build:
     strategy:
-      fail-fast: false
+      fail-fast: false  # Don't cancel other builds if one fails
       matrix:
         include:
-          - platform: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: cowork.exe
-          - platform: macos-latest
-            target: x86_64-apple-darwin
-            artifact: cowork.app
-          - platform: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            artifact: cowork
+          - os: ubuntu-latest
+            target: linux
+          - os: windows-latest
+            target: windows
+          - os: macos-latest
+            target: macos
 
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      # Step 1: Check out the code
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Setup Node
+      # Step 2: Set up Node.js for frontend
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
+      # Step 3: Set up Rust
       - name: Setup Rust
         uses: dtolnay/rust-action@stable
-        with:
-          targets: ${{ matrix.target }}
 
+      # Step 4: Cache Rust dependencies
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'crates/cowork-app -> target'
+
+      # Step 5: Install Linux dependencies (Ubuntu only)
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
+      # Step 6: Install frontend dependencies
       - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm ci
+        working-directory: frontend
+        run: npm ci
 
+      # Step 7: Build frontend
       - name: Build frontend
-        run: |
-          cd frontend
-          npm run build
+        working-directory: frontend
+        run: npm run build
 
+      # Step 8: Build Tauri app
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          projectPath: crates/cowork-app
+          projectPath: 'crates/cowork-app'
 
-      - name: Upload artifacts
+      # Step 9: Upload artifacts (for all builds)
+      - name: Upload artifacts (Linux)
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: cowork-${{ matrix.platform }}
+          name: cowork-linux
           path: |
-            target/release/bundle/**/*
-            target/release/*.exe
-            target/release/cowork
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+          if-no-files-found: ignore
 
-  build-cli:
-    name: Build CLI (no UI)
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-action@stable
-
-      - name: Build CLI libraries
-        run: cargo build --release -p cowork-core -p cowork-mcp -p cowork-sandbox
-
-      - name: Upload CLI artifacts
+      - name: Upload artifacts (Windows)
+        if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: cowork-cli-windows
-          path: target/release/*.dll
+          name: cowork-windows
+          path: |
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*.exe
+          if-no-files-found: ignore
 
-  release:
-    needs: [build-tauri]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - name: Upload artifacts (macOS)
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
         with:
-          path: artifacts
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: artifacts/**/*
-          draft: true
-          generate_release_notes: true
+          name: cowork-macos
+          path: |
+            target/release/bundle/dmg/*.dmg
+          if-no-files-found: ignore
