@@ -286,10 +286,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let storage = SessionStorage::with_dir(dir.path().to_path_buf());
 
-        // Create a few sessions
+        // Create a few sessions with unique IDs (must differ in first 8 chars)
         for i in 0..3 {
             let session = SessionData {
-                id: format!("session-{}", i),
+                id: format!("test{:04}-session", i),
                 title: Some(format!("Session {}", i)),
                 messages: vec![],
                 system_prompt: "Test".to_string(),

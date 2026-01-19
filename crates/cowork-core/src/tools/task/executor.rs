@@ -460,7 +460,7 @@ mod tests {
         );
         assert_eq!(
             get_model_for_tier(&ModelTier::Powerful, &anthropic_tiers),
-            "claude-sonnet-4-20250514"
+            "claude-opus-4-20250514"
         );
         assert_eq!(
             get_model_for_tier(&ModelTier::Fast, &anthropic_tiers),
