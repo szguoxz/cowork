@@ -828,6 +828,15 @@ impl ToolExecutor for DefaultToolExecutor {
                         .map(|d| self.workspace_path.join(d))
                         .unwrap_or_else(|| self.workspace_path.clone());
 
+                    #[cfg(windows)]
+                    let output = tokio::process::Command::new("cmd")
+                        .args(["/C", command])
+                        .current_dir(&working_dir)
+                        .output()
+                        .await
+                        .map_err(|e| e.to_string())?;
+
+                    #[cfg(not(windows))]
                     let output = tokio::process::Command::new("sh")
                         .arg("-c")
                         .arg(command)

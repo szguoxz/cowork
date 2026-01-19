@@ -324,7 +324,12 @@ impl Tool for TaskTool {
         // Create new agent instance
         let agent_id = uuid::Uuid::new_v4().to_string();
         let output_file = if run_in_background {
-            Some(format!("/tmp/cowork-agent-{}.log", agent_id))
+            Some(
+                std::env::temp_dir()
+                    .join(format!("cowork-agent-{}.log", agent_id))
+                    .to_string_lossy()
+                    .to_string(),
+            )
         } else {
             None
         };

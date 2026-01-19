@@ -231,6 +231,19 @@ pub async fn execute_command(
 
     let timeout = std::time::Duration::from_secs(request.timeout_secs.unwrap_or(30));
 
+    #[cfg(windows)]
+    let output = tokio::time::timeout(
+        timeout,
+        tokio::process::Command::new("cmd")
+            .args(["/C", &request.command])
+            .current_dir(&working_dir)
+            .output(),
+    )
+    .await
+    .map_err(|_| "Command timed out".to_string())?
+    .map_err(|e| e.to_string())?;
+
+    #[cfg(not(windows))]
     let output = tokio::time::timeout(
         timeout,
         tokio::process::Command::new("sh")
@@ -606,6 +619,15 @@ async fn execute_tool_impl(
                 .map(|d| state.workspace_path.join(d))
                 .unwrap_or_else(|| state.workspace_path.clone());
 
+            #[cfg(windows)]
+            let output = tokio::process::Command::new("cmd")
+                .args(["/C", command])
+                .current_dir(&working_dir)
+                .output()
+                .await
+                .map_err(|e| e.to_string())?;
+
+            #[cfg(not(windows))]
             let output = tokio::process::Command::new("sh")
                 .arg("-c")
                 .arg(command)
