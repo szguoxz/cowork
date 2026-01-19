@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import Layout from './components/Layout'
 import Chat from './pages/Chat'
-import Files from './pages/Files'
 import Settings from './pages/Settings'
 import Mcp from './pages/Mcp'
 import Skills from './pages/Skills'
@@ -76,7 +75,6 @@ function App() {
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Chat />} />
-          <Route path="files" element={<Files />} />
           <Route path="sessions" element={<Sessions />} />
           <Route path="mcp" element={<Mcp />} />
           <Route path="skills" element={<Skills />} />

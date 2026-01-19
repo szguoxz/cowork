@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { MessageSquare, FolderOpen, Settings, Server, Puzzle, ChevronLeft, ChevronRight, History, HelpCircle, Sparkles } from 'lucide-react'
+import { MessageSquare, Settings, Server, Puzzle, ChevronLeft, ChevronRight, History, HelpCircle, Sparkles } from 'lucide-react'
 import { useState } from 'react'
 
 export default function Layout() {
@@ -9,7 +9,6 @@ export default function Layout() {
   const navItems = [
     { path: '/', icon: MessageSquare, label: 'Chat' },
     { path: '/sessions', icon: History, label: 'History' },
-    { path: '/files', icon: FolderOpen, label: 'Files' },
     { path: '/mcp', icon: Server, label: 'MCP Servers' },
     { path: '/skills', icon: Puzzle, label: 'Skills' },
     { path: '/settings', icon: Settings, label: 'Settings' },
