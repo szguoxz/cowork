@@ -27,7 +27,7 @@ pub struct SandboxConfig {
 impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
-            root: PathBuf::from("/tmp/cowork-sandbox"),
+            root: std::env::temp_dir().join("cowork-sandbox"),
             network: NetworkPolicy::default(),
             filesystem: FilesystemPolicy::default(),
             limits: ResourceLimits::default(),
@@ -86,9 +86,21 @@ pub struct FilesystemPolicy {
 impl Default for FilesystemPolicy {
     fn default() -> Self {
         let mut blocked = HashSet::new();
-        blocked.insert(PathBuf::from("/etc/passwd"));
-        blocked.insert(PathBuf::from("/etc/shadow"));
-        blocked.insert(PathBuf::from("/root"));
+
+        // Platform-specific sensitive paths
+        #[cfg(not(windows))]
+        {
+            blocked.insert(PathBuf::from("/etc/passwd"));
+            blocked.insert(PathBuf::from("/etc/shadow"));
+            blocked.insert(PathBuf::from("/root"));
+        }
+
+        #[cfg(windows)]
+        {
+            blocked.insert(PathBuf::from("C:\\Windows\\System32\\config"));
+            blocked.insert(PathBuf::from("C:\\Windows\\System32\\drivers\\etc\\hosts"));
+            blocked.insert(PathBuf::from("C:\\Users\\Administrator"));
+        }
 
         Self {
             read_paths: HashSet::new(),

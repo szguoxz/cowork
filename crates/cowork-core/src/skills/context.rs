@@ -172,7 +172,10 @@ impl Skill for ContextSkill {
             response.push_str("- Use /compact [instructions] to summarize with preservation focus\n");
             response.push_str("- Use /clear to reset the conversation\n");
             response.push_str("- Memory files are loaded in priority order:\n");
+            #[cfg(not(windows))]
             response.push_str("  1. Enterprise: /etc/claude-code/CLAUDE.md\n");
+            #[cfg(windows)]
+            response.push_str("  1. Enterprise: %ProgramData%\\claude-code\\CLAUDE.md\n");
             response.push_str("  2. Project: ./CLAUDE.md, ./.claude/CLAUDE.md\n");
             response.push_str("  3. Rules: ./.claude/rules/*.md\n");
             response.push_str("  4. User: ~/.claude/CLAUDE.md, ./CLAUDE.local.md\n");

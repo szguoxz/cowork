@@ -43,7 +43,10 @@ impl MemorySkill {
             output.push_str("To create one, use: /memory add <instructions>\n");
             output.push_str("Or create a CLAUDE.md file in your project root.\n\n");
             output.push_str("Memory hierarchy (priority order):\n");
+            #[cfg(not(windows))]
             output.push_str("  1. Enterprise: /etc/claude-code/CLAUDE.md\n");
+            #[cfg(windows)]
+            output.push_str("  1. Enterprise: %ProgramData%\\claude-code\\CLAUDE.md\n");
             output.push_str("  2. Project:    ./CLAUDE.md, ./.claude/CLAUDE.md\n");
             output.push_str("  3. Rules:      ./.claude/rules/*.md\n");
             output.push_str("  4. User:       ~/.claude/CLAUDE.md, ./CLAUDE.local.md\n");

@@ -55,15 +55,29 @@ fn paranoid_config(root: PathBuf) -> SandboxConfig {
 }
 
 fn strict_config(root: PathBuf) -> SandboxConfig {
+    let mut read_paths: HashSet<PathBuf> = [root.clone()].into_iter().collect();
+    let mut exec_paths: HashSet<PathBuf> = HashSet::new();
+
+    #[cfg(not(windows))]
+    {
+        read_paths.insert(PathBuf::from("/usr"));
+        exec_paths.insert(PathBuf::from("/usr/bin"));
+        exec_paths.insert(PathBuf::from("/bin"));
+    }
+
+    #[cfg(windows)]
+    {
+        read_paths.insert(PathBuf::from("C:\\Windows\\System32"));
+        exec_paths.insert(PathBuf::from("C:\\Windows\\System32"));
+    }
+
     SandboxConfig {
         root: root.clone(),
         network: NetworkPolicy::deny_all(),
         filesystem: FilesystemPolicy {
-            read_paths: [root.clone(), PathBuf::from("/usr")].into_iter().collect(),
+            read_paths,
             write_paths: [root.clone()].into_iter().collect(),
-            exec_paths: [PathBuf::from("/usr/bin"), PathBuf::from("/bin")]
-                .into_iter()
-                .collect(),
+            exec_paths,
             blocked_paths: default_blocked_paths(),
         },
         limits: ResourceLimits {
@@ -77,6 +91,26 @@ fn strict_config(root: PathBuf) -> SandboxConfig {
 }
 
 fn standard_config(root: PathBuf) -> SandboxConfig {
+    let mut read_paths: HashSet<PathBuf> = [root.clone()].into_iter().collect();
+    let mut exec_paths: HashSet<PathBuf> = HashSet::new();
+
+    #[cfg(not(windows))]
+    {
+        read_paths.insert(PathBuf::from("/usr"));
+        read_paths.insert(PathBuf::from("/lib"));
+        exec_paths.insert(PathBuf::from("/usr/bin"));
+        exec_paths.insert(PathBuf::from("/bin"));
+        exec_paths.insert(PathBuf::from("/usr/local/bin"));
+    }
+
+    #[cfg(windows)]
+    {
+        read_paths.insert(PathBuf::from("C:\\Windows\\System32"));
+        read_paths.insert(PathBuf::from("C:\\Program Files"));
+        exec_paths.insert(PathBuf::from("C:\\Windows\\System32"));
+        exec_paths.insert(PathBuf::from("C:\\Windows"));
+    }
+
     SandboxConfig {
         root: root.clone(),
         network: NetworkPolicy {
@@ -88,17 +122,9 @@ fn standard_config(root: PathBuf) -> SandboxConfig {
                 .collect(),
         },
         filesystem: FilesystemPolicy {
-            read_paths: [root.clone(), PathBuf::from("/usr"), PathBuf::from("/lib")]
-                .into_iter()
-                .collect(),
+            read_paths,
             write_paths: [root.clone()].into_iter().collect(),
-            exec_paths: [
-                PathBuf::from("/usr/bin"),
-                PathBuf::from("/bin"),
-                PathBuf::from("/usr/local/bin"),
-            ]
-            .into_iter()
-            .collect(),
+            exec_paths,
             blocked_paths: default_blocked_paths(),
         },
         limits: ResourceLimits::default(),
@@ -146,27 +172,57 @@ fn permissive_config(root: PathBuf) -> SandboxConfig {
 }
 
 fn default_blocked_paths() -> HashSet<PathBuf> {
-    [
-        "/etc/passwd",
-        "/etc/shadow",
-        "/etc/sudoers",
-        "/root",
-        "/home",
-        "/var/log",
-        "/proc",
-        "/sys",
-        "/dev",
-    ]
-    .into_iter()
-    .map(PathBuf::from)
-    .collect()
+    let mut paths = HashSet::new();
+
+    #[cfg(not(windows))]
+    {
+        for path in [
+            "/etc/passwd",
+            "/etc/shadow",
+            "/etc/sudoers",
+            "/root",
+            "/home",
+            "/var/log",
+            "/proc",
+            "/sys",
+            "/dev",
+        ] {
+            paths.insert(PathBuf::from(path));
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        for path in [
+            "C:\\Windows\\System32\\config",
+            "C:\\Windows\\System32\\drivers\\etc",
+            "C:\\Users",
+            "C:\\ProgramData",
+            "C:\\Windows\\Logs",
+        ] {
+            paths.insert(PathBuf::from(path));
+        }
+    }
+
+    paths
 }
 
 fn minimal_blocked_paths() -> HashSet<PathBuf> {
-    ["/etc/shadow", "/etc/sudoers"]
-        .into_iter()
-        .map(PathBuf::from)
-        .collect()
+    let mut paths = HashSet::new();
+
+    #[cfg(not(windows))]
+    {
+        paths.insert(PathBuf::from("/etc/shadow"));
+        paths.insert(PathBuf::from("/etc/sudoers"));
+    }
+
+    #[cfg(windows)]
+    {
+        paths.insert(PathBuf::from("C:\\Windows\\System32\\config\\SAM"));
+        paths.insert(PathBuf::from("C:\\Windows\\System32\\config\\SECURITY"));
+    }
+
+    paths
 }
 
 /// Policy builder for custom configurations
