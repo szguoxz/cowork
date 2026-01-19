@@ -59,6 +59,24 @@ pub fn run() {
                 .app_data_dir()
                 .expect("Failed to get app data dir");
 
+            // Ensure the workspace directory exists (required for Windows)
+            if let Err(e) = std::fs::create_dir_all(&workspace_path) {
+                tracing::warn!("Failed to create workspace directory: {}", e);
+            }
+
+            // Ensure config directory exists (required for Windows)
+            if let Some(config_dir) = dirs::config_dir() {
+                let cowork_config_dir = config_dir.join("cowork");
+                if let Err(e) = std::fs::create_dir_all(&cowork_config_dir) {
+                    tracing::warn!("Failed to create config directory: {}", e);
+                }
+                // Also create sessions subdirectory
+                let sessions_dir = cowork_config_dir.join("sessions");
+                if let Err(e) = std::fs::create_dir_all(&sessions_dir) {
+                    tracing::warn!("Failed to create sessions directory: {}", e);
+                }
+            }
+
             let state = init_state(workspace_path);
             app.manage(state);
 
