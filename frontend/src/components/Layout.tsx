@@ -52,7 +52,7 @@ export default function Layout() {
                   transition-all duration-200
                   ${isActive
                     ? 'bg-primary/10 text-primary border border-primary/20 shadow-glow-sm'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5'
                   }
                   ${collapsed ? 'justify-center' : ''}
                 `}
@@ -73,7 +73,7 @@ export default function Layout() {
             onClick={() => setCollapsed(!collapsed)}
             className={`
               flex items-center gap-3 px-3 py-2.5 rounded-lg w-full
-              text-muted-foreground hover:text-foreground hover:bg-white/5
+              text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5
               transition-all duration-200
               ${collapsed ? 'justify-center' : ''}
             `}

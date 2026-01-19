@@ -2,18 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
-/* AIEmployees Design System - Dark Theme with Purple Accent */
+/* AIEmployees Design System - Light Theme with Purple Accent */
 @layer base {
   :root {
-    /* Base Colors */
-    --bg-base: 240 10% 4%;          /* #09090b */
-    --bg-surface: 240 6% 10%;       /* #18181b */
-    --bg-elevated: 240 4% 16%;      /* #27272a */
+    /* Base Colors - Light */
+    --bg-base: 0 0% 100%;           /* #ffffff */
+    --bg-surface: 0 0% 98%;         /* #fafafa */
+    --bg-elevated: 0 0% 96%;        /* #f5f5f5 */
 
     /* Text Colors */
-    --text-primary: 0 0% 98%;       /* #fafafa */
-    --text-secondary: 240 5% 65%;   /* #a1a1aa */
-    --text-muted: 240 4% 46%;       /* #71717a */
+    --text-primary: 240 10% 4%;     /* #09090b */
+    --text-secondary: 240 4% 46%;   /* #71717a */
+    --text-muted: 240 5% 65%;       /* #a1a1aa */
 
     /* Accent - Purple/Violet */
     --accent: 263 70% 50%;          /* #8b5cf6 */
@@ -27,8 +27,8 @@
     --info: 217 91% 60%;            /* #3b82f6 */
 
     /* Border */
-    --border: 240 4% 16%;           /* #27272a */
-    --border-hover: 240 5% 26%;     /* #3f3f46 */
+    --border: 240 6% 90%;           /* #e4e4e7 */
+    --border-hover: 240 5% 84%;     /* #d4d4d8 */
 
     /* Mapped to shadcn/ui conventions */
     --background: var(--bg-base);
@@ -50,16 +50,16 @@
     --radius: 0.75rem;
   }
 
-  /* Light mode - keep for potential toggle */
-  .light {
-    --bg-base: 0 0% 100%;
-    --bg-surface: 0 0% 98%;
-    --bg-elevated: 0 0% 96%;
-    --text-primary: 240 10% 4%;
-    --text-secondary: 240 4% 46%;
-    --text-muted: 240 5% 65%;
-    --border: 240 6% 90%;
-    --border-hover: 240 5% 84%;
+  /* Dark mode */
+  .dark {
+    --bg-base: 240 10% 4%;
+    --bg-surface: 240 6% 10%;
+    --bg-elevated: 240 4% 16%;
+    --text-primary: 0 0% 98%;
+    --text-secondary: 240 5% 65%;
+    --text-muted: 240 4% 46%;
+    --border: 240 4% 16%;
+    --border-hover: 240 5% 26%;
   }
 }
 
@@ -69,6 +69,10 @@
   }
 
   html {
+    color-scheme: light;
+  }
+
+  html.dark {
     color-scheme: dark;
   }
 
@@ -84,7 +88,7 @@
   }
 }
 
-/* Custom scrollbar - subtle purple tint */
+/* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -95,10 +99,18 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-white/10 rounded-full;
+  @apply bg-black/10 rounded-full;
 }
 
 ::-webkit-scrollbar-thumb:hover {
+  @apply bg-black/20;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  @apply bg-white/10;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
   @apply bg-white/20;
 }
 
@@ -183,7 +195,11 @@
 
   /* Glass effect */
   .glass {
-    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+    @apply bg-black/5 backdrop-blur-xl border border-black/10;
+  }
+
+  .dark .glass {
+    @apply bg-white/5 border-white/10;
   }
 
   /* Thinking indicator animation */

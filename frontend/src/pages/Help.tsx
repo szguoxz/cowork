@@ -328,7 +328,7 @@ export default function Help() {
               >
                 <button
                   onClick={() => toggleSection(section.id)}
-                  className="w-full px-4 py-3 flex items-center gap-3 bg-card hover:bg-white/5 transition-colors text-left"
+                  className="w-full px-4 py-3 flex items-center gap-3 bg-card hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left"
                 >
                   {isExpanded ? (
                     <ChevronDown className="w-4 h-4 text-muted-foreground" />
