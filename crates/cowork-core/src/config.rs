@@ -285,6 +285,60 @@ impl ModelTiers {
         }
     }
 
+    /// Default tiers for Together AI
+    pub fn together() -> Self {
+        Self {
+            fast: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo".to_string(),
+            balanced: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo".to_string(),
+            powerful: "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo".to_string(),
+        }
+    }
+
+    /// Default tiers for Fireworks AI
+    pub fn fireworks() -> Self {
+        Self {
+            fast: "accounts/fireworks/models/llama-v3p1-8b-instruct".to_string(),
+            balanced: "accounts/fireworks/models/llama-v3p1-70b-instruct".to_string(),
+            powerful: "accounts/fireworks/models/llama-v3p1-405b-instruct".to_string(),
+        }
+    }
+
+    /// Default tiers for Zai (Zhipu AI)
+    pub fn zai() -> Self {
+        Self {
+            fast: "glm-4-flash".to_string(),
+            balanced: "glm-4-plus".to_string(),
+            powerful: "glm-4.6".to_string(),
+        }
+    }
+
+    /// Default tiers for Nebius
+    pub fn nebius() -> Self {
+        Self {
+            fast: "meta-llama/Meta-Llama-3.1-8B-Instruct".to_string(),
+            balanced: "meta-llama/Meta-Llama-3.1-70B-Instruct".to_string(),
+            powerful: "Qwen/Qwen3-235B-A22B".to_string(),
+        }
+    }
+
+    /// Default tiers for MIMO
+    pub fn mimo() -> Self {
+        Self {
+            fast: "mimo-v2-flash".to_string(),
+            balanced: "mimo-v2-flash".to_string(),
+            powerful: "mimo-v2-flash".to_string(),
+        }
+    }
+
+    /// Default tiers for BigModel.cn
+    pub fn bigmodel() -> Self {
+        Self {
+            fast: "glm-4-flash".to_string(),
+            balanced: "glm-4-plus".to_string(),
+            powerful: "glm-4-plus".to_string(),
+        }
+    }
+
     /// Get default tiers for a provider type
     pub fn for_provider(provider_type: &str) -> Self {
         match provider_type.to_lowercase().as_str() {
@@ -296,6 +350,12 @@ impl ModelTiers {
             "xai" | "grok" => Self::xai(),
             "cohere" => Self::cohere(),
             "perplexity" => Self::perplexity(),
+            "together" => Self::together(),
+            "fireworks" => Self::fireworks(),
+            "zai" | "zhipu" => Self::zai(),
+            "nebius" => Self::nebius(),
+            "mimo" => Self::mimo(),
+            "bigmodel" => Self::bigmodel(),
             "ollama" => Self::ollama(),
             _ => Self::anthropic(), // Fallback
         }
@@ -428,6 +488,90 @@ impl ProviderConfig {
         }
     }
 
+    /// Create Together AI provider config
+    pub fn together() -> Self {
+        Self {
+            provider_type: "together".to_string(),
+            api_key: None,
+            api_key_env: Some("TOGETHER_API_KEY".to_string()),
+            model: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo".to_string(),
+            model_tiers: None,
+            base_url: None,
+            default_max_tokens: 4096,
+            default_temperature: 0.7,
+        }
+    }
+
+    /// Create Fireworks AI provider config
+    pub fn fireworks() -> Self {
+        Self {
+            provider_type: "fireworks".to_string(),
+            api_key: None,
+            api_key_env: Some("FIREWORKS_API_KEY".to_string()),
+            model: "accounts/fireworks/models/llama-v3p1-70b-instruct".to_string(),
+            model_tiers: None,
+            base_url: None,
+            default_max_tokens: 4096,
+            default_temperature: 0.7,
+        }
+    }
+
+    /// Create Zai (Zhipu AI) provider config
+    pub fn zai() -> Self {
+        Self {
+            provider_type: "zai".to_string(),
+            api_key: None,
+            api_key_env: Some("ZAI_API_KEY".to_string()),
+            model: "glm-4-plus".to_string(),
+            model_tiers: None,
+            base_url: None,
+            default_max_tokens: 4096,
+            default_temperature: 0.7,
+        }
+    }
+
+    /// Create Nebius provider config
+    pub fn nebius() -> Self {
+        Self {
+            provider_type: "nebius".to_string(),
+            api_key: None,
+            api_key_env: Some("NEBIUS_API_KEY".to_string()),
+            model: "meta-llama/Meta-Llama-3.1-70B-Instruct".to_string(),
+            model_tiers: None,
+            base_url: None,
+            default_max_tokens: 4096,
+            default_temperature: 0.7,
+        }
+    }
+
+    /// Create MIMO provider config
+    pub fn mimo() -> Self {
+        Self {
+            provider_type: "mimo".to_string(),
+            api_key: None,
+            api_key_env: Some("MIMO_API_KEY".to_string()),
+            model: "mimo-v2-flash".to_string(),
+            model_tiers: None,
+            base_url: None,
+            default_max_tokens: 4096,
+            default_temperature: 0.7,
+        }
+    }
+
+    /// Create BigModel.cn provider config
+    pub fn bigmodel() -> Self {
+        Self {
+            provider_type: "bigmodel".to_string(),
+            api_key: None,
+            api_key_env: Some("BIGMODEL_API_KEY".to_string()),
+            model: "glm-4-plus".to_string(),
+            model_tiers: None,
+            base_url: None,
+            default_max_tokens: 4096,
+            default_temperature: 0.7,
+        }
+    }
+
     /// Get model tiers, falling back to provider defaults
     pub fn get_model_tiers(&self) -> ModelTiers {
         self.model_tiers
@@ -466,6 +610,13 @@ impl ProviderConfig {
             "perplexity" => std::env::var("PERPLEXITY_API_KEY").ok(),
             "groq" => std::env::var("GROQ_API_KEY").ok(),
             "xai" | "grok" => std::env::var("XAI_API_KEY").ok(),
+            "deepseek" => std::env::var("DEEPSEEK_API_KEY").ok(),
+            "together" => std::env::var("TOGETHER_API_KEY").ok(),
+            "fireworks" => std::env::var("FIREWORKS_API_KEY").ok(),
+            "zai" | "zhipu" => std::env::var("ZAI_API_KEY").ok(),
+            "nebius" => std::env::var("NEBIUS_API_KEY").ok(),
+            "mimo" => std::env::var("MIMO_API_KEY").ok(),
+            "bigmodel" => std::env::var("BIGMODEL_API_KEY").ok(),
             _ => None,
         }
     }

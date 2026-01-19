@@ -73,6 +73,48 @@ const PROVIDERS: ProviderOption[] = [
     icon: <Sparkles className="w-5 h-5" />,
   },
   {
+    id: 'together',
+    name: 'Together AI',
+    description: '200+ open source models',
+    envVar: 'TOGETHER_API_KEY',
+    icon: <Globe className="w-5 h-5" />,
+  },
+  {
+    id: 'fireworks',
+    name: 'Fireworks AI',
+    description: 'Fast open source model inference',
+    envVar: 'FIREWORKS_API_KEY',
+    icon: <Zap className="w-5 h-5" />,
+  },
+  {
+    id: 'zai',
+    name: 'Zai (Zhipu AI)',
+    description: 'GLM-4 models from China',
+    envVar: 'ZAI_API_KEY',
+    icon: <Brain className="w-5 h-5" />,
+  },
+  {
+    id: 'nebius',
+    name: 'Nebius AI Studio',
+    description: '30+ open source models',
+    envVar: 'NEBIUS_API_KEY',
+    icon: <Globe className="w-5 h-5" />,
+  },
+  {
+    id: 'mimo',
+    name: 'MIMO (Xiaomi)',
+    description: "Xiaomi's MIMO models",
+    envVar: 'MIMO_API_KEY',
+    icon: <Zap className="w-5 h-5" />,
+  },
+  {
+    id: 'bigmodel',
+    name: 'BigModel.cn',
+    description: 'Zhipu AI China platform',
+    envVar: 'BIGMODEL_API_KEY',
+    icon: <Brain className="w-5 h-5" />,
+  },
+  {
     id: 'ollama',
     name: 'Ollama (Local)',
     description: 'Run models locally, no API key needed',
@@ -242,6 +284,18 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
         return 'deepseek-chat'
       case 'xai':
         return 'grok-2'
+      case 'together':
+        return 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo'
+      case 'fireworks':
+        return 'accounts/fireworks/models/llama-v3p1-70b-instruct'
+      case 'zai':
+        return 'glm-4-plus'
+      case 'nebius':
+        return 'meta-llama/Meta-Llama-3.1-70B-Instruct'
+      case 'mimo':
+        return 'mimo-v2-flash'
+      case 'bigmodel':
+        return 'glm-4-plus'
       case 'ollama':
         return 'llama3.2'
       default:

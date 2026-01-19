@@ -36,6 +36,18 @@ pub enum ProviderType {
     XAI,
     /// DeepSeek
     DeepSeek,
+    /// Together AI
+    Together,
+    /// Fireworks AI
+    Fireworks,
+    /// Zai (Zhipu AI) - GLM models
+    Zai,
+    /// Nebius AI Studio
+    Nebius,
+    /// MIMO (Xiaomi)
+    MIMO,
+    /// BigModel.cn (Zhipu AI China)
+    BigModel,
     /// Ollama (local)
     Ollama,
 }
@@ -51,6 +63,12 @@ impl std::fmt::Display for ProviderType {
             ProviderType::Groq => write!(f, "groq"),
             ProviderType::XAI => write!(f, "xai"),
             ProviderType::DeepSeek => write!(f, "deepseek"),
+            ProviderType::Together => write!(f, "together"),
+            ProviderType::Fireworks => write!(f, "fireworks"),
+            ProviderType::Zai => write!(f, "zai"),
+            ProviderType::Nebius => write!(f, "nebius"),
+            ProviderType::MIMO => write!(f, "mimo"),
+            ProviderType::BigModel => write!(f, "bigmodel"),
             ProviderType::Ollama => write!(f, "ollama"),
         }
     }
@@ -69,6 +87,12 @@ impl std::str::FromStr for ProviderType {
             "groq" => Ok(ProviderType::Groq),
             "xai" | "grok" => Ok(ProviderType::XAI),
             "deepseek" => Ok(ProviderType::DeepSeek),
+            "together" => Ok(ProviderType::Together),
+            "fireworks" => Ok(ProviderType::Fireworks),
+            "zai" | "zhipu" => Ok(ProviderType::Zai),
+            "nebius" => Ok(ProviderType::Nebius),
+            "mimo" => Ok(ProviderType::MIMO),
+            "bigmodel" => Ok(ProviderType::BigModel),
             "ollama" => Ok(ProviderType::Ollama),
             _ => Err(format!("Unknown provider: {}", s)),
         }
@@ -87,6 +111,12 @@ impl ProviderType {
             ProviderType::Groq => "llama-3.3-70b-versatile",
             ProviderType::XAI => "grok-2",
             ProviderType::DeepSeek => "deepseek-chat",
+            ProviderType::Together => "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+            ProviderType::Fireworks => "accounts/fireworks/models/llama-v3p1-70b-instruct",
+            ProviderType::Zai => "glm-4-plus",
+            ProviderType::Nebius => "meta-llama/Meta-Llama-3.1-70B-Instruct",
+            ProviderType::MIMO => "mimo-v2-flash",
+            ProviderType::BigModel => "glm-4-plus",
             ProviderType::Ollama => "llama3.2",
         }
     }
@@ -102,6 +132,12 @@ impl ProviderType {
             ProviderType::Groq => Some("GROQ_API_KEY"),
             ProviderType::XAI => Some("XAI_API_KEY"),
             ProviderType::DeepSeek => Some("DEEPSEEK_API_KEY"),
+            ProviderType::Together => Some("TOGETHER_API_KEY"),
+            ProviderType::Fireworks => Some("FIREWORKS_API_KEY"),
+            ProviderType::Zai => Some("ZAI_API_KEY"),
+            ProviderType::Nebius => Some("NEBIUS_API_KEY"),
+            ProviderType::MIMO => Some("MIMO_API_KEY"),
+            ProviderType::BigModel => Some("BIGMODEL_API_KEY"),
             ProviderType::Ollama => None, // Local, no API key needed
         }
     }
@@ -474,6 +510,12 @@ impl LlmProvider for GenAIProvider {
             ProviderType::Groq => "groq",
             ProviderType::XAI => "xai",
             ProviderType::DeepSeek => "deepseek",
+            ProviderType::Together => "together",
+            ProviderType::Fireworks => "fireworks",
+            ProviderType::Zai => "zai",
+            ProviderType::Nebius => "nebius",
+            ProviderType::MIMO => "mimo",
+            ProviderType::BigModel => "bigmodel",
             ProviderType::Ollama => "ollama",
         }
     }
@@ -607,5 +649,44 @@ pub mod models {
     pub mod xai {
         pub const GROK_2: &str = "grok-2";
         pub const GROK_BETA: &str = "grok-beta";
+    }
+
+    /// Together AI models
+    pub mod together {
+        pub const LLAMA_3_1_70B: &str = "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo";
+        pub const LLAMA_3_1_8B: &str = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo";
+        pub const MIXTRAL_8X7B: &str = "mistralai/Mixtral-8x7B-Instruct-v0.1";
+    }
+
+    /// Fireworks AI models
+    pub mod fireworks {
+        pub const LLAMA_3_1_70B: &str = "accounts/fireworks/models/llama-v3p1-70b-instruct";
+        pub const LLAMA_3_1_8B: &str = "accounts/fireworks/models/llama-v3p1-8b-instruct";
+        pub const QWEN_72B: &str = "accounts/fireworks/models/qwen2p5-72b-instruct";
+    }
+
+    /// Zai (Zhipu AI) models
+    pub mod zai {
+        pub const GLM_4_PLUS: &str = "glm-4-plus";
+        pub const GLM_4_6: &str = "glm-4.6";
+        pub const GLM_4_FLASH: &str = "glm-4-flash";
+    }
+
+    /// Nebius AI models
+    pub mod nebius {
+        pub const LLAMA_3_1_70B: &str = "meta-llama/Meta-Llama-3.1-70B-Instruct";
+        pub const QWEN_235B: &str = "Qwen/Qwen3-235B-A22B";
+        pub const DEEPSEEK_R1: &str = "deepseek-ai/DeepSeek-R1-0528";
+    }
+
+    /// MIMO models
+    pub mod mimo {
+        pub const MIMO_V2_FLASH: &str = "mimo-v2-flash";
+    }
+
+    /// BigModel.cn models
+    pub mod bigmodel {
+        pub const GLM_4_PLUS: &str = "glm-4-plus";
+        pub const GLM_4_FLASH: &str = "glm-4-flash";
     }
 }

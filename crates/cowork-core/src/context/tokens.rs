@@ -119,6 +119,12 @@ impl TokenCounter {
             ProviderType::DeepSeek => 64_000,    // DeepSeek
             ProviderType::XAI => 131_072,        // Grok 2
             ProviderType::Perplexity => 128_000, // Sonar
+            ProviderType::Together => 128_000,   // Varies by model
+            ProviderType::Fireworks => 128_000,  // Varies by model
+            ProviderType::Zai => 128_000,        // GLM-4
+            ProviderType::Nebius => 128_000,     // Varies by model
+            ProviderType::MIMO => 32_000,        // MIMO
+            ProviderType::BigModel => 128_000,   // GLM-4
             ProviderType::Ollama => 32_000,      // Default for local models
         }
     }
