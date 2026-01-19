@@ -287,6 +287,18 @@ Git Info Commands:
   /log [count]      - Show recent commits (default: 10)
   /branch [name]    - List, create, or switch branches
 
+Development Workflow:
+  /feature-dev [desc] - Guided 7-phase feature development workflow
+  /code-explorer      - Deep codebase analysis and exploration
+  /code-architect     - Design architecture blueprints for features
+
+Code Review:
+  /code-review [scope] - Comprehensive PR review for bugs and compliance
+  /code-reviewer       - Review code with confidence-based filtering
+  /pr-test-analyzer    - Analyze test coverage quality
+  /silent-failure-hunter - Find silent failures and error handling issues
+  /code-simplifier     - Simplify and refine code for clarity
+
 Context Commands:
   /compact [focus]  - Summarize conversation (optionally preserve specific content)
   /clear            - Clear conversation history, keep memory files
