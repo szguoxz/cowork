@@ -1027,7 +1027,10 @@ fn show_setup_instructions(provider_type: ProviderType) {
     println!();
 
     println!("{}", style("Option 2: Config File (Persistent)").bold());
-    println!("  Edit: {}", style("~/.config/cowork/config.toml").cyan());
+    let config_path = ConfigManager::default_config_path()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "~/.config/cowork/config.toml".to_string());
+    println!("  Edit: {}", style(&config_path).cyan());
     println!();
     println!("  Example config:");
     println!("  {}", style("─".repeat(50)).dim());

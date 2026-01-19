@@ -125,9 +125,20 @@ impl Tool for ExecuteCommand {
             if run_in_background {
                 if let Some(registry) = &self.process_registry {
                     let shell_id = uuid::Uuid::new_v4().to_string();
-                    let output_file = format!("/tmp/cowork-shell-{}.log", shell_id);
+                    let output_file = std::env::temp_dir()
+                        .join(format!("cowork-shell-{}.log", shell_id))
+                        .to_string_lossy()
+                        .to_string();
 
-                    // Spawn the command in background
+                    // Spawn the command in background (platform-specific)
+                    #[cfg(windows)]
+                    let child = Command::new("cmd")
+                        .args(["/C", &format!("{} > \"{}\" 2>&1", command, output_file)])
+                        .current_dir(&working_dir)
+                        .spawn()
+                        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to spawn: {}", e)))?;
+
+                    #[cfg(not(windows))]
                     let child = Command::new("sh")
                         .arg("-c")
                         .arg(format!("{} > {} 2>&1", command, output_file))
@@ -159,7 +170,24 @@ impl Tool for ExecuteCommand {
                 }
             }
 
-            // Foreground execution with timeout
+            // Foreground execution with timeout (platform-specific)
+            #[cfg(windows)]
+            let output = tokio::time::timeout(
+                std::time::Duration::from_secs(timeout_secs),
+                Command::new("cmd")
+                    .args(["/C", command])
+                    .current_dir(&working_dir)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .output(),
+            )
+            .await
+            .map_err(|_| {
+                ToolError::ExecutionFailed(format!("Command timed out after {}s", timeout_secs))
+            })?
+            .map_err(ToolError::Io)?;
+
+            #[cfg(not(windows))]
             let output = tokio::time::timeout(
                 std::time::Duration::from_secs(timeout_secs),
                 Command::new("sh")

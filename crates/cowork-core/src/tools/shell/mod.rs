@@ -24,10 +24,25 @@ pub struct ShellConfig {
 impl Default for ShellConfig {
     fn default() -> Self {
         let mut blocked = HashSet::new();
-        // Block dangerous commands by default
+
+        // Block dangerous Unix commands
         blocked.insert("rm -rf /".to_string());
         blocked.insert("sudo".to_string());
         blocked.insert("su".to_string());
+        blocked.insert("mkfs".to_string());
+        blocked.insert("dd if=/dev".to_string());
+        blocked.insert(":(){:|:&};:".to_string()); // Fork bomb
+
+        // Block dangerous Windows commands
+        blocked.insert("format".to_string());
+        blocked.insert("del /f /s /q c:\\".to_string());
+        blocked.insert("rd /s /q c:\\".to_string());
+        blocked.insert("rmdir /s /q c:\\".to_string());
+        blocked.insert("del /f /s /q C:\\".to_string());
+        blocked.insert("rd /s /q C:\\".to_string());
+        blocked.insert("rmdir /s /q C:\\".to_string());
+        blocked.insert("reg delete".to_string());
+        blocked.insert("bcdedit".to_string());
 
         Self {
             allowed_commands: HashSet::new(),

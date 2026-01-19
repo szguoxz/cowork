@@ -171,11 +171,25 @@ impl ContextGatherer {
     pub async fn gather_memory_hierarchy(&self) -> MemoryHierarchy {
         let mut files = Vec::new();
 
-        // Tier 1: Enterprise
-        let enterprise_paths = [
-            PathBuf::from("/etc/claude-code/CLAUDE.md"),
-            PathBuf::from("/etc/cowork/CLAUDE.md"),
-        ];
+        // Tier 1: Enterprise (platform-specific paths)
+        let mut enterprise_paths = Vec::new();
+
+        // Unix paths
+        #[cfg(not(windows))]
+        {
+            enterprise_paths.push(PathBuf::from("/etc/claude-code/CLAUDE.md"));
+            enterprise_paths.push(PathBuf::from("/etc/cowork/CLAUDE.md"));
+        }
+
+        // Windows paths (ProgramData)
+        #[cfg(windows)]
+        {
+            if let Some(program_data) = std::env::var_os("ProgramData") {
+                let pd = PathBuf::from(program_data);
+                enterprise_paths.push(pd.join("claude-code").join("CLAUDE.md"));
+                enterprise_paths.push(pd.join("cowork").join("CLAUDE.md"));
+            }
+        }
 
         for path in &enterprise_paths {
             if let Ok(content) = tokio::fs::read_to_string(path).await {
