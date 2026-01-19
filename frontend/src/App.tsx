@@ -1,13 +1,17 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import Layout from './components/Layout'
 import Chat from './pages/Chat'
 import Files from './pages/Files'
 import Settings from './pages/Settings'
 import Mcp from './pages/Mcp'
 import Skills from './pages/Skills'
+import Onboarding from './components/Onboarding'
 
 function App() {
+  const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null)
+
   // Apply dark mode based on system preference
   useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
@@ -26,8 +30,47 @@ function App() {
     return () => mediaQuery.removeEventListener('change', updateTheme)
   }, [])
 
+  // Check if onboarding should be shown
+  useEffect(() => {
+    const checkSetup = async () => {
+      try {
+        // Check if setup has been completed before (via backend)
+        const isSetupDone = await invoke<boolean>('is_setup_complete')
+
+        // Also check localStorage for onboarding completion
+        const onboardingComplete = localStorage.getItem('onboarding_complete') === 'true'
+
+        // Show onboarding if either:
+        // 1. No API key is configured (backend check)
+        // 2. Onboarding was never completed (localStorage check)
+        setShowOnboarding(!isSetupDone && !onboardingComplete)
+      } catch (err) {
+        console.error('Failed to check setup status:', err)
+        // On error, check localStorage as fallback
+        const onboardingComplete = localStorage.getItem('onboarding_complete') === 'true'
+        setShowOnboarding(!onboardingComplete)
+      }
+    }
+    checkSetup()
+  }, [])
+
+  const handleOnboardingComplete = () => {
+    localStorage.setItem('onboarding_complete', 'true')
+    setShowOnboarding(false)
+  }
+
+  // Show loading state while checking setup status
+  if (showOnboarding === null) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
   return (
     <BrowserRouter>
+      {showOnboarding && <Onboarding onComplete={handleOnboardingComplete} />}
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Chat />} />

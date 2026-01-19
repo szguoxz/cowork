@@ -9,13 +9,17 @@ import {
   FileText,
   Terminal,
   Globe,
+  Loader2,
+  Zap,
+  Brain,
+  Server,
 } from 'lucide-react'
 
 interface OnboardingProps {
   onComplete: () => void
 }
 
-type Step = 'welcome' | 'provider' | 'apikey' | 'profile' | 'complete'
+type Step = 'welcome' | 'provider' | 'apikey' | 'testing' | 'profile' | 'complete'
 
 interface ProviderOption {
   id: string
@@ -45,6 +49,27 @@ const PROVIDERS: ProviderOption[] = [
     name: 'Google Gemini',
     description: 'Large context window (1M tokens)',
     envVar: 'GEMINI_API_KEY',
+    icon: <Brain className="w-5 h-5" />,
+  },
+  {
+    id: 'groq',
+    name: 'Groq',
+    description: 'Ultra-fast inference',
+    envVar: 'GROQ_API_KEY',
+    icon: <Zap className="w-5 h-5" />,
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    description: 'Cost-effective reasoning',
+    envVar: 'DEEPSEEK_API_KEY',
+    icon: <Brain className="w-5 h-5" />,
+  },
+  {
+    id: 'xai',
+    name: 'xAI (Grok)',
+    description: 'Latest Grok models',
+    envVar: 'XAI_API_KEY',
     icon: <Sparkles className="w-5 h-5" />,
   },
   {
@@ -52,7 +77,7 @@ const PROVIDERS: ProviderOption[] = [
     name: 'Ollama (Local)',
     description: 'Run models locally, no API key needed',
     envVar: '',
-    icon: <Terminal className="w-5 h-5" />,
+    icon: <Server className="w-5 h-5" />,
   },
 ]
 
@@ -80,9 +105,14 @@ const PROFILES: ProfileOption[] = [
     id: 'simple',
     name: 'Simple Mode',
     description: 'Hides technical details for everyday tasks',
-    icon: <Sparkles className="w-6 h-6" />,
+    icon: <Terminal className="w-6 h-6" />,
   },
 ]
+
+interface ApiTestResult {
+  success: boolean
+  message: string
+}
 
 export default function Onboarding({ onComplete }: OnboardingProps) {
   const [step, setStep] = useState<Step>('welcome')
@@ -91,6 +121,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
   const [selectedProfile, setSelectedProfile] = useState<string>('developer')
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [testResult, setTestResult] = useState<ApiTestResult | null>(null)
 
   const handleProviderSelect = (providerId: string) => {
     setSelectedProvider(providerId)
@@ -119,34 +150,61 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
           return
         }
 
+        // Move to testing step
+        setStep('testing')
         setIsLoading(true)
+        setTestResult(null)
+
         try {
-          // Save the API key
-          await invoke('update_settings', {
-            settings: {
-              provider: {
-                provider_type: selectedProvider,
-                api_key: apiKey,
-                model: getDefaultModel(selectedProvider),
-                base_url: null,
-              },
-              approval: {
-                auto_approve_level: 'low',
-                show_confirmation_dialogs: true,
-              },
-              ui: {
-                theme: 'system',
-                font_size: 14,
-                show_tool_calls: true,
-              },
-            },
+          // Test the API connection
+          const result = await invoke<ApiTestResult>('test_api_connection', {
+            providerType: selectedProvider,
+            apiKey: apiKey,
+            model: null,
           })
-          await invoke('save_settings')
-          setStep('profile')
+
+          setTestResult(result)
+
+          if (result.success) {
+            // Save the settings on success
+            await invoke('update_settings', {
+              settings: {
+                provider: {
+                  provider_type: selectedProvider,
+                  api_key: apiKey,
+                  model: getDefaultModel(selectedProvider),
+                  base_url: null,
+                },
+                approval: {
+                  auto_approve_level: 'low',
+                  show_confirmation_dialogs: true,
+                },
+                ui: {
+                  theme: 'system',
+                  font_size: 14,
+                  show_tool_calls: true,
+                },
+              },
+            })
+            await invoke('save_settings')
+          }
         } catch (err) {
-          setError(String(err))
+          setTestResult({
+            success: false,
+            message: String(err),
+          })
         } finally {
           setIsLoading(false)
+        }
+        break
+
+      case 'testing':
+        if (testResult?.success) {
+          setStep('profile')
+        } else {
+          // Go back to API key entry
+          setStep('apikey')
+          setTestResult(null)
         }
         break
 
@@ -164,6 +222,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
         break
 
       case 'complete':
+        localStorage.setItem('onboarding_complete', 'true')
         onComplete()
         break
     }
@@ -177,10 +236,35 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
         return 'gpt-4o'
       case 'gemini':
         return 'gemini-2.0-flash'
+      case 'groq':
+        return 'llama-3.3-70b-versatile'
+      case 'deepseek':
+        return 'deepseek-chat'
+      case 'xai':
+        return 'grok-2'
       case 'ollama':
         return 'llama3.2'
       default:
         return ''
+    }
+  }
+
+  const getStepProgress = () => {
+    switch (step) {
+      case 'welcome':
+        return 16
+      case 'provider':
+        return 32
+      case 'apikey':
+        return 48
+      case 'testing':
+        return 64
+      case 'profile':
+        return 80
+      case 'complete':
+        return 100
+      default:
+        return 0
     }
   }
 
@@ -191,19 +275,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
         <div className="h-1 bg-gray-200 dark:bg-gray-700">
           <div
             className="h-full bg-primary-500 transition-all duration-300"
-            style={{
-              width: `${
-                step === 'welcome'
-                  ? 20
-                  : step === 'provider'
-                  ? 40
-                  : step === 'apikey'
-                  ? 60
-                  : step === 'profile'
-                  ? 80
-                  : 100
-              }%`,
-            }}
+            style={{ width: `${getStepProgress()}%` }}
           />
         </div>
 
@@ -240,7 +312,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                 Select which AI service you'd like to use. You can change this later in settings.
               </p>
 
-              <div className="space-y-3 mb-6">
+              <div className="space-y-3 mb-6 max-h-80 overflow-y-auto">
                 {PROVIDERS.map((provider) => (
                   <button
                     key={provider.id}
@@ -323,9 +395,66 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                 disabled={isLoading}
                 className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
               >
-                {isLoading ? 'Saving...' : 'Continue'}
+                {isLoading ? 'Testing...' : 'Test Connection'}
                 {!isLoading && <ArrowRight className="w-5 h-5" />}
               </button>
+            </div>
+          )}
+
+          {step === 'testing' && (
+            <div className="text-center">
+              {isLoading ? (
+                <>
+                  <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+                  </div>
+                  <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+                    Testing Connection
+                  </h2>
+                  <p className="text-gray-600 dark:text-gray-400">
+                    Connecting to {PROVIDERS.find((p) => p.id === selectedProvider)?.name}...
+                  </p>
+                </>
+              ) : testResult?.success ? (
+                <>
+                  <div className="w-16 h-16 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <CheckCircle2 className="w-8 h-8 text-green-600" />
+                  </div>
+                  <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+                    Connection Successful!
+                  </h2>
+                  <p className="text-gray-600 dark:text-gray-400 mb-8">
+                    Your API key is valid and working.
+                  </p>
+                  <button
+                    onClick={handleNext}
+                    className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                  >
+                    Continue
+                    <ArrowRight className="w-5 h-5" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="w-16 h-16 bg-red-100 dark:bg-red-900 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <AlertCircle className="w-8 h-8 text-red-600" />
+                  </div>
+                  <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+                    Connection Failed
+                  </h2>
+                  <p className="text-gray-600 dark:text-gray-400 mb-2">{testResult?.message}</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-500 mb-8">
+                    Please check your API key and try again.
+                  </p>
+                  <button
+                    onClick={handleNext}
+                    className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                  >
+                    Try Again
+                    <ArrowRight className="w-5 h-5" />
+                  </button>
+                </>
+              )}
             </div>
           )}
 
@@ -393,7 +522,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                 You're all set!
               </h2>
               <p className="text-gray-600 dark:text-gray-400 mb-8">
-                Start by typing a message or try a command like <code>/help</code> to see what
+                Start by typing a message or try a command like <code className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">/help</code> to see what
                 Cowork can do.
               </p>
               <button

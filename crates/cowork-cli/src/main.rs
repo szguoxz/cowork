@@ -1,5 +1,7 @@
 //! Cowork CLI - Multi-agent assistant command line tool
 
+mod onboarding;
+
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -7,6 +9,8 @@ use clap::{Parser, Subcommand};
 use console::style;
 use dialoguer::{theme::ColorfulTheme, Input, Select};
 use indicatif::{ProgressBar, ProgressStyle};
+
+use onboarding::OnboardingWizard;
 
 use cowork_core::config::ConfigManager;
 use cowork_core::mcp_manager::McpServerManager;
@@ -192,6 +196,18 @@ async fn run_chat(
     model: Option<&str>,
     auto_approve: bool,
 ) -> anyhow::Result<()> {
+    // Load config
+    let mut config_manager = ConfigManager::new()?;
+
+    // Check if onboarding wizard should run (first-run detection)
+    let mut wizard = OnboardingWizard::new(config_manager);
+    if wizard.should_run() {
+        wizard.run().await?;
+        config_manager = wizard.into_config_manager();
+    } else {
+        config_manager = wizard.into_config_manager();
+    }
+
     println!("{}", style("Cowork - AI Coding Assistant").bold().cyan());
     println!(
         "{}",
@@ -204,9 +220,6 @@ async fn run_chat(
         );
     }
     println!();
-
-    // Load config
-    let config_manager = ConfigManager::new()?;
 
     // Check if API key is configured - show setup instructions if not
     if !has_api_key_configured(&config_manager, provider_type) {

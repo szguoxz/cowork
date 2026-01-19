@@ -76,6 +76,8 @@ pub fn run() {
             commands::update_settings,
             commands::save_settings,
             commands::check_api_key,
+            commands::test_api_connection,
+            commands::is_setup_complete,
             // Chat commands
             commands::create_session,
             commands::list_sessions,

@@ -251,6 +251,73 @@ pub async fn check_api_key(state: State<'_, AppState>) -> Result<bool, String> {
     Ok(state.has_api_key().await)
 }
 
+/// Test API connection result
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiTestResult {
+    pub success: bool,
+    pub message: String,
+}
+
+/// Test API connection with given provider and key
+#[tauri::command]
+pub async fn test_api_connection(
+    provider_type: String,
+    api_key: String,
+    model: Option<String>,
+) -> Result<ApiTestResult, String> {
+    use cowork_core::provider::{GenAIProvider, LlmMessage, ProviderType};
+
+    // Parse provider type
+    let pt = match provider_type.to_lowercase().as_str() {
+        "anthropic" => ProviderType::Anthropic,
+        "openai" => ProviderType::OpenAI,
+        "gemini" => ProviderType::Gemini,
+        "groq" => ProviderType::Groq,
+        "deepseek" => ProviderType::DeepSeek,
+        "xai" => ProviderType::XAI,
+        "ollama" => ProviderType::Ollama,
+        _ => return Err(format!("Unknown provider type: {}", provider_type)),
+    };
+
+    // Get default model if not provided
+    let model_str = model.unwrap_or_else(|| match pt {
+        ProviderType::Anthropic => "claude-sonnet-4-20250514".to_string(),
+        ProviderType::OpenAI => "gpt-4o".to_string(),
+        ProviderType::Gemini => "gemini-2.0-flash".to_string(),
+        ProviderType::Groq => "llama-3.3-70b-versatile".to_string(),
+        ProviderType::DeepSeek => "deepseek-chat".to_string(),
+        ProviderType::XAI => "grok-2".to_string(),
+        ProviderType::Ollama => "llama3.2".to_string(),
+        _ => "".to_string(),
+    });
+
+    // Create provider and test
+    let provider = GenAIProvider::with_api_key(pt, &api_key, Some(&model_str));
+
+    let test_messages = vec![LlmMessage {
+        role: "user".to_string(),
+        content: "Say 'hello' in one word.".to_string(),
+    }];
+
+    match provider.chat(test_messages, None).await {
+        Ok(_) => Ok(ApiTestResult {
+            success: true,
+            message: "Connection successful!".to_string(),
+        }),
+        Err(e) => Ok(ApiTestResult {
+            success: false,
+            message: format!("Connection failed: {}", e),
+        }),
+    }
+}
+
+/// Check if onboarding is complete (config exists and has API key)
+#[tauri::command]
+pub async fn is_setup_complete(state: State<'_, AppState>) -> Result<bool, String> {
+    let cm = state.config_manager.read().await;
+    Ok(cm.is_setup_complete())
+}
+
 // ============================================================================
 // Chat Commands
 // ============================================================================

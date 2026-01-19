@@ -653,6 +653,19 @@ impl ConfigManager {
         &self.config.default_provider
     }
 
+    /// Get the config file path
+    pub fn config_path(&self) -> &Path {
+        &self.config_path
+    }
+
+    /// Check if setup is complete (at least one provider has an API key)
+    pub fn is_setup_complete(&self) -> bool {
+        self.config
+            .providers
+            .values()
+            .any(|p| p.get_api_key().is_some())
+    }
+
     /// List all configured providers
     pub fn list_providers(&self) -> Vec<&str> {
         self.config.list_providers()
