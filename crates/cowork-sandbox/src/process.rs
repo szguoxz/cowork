@@ -23,8 +23,19 @@ pub async fn execute_sandboxed(
 
     // Set environment restrictions
     cmd.env_clear();
-    cmd.env("PATH", "/usr/local/bin:/usr/bin:/bin");
-    cmd.env("HOME", config.root.display().to_string());
+
+    // Set platform-appropriate PATH
+    #[cfg(windows)]
+    {
+        cmd.env("PATH", r"C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem");
+        cmd.env("USERPROFILE", config.root.display().to_string());
+    }
+
+    #[cfg(not(windows))]
+    {
+        cmd.env("PATH", "/usr/local/bin:/usr/bin:/bin");
+        cmd.env("HOME", config.root.display().to_string());
+    }
 
     // Execute with timeout
     let timeout = std::time::Duration::from_secs(config.limits.max_cpu_time);

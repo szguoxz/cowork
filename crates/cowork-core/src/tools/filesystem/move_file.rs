@@ -7,7 +7,7 @@ use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
-use super::validate_path;
+use super::{normalize_path, validate_path};
 
 /// Tool for moving or renaming files
 pub struct MoveFile {
@@ -67,6 +67,18 @@ impl Tool for MoveFile {
             let dest = self.workspace.join(dest_str);
 
             let validated_source = validate_path(&source, &self.workspace)?;
+
+            // Normalize destination path for security check
+            let normalized_dest = normalize_path(&dest);
+            let normalized_workspace = normalize_path(&self.workspace);
+
+            // Security check: ensure destination is within workspace
+            if !normalized_dest.starts_with(&normalized_workspace) {
+                return Err(ToolError::PermissionDenied(format!(
+                    "Destination {} is outside workspace",
+                    dest.display()
+                )));
+            }
 
             // For destination, validate parent exists and is in workspace
             if let Some(parent) = dest.parent() {

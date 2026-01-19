@@ -7,7 +7,7 @@ use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
-use super::validate_path;
+use super::{normalize_path, validate_path};
 
 /// Tool for writing file contents
 pub struct WriteFile {
@@ -65,19 +65,24 @@ impl Tool for WriteFile {
 
             let path = self.workspace.join(path_str);
 
+            // Normalize the path to resolve .. components for security check
+            let normalized_path = normalize_path(&path);
+            let normalized_workspace = normalize_path(&self.workspace);
+
+            // Security check: ensure normalized path is within workspace
+            if !normalized_path.starts_with(&normalized_workspace) {
+                return Err(ToolError::PermissionDenied(format!(
+                    "Path {} is outside workspace",
+                    path.display()
+                )));
+            }
+
             // For new files, validate parent directory
             if !path.exists() {
                 if let Some(parent) = path.parent() {
                     if parent.exists() {
                         validate_path(parent, &self.workspace)?;
                     } else if create_dirs {
-                        // Will create directories, validate workspace root
-                        if !path.starts_with(&self.workspace) {
-                            return Err(ToolError::PermissionDenied(format!(
-                                "Path {} is outside workspace",
-                                path.display()
-                            )));
-                        }
                         tokio::fs::create_dir_all(parent).await.map_err(ToolError::Io)?;
                     }
                 }
