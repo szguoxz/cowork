@@ -209,7 +209,7 @@ impl ModelTiers {
         Self {
             fast: "claude-3-5-haiku-20241022".to_string(),
             balanced: "claude-sonnet-4-20250514".to_string(),
-            powerful: "claude-sonnet-4-20250514".to_string(),
+            powerful: "claude-opus-4-20250514".to_string(),
         }
     }
 
@@ -218,7 +218,7 @@ impl ModelTiers {
         Self {
             fast: "gpt-4o-mini".to_string(),
             balanced: "gpt-4o".to_string(),
-            powerful: "gpt-4o".to_string(),
+            powerful: "o1".to_string(),
         }
     }
 
@@ -226,8 +226,8 @@ impl ModelTiers {
     pub fn gemini() -> Self {
         Self {
             fast: "gemini-2.0-flash".to_string(),
-            balanced: "gemini-2.0-flash".to_string(),
-            powerful: "gemini-1.5-pro".to_string(),
+            balanced: "gemini-2.5-pro".to_string(),
+            powerful: "gemini-2.5-pro".to_string(),
         }
     }
 
@@ -254,7 +254,7 @@ impl ModelTiers {
         Self {
             fast: "grok-2".to_string(),
             balanced: "grok-2".to_string(),
-            powerful: "grok-2".to_string(),
+            powerful: "grok-3".to_string(),
         }
     }
 
@@ -272,7 +272,7 @@ impl ModelTiers {
         Self {
             fast: "llama-3.1-sonar-small-128k-online".to_string(),
             balanced: "llama-3.1-sonar-large-128k-online".to_string(),
-            powerful: "llama-3.1-sonar-large-128k-online".to_string(),
+            powerful: "llama-3.1-sonar-huge-128k-online".to_string(),
         }
     }
 
@@ -288,18 +288,18 @@ impl ModelTiers {
     /// Default tiers for Together AI
     pub fn together() -> Self {
         Self {
-            fast: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo".to_string(),
-            balanced: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo".to_string(),
-            powerful: "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo".to_string(),
+            fast: "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free".to_string(),
+            balanced: "meta-llama/Llama-3.3-70B-Instruct-Turbo".to_string(),
+            powerful: "deepseek-ai/DeepSeek-R1".to_string(),
         }
     }
 
     /// Default tiers for Fireworks AI
     pub fn fireworks() -> Self {
         Self {
-            fast: "accounts/fireworks/models/llama-v3p1-8b-instruct".to_string(),
-            balanced: "accounts/fireworks/models/llama-v3p1-70b-instruct".to_string(),
-            powerful: "accounts/fireworks/models/llama-v3p1-405b-instruct".to_string(),
+            fast: "accounts/fireworks/models/llama-v3p3-70b-instruct".to_string(),
+            balanced: "accounts/fireworks/models/llama-v3p3-70b-instruct".to_string(),
+            powerful: "accounts/fireworks/models/deepseek-r1".to_string(),
         }
     }
 
@@ -308,7 +308,7 @@ impl ModelTiers {
         Self {
             fast: "glm-4-flash".to_string(),
             balanced: "glm-4-plus".to_string(),
-            powerful: "glm-4.6".to_string(),
+            powerful: "glm-4-plus".to_string(),
         }
     }
 
@@ -317,7 +317,7 @@ impl ModelTiers {
         Self {
             fast: "meta-llama/Meta-Llama-3.1-8B-Instruct".to_string(),
             balanced: "meta-llama/Meta-Llama-3.1-70B-Instruct".to_string(),
-            powerful: "Qwen/Qwen3-235B-A22B".to_string(),
+            powerful: "deepseek-ai/DeepSeek-R1".to_string(),
         }
     }
 
