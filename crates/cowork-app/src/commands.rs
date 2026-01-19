@@ -264,11 +264,50 @@ pub async fn update_settings(
     settings: Settings,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    use cowork_core::ProviderConfig;
+
     let mut cm = state.config_manager.write().await;
 
     // Update default provider if provider_type changed
     let provider_type = &settings.provider.provider_type;
     cm.set_default_provider(provider_type);
+
+    // Create provider config if it doesn't exist
+    if cm.config().get_provider(provider_type).is_none() {
+        let new_provider = match provider_type.as_str() {
+            "anthropic" => ProviderConfig::anthropic(),
+            "openai" => ProviderConfig::openai(),
+            "gemini" => ProviderConfig::gemini(),
+            "groq" => ProviderConfig::groq(),
+            "deepseek" => ProviderConfig::deepseek(),
+            "cohere" => ProviderConfig::cohere(),
+            "together" => ProviderConfig::together(),
+            "fireworks" => ProviderConfig::fireworks(),
+            "zai" => ProviderConfig::zai(),
+            "nebius" => ProviderConfig::nebius(),
+            "mimo" => ProviderConfig::mimo(),
+            "bigmodel" => ProviderConfig::bigmodel(),
+            "xai" => {
+                // xAI doesn't have a factory, create manually
+                let mut p = ProviderConfig::anthropic();
+                p.provider_type = "xai".to_string();
+                p.api_key_env = Some("XAI_API_KEY".to_string());
+                p.model = "grok-2".to_string();
+                p
+            }
+            "ollama" => {
+                let mut p = ProviderConfig::anthropic();
+                p.provider_type = "ollama".to_string();
+                p.api_key = None;
+                p.api_key_env = None;
+                p.model = "llama3.2".to_string();
+                p.base_url = Some("http://localhost:11434".to_string());
+                p
+            }
+            _ => ProviderConfig::anthropic(),
+        };
+        cm.set_provider(provider_type, new_provider);
+    }
 
     // Update provider-specific settings
     if let Some(provider) = cm.config_mut().get_provider_mut(provider_type) {
