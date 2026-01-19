@@ -6,6 +6,7 @@
 //! This system is inspired by Claude Code's plugin/command system where skills are
 //! essentially prompt templates that get expanded with context and sent to the LLM.
 
+pub mod builtins;
 pub mod context;
 pub mod dev;
 pub mod git;
@@ -183,8 +184,15 @@ impl SkillRegistry {
         // Register help skill
         registry.register(Arc::new(HelpSkill::new()));
 
+        // Register built-in Claude Code-style skills
+        // These are always available without external files
+        for skill in builtins::load_builtin_skills() {
+            registry.register(skill);
+        }
+
         // Load dynamic skills from filesystem
         // Project skills override user skills with the same name
+        // User/project skills can override built-in skills
         let skill_loader = loader::SkillLoader::new(&workspace);
         for skill in skill_loader.load_all() {
             registry.register(skill);
