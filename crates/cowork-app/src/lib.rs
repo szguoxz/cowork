@@ -5,6 +5,7 @@
 pub mod agentic_loop;
 pub mod chat;
 pub mod commands;
+pub mod session_storage;
 pub mod state;
 pub mod streaming;
 
@@ -118,6 +119,15 @@ pub fn run() {
             commands::list_installed_skills,
             commands::install_skill,
             commands::remove_skill,
+            // Session persistence
+            commands::save_session,
+            commands::list_saved_sessions,
+            commands::load_saved_session,
+            commands::delete_saved_session,
+            commands::delete_old_sessions,
+            commands::delete_all_saved_sessions,
+            commands::get_sessions_directory_info,
+            commands::open_sessions_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

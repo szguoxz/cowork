@@ -17,6 +17,13 @@ pub enum StreamEvent {
         session_id: String,
         message_id: String,
     },
+    /// Thinking/reasoning delta (for Claude, DeepSeek, etc.)
+    ThinkingDelta {
+        session_id: String,
+        message_id: String,
+        delta: String,
+        accumulated: String,
+    },
     /// Text delta received
     TextDelta {
         session_id: String,
@@ -63,6 +70,7 @@ pub struct StreamingMessage {
     session_id: String,
     message_id: String,
     app_handle: AppHandle,
+    accumulated_thinking: String,
     accumulated_text: String,
     tool_calls: Vec<StreamingToolCall>,
 }
@@ -81,6 +89,7 @@ impl StreamingMessage {
             session_id,
             message_id,
             app_handle,
+            accumulated_thinking: String::new(),
             accumulated_text: String::new(),
             tool_calls: Vec::new(),
         }
@@ -91,6 +100,17 @@ impl StreamingMessage {
         self.emit(StreamEvent::Start {
             session_id: self.session_id.clone(),
             message_id: self.message_id.clone(),
+        });
+    }
+
+    /// Add thinking/reasoning delta
+    pub fn add_thinking(&mut self, delta: &str) {
+        self.accumulated_thinking.push_str(delta);
+        self.emit(StreamEvent::ThinkingDelta {
+            session_id: self.session_id.clone(),
+            message_id: self.message_id.clone(),
+            delta: delta.to_string(),
+            accumulated: self.accumulated_thinking.clone(),
         });
     }
 
@@ -165,6 +185,11 @@ impl StreamingMessage {
         &self.accumulated_text
     }
 
+    /// Get accumulated thinking
+    pub fn thinking(&self) -> &str {
+        &self.accumulated_thinking
+    }
+
     fn emit(&self, event: StreamEvent) {
         let event_name = format!("stream:{}", self.session_id);
         if let Err(e) = self.app_handle.emit(&event_name, &event) {
@@ -180,6 +205,8 @@ pub struct StreamHandler {
 
 #[derive(Debug, Clone)]
 pub enum StreamChunk {
+    Start,
+    Thinking(String),
     Text(String),
     ToolCallStart { id: String, name: String },
     ToolCallDelta { id: String, delta: String },
@@ -191,6 +218,14 @@ pub enum StreamChunk {
 impl StreamHandler {
     pub fn new(tx: mpsc::Sender<StreamChunk>) -> Self {
         Self { tx }
+    }
+
+    pub async fn send_start(&self) {
+        let _ = self.tx.send(StreamChunk::Start).await;
+    }
+
+    pub async fn send_thinking(&self, text: &str) {
+        let _ = self.tx.send(StreamChunk::Thinking(text.to_string())).await;
     }
 
     pub async fn send_text(&self, text: &str) {

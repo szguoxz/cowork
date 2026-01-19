@@ -8,7 +8,59 @@ use crate::agentic_loop::{
     LoopHandle, LoopState,
 };
 use crate::chat::{create_provider_from_config, ChatMessage, ChatSession, ToolCallInfo, ToolCallStatus};
+use crate::session_storage::{generate_title, SessionData, SessionStorage};
 use crate::state::{AppState, Settings, TaskState, TaskStatus};
+
+/// Helper function to auto-save a session
+async fn auto_save_session(
+    session_id: &str,
+    state: &AppState,
+) -> Result<(), String> {
+    let sessions = state.sessions.read().await;
+    let session = match sessions.get(session_id) {
+        Some(s) => s,
+        None => return Ok(()), // Session not found, skip save
+    };
+
+    // Skip saving empty sessions
+    if session.messages.is_empty() {
+        return Ok(());
+    }
+
+    // Get provider info from config
+    let cm = state.config_manager.read().await;
+    let (provider_type, model) = if let Some(provider) = cm.config().get_default_provider() {
+        (provider.provider_type.clone(), provider.model.clone())
+    } else {
+        ("unknown".to_string(), "unknown".to_string())
+    };
+
+    let now = chrono::Utc::now();
+    let created_at = session
+        .messages
+        .first()
+        .map(|m| m.timestamp)
+        .unwrap_or(now);
+
+    let session_data = SessionData {
+        id: session.id.clone(),
+        title: generate_title(&session.messages),
+        messages: session.messages.clone(),
+        system_prompt: session.system_prompt.clone(),
+        provider_type,
+        model,
+        created_at,
+        updated_at: now,
+    };
+
+    drop(cm);
+    drop(sessions);
+
+    let storage = SessionStorage::new();
+    storage.save(&session_data).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
 
 /// Agent information for the frontend
 #[derive(Debug, Clone, Serialize)]
@@ -406,12 +458,21 @@ pub async fn send_message(
     content: String,
     state: State<'_, AppState>,
 ) -> Result<ChatMessage, String> {
-    let mut sessions = state.sessions.write().await;
-    let session = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    let result = {
+        let mut sessions = state.sessions.write().await;
+        let session = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| format!("Session {} not found", session_id))?;
 
-    session.send_message(content).await
+        session.send_message(content).await
+    };
+
+    // Auto-save after message exchange
+    if result.is_ok() {
+        let _ = auto_save_session(&session_id, &state).await;
+    }
+
+    result
 }
 
 /// Execute a pending tool call
@@ -805,8 +866,9 @@ pub async fn send_message_stream(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    use crate::streaming::{StreamEvent, StreamingMessage};
-    use tauri::Emitter;
+    use crate::streaming::StreamingMessage;
+    use cowork_core::provider::StreamChunk;
+    use tokio::sync::mpsc;
 
     let message_id = uuid::Uuid::new_v4().to_string();
 
@@ -828,95 +890,168 @@ pub async fn send_message_stream(
     }
 
     // Create streaming message handler
-    let streaming_msg = StreamingMessage::new(session_id.clone(), message_id.clone(), app.clone());
+    let mut streaming_msg = StreamingMessage::new(session_id.clone(), message_id.clone(), app.clone());
     streaming_msg.start();
 
-    // Get provider and send streaming request
-    let sessions = state.sessions.read().await;
-    let session = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    // Build LLM messages from session
+    let (llm_messages, system_prompt, tools, provider_type, api_key) = {
+        let sessions = state.sessions.read().await;
+        let session = sessions
+            .get(&session_id)
+            .ok_or_else(|| format!("Session {} not found", session_id))?;
 
-    // Build LLM request
-    let llm_messages: Vec<cowork_core::provider::LlmMessage> = session
-        .messages
-        .iter()
-        .map(|m| cowork_core::provider::LlmMessage {
-            role: m.role.clone(),
-            content: m.content.clone(),
-        })
-        .collect();
+        let llm_messages: Vec<cowork_core::provider::LlmMessage> = session
+            .messages
+            .iter()
+            .map(|m| cowork_core::provider::LlmMessage {
+                role: m.role.clone(),
+                content: m.content.clone(),
+            })
+            .collect();
 
-    let request = cowork_core::provider::LlmRequest::new(llm_messages)
-        .with_system(&session.system_prompt)
-        .with_tools(session.available_tools.clone())
-        .with_max_tokens(4096);
+        let system_prompt = session.system_prompt.clone();
+        let tools = if session.available_tools.is_empty() {
+            None
+        } else {
+            Some(session.available_tools.clone())
+        };
 
-    drop(sessions);
+        // Get provider info from config
+        let cm = state.config_manager.read().await;
+        let provider_config = cm.config().get_default_provider()
+            .ok_or_else(|| "No provider configured".to_string())?;
+        let provider_type = provider_config.provider_type.parse::<cowork_core::provider::ProviderType>()
+            .map_err(|e| format!("Invalid provider type: {}", e))?;
+        let api_key = provider_config.get_api_key();
 
-    // Get response (non-streaming for now, emit final result)
-    let sessions = state.sessions.read().await;
-    let session = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?;
+        (llm_messages, system_prompt, tools, provider_type, api_key)
+    };
 
-    let response = session
-        .provider
-        .complete(request)
-        .await
-        .map_err(|e| e.to_string())?;
+    // Create provider for streaming
+    let provider = if let Some(key) = api_key {
+        cowork_core::provider::GenAIProvider::with_api_key(provider_type, &key, None)
+            .with_system_prompt(&system_prompt)
+    } else {
+        cowork_core::provider::GenAIProvider::new(provider_type, None)
+            .with_system_prompt(&system_prompt)
+    };
 
-    drop(sessions);
+    // Create channel for streaming chunks
+    let (tx, mut rx) = mpsc::channel::<StreamChunk>(100);
 
-    // Convert tool calls
-    let tool_calls: Vec<ToolCallInfo> = response
-        .tool_calls
-        .iter()
-        .map(|tc| ToolCallInfo {
-            id: tc.id.clone(),
-            name: tc.name.clone(),
-            arguments: tc.arguments.clone(),
-            status: ToolCallStatus::Pending,
-            result: None,
-        })
-        .collect();
+    // Spawn streaming task
+    let stream_handle = tokio::spawn(async move {
+        provider.chat_stream(llm_messages, tools, tx).await
+    });
 
-    // Emit text content
-    if let Some(ref text) = response.content {
-        let event_name = format!("stream:{}", session_id);
-        let _ = app.emit(
-            &event_name,
-            StreamEvent::TextDelta {
-                session_id: session_id.clone(),
-                message_id: message_id.clone(),
-                delta: text.clone(),
-                accumulated: text.clone(),
-            },
-        );
+    // Track accumulated content and tool calls
+    let mut accumulated_text = String::new();
+    let mut accumulated_thinking = String::new();
+    let mut tool_calls: Vec<ToolCallInfo> = Vec::new();
+
+    // Process streaming chunks
+    while let Some(chunk) = rx.recv().await {
+        match chunk {
+            StreamChunk::Start => {
+                // Already sent start event
+            }
+            StreamChunk::Thinking(text) => {
+                accumulated_thinking.push_str(&text);
+                streaming_msg.add_thinking(&text);
+            }
+            StreamChunk::TextDelta(text) => {
+                accumulated_text.push_str(&text);
+                streaming_msg.add_text(&text);
+            }
+            StreamChunk::ToolCallStart { id, name } => {
+                streaming_msg.start_tool_call(id.clone(), name.clone());
+                tool_calls.push(ToolCallInfo {
+                    id,
+                    name,
+                    arguments: serde_json::Value::Null,
+                    status: ToolCallStatus::Pending,
+                    result: None,
+                });
+            }
+            StreamChunk::ToolCallDelta { id, delta } => {
+                streaming_msg.add_tool_arg(&id, &delta);
+                // Update arguments in tool_calls
+                if let Some(tc) = tool_calls.iter_mut().find(|t| t.id == id) {
+                    if let Ok(args) = serde_json::from_str::<serde_json::Value>(&delta) {
+                        tc.arguments = args;
+                    }
+                }
+            }
+            StreamChunk::ToolCallComplete(id) => {
+                if let Some(tc) = tool_calls.iter().find(|t| t.id == id) {
+                    streaming_msg.complete_tool_call(tc.clone());
+                }
+            }
+            StreamChunk::End(reason) => {
+                streaming_msg.end(&reason);
+            }
+            StreamChunk::Error(err) => {
+                streaming_msg.error(&err);
+                return Err(err);
+            }
+        }
     }
 
-    // Emit tool calls
-    for tc in &tool_calls {
-        streaming_msg.complete_tool_call(tc.clone());
+    // Wait for streaming to complete
+    let result = stream_handle.await
+        .map_err(|e| format!("Stream task failed: {}", e))?
+        .map_err(|e| format!("Streaming error: {}", e))?;
+
+    // Get finish reason and any remaining tool calls from result
+    let finish_reason = match &result {
+        cowork_core::provider::CompletionResult::Message(_) => "stop",
+        cowork_core::provider::CompletionResult::ToolCalls(_) => "tool_calls",
+    };
+
+    // If we got tool calls from the final result but not during streaming, add them
+    if let cowork_core::provider::CompletionResult::ToolCalls(pending_tools) = result {
+        if tool_calls.is_empty() {
+            for tc in pending_tools {
+                tool_calls.push(ToolCallInfo {
+                    id: tc.call_id,
+                    name: tc.name,
+                    arguments: tc.arguments,
+                    status: ToolCallStatus::Pending,
+                    result: None,
+                });
+            }
+        }
     }
 
-    // End stream
-    streaming_msg.end(&response.finish_reason);
-
-    // Add assistant message to session
+    // Add assistant message to session (include thinking content as metadata)
     let mut sessions = state.sessions.write().await;
     let session = sessions
         .get_mut(&session_id)
         .ok_or_else(|| format!("Session {} not found", session_id))?;
 
+    // Store thinking in content if present, marked appropriately
+    let final_content = if !accumulated_thinking.is_empty() {
+        format!("<thinking>\n{}\n</thinking>\n\n{}", accumulated_thinking, accumulated_text)
+    } else {
+        accumulated_text
+    };
+
     let assistant_msg = ChatMessage {
         id: message_id.clone(),
         role: "assistant".to_string(),
-        content: response.content.unwrap_or_default(),
+        content: final_content,
         tool_calls,
         timestamp: chrono::Utc::now(),
     };
     session.messages.push(assistant_msg);
+
+    drop(sessions);
+
+    // Ensure stream is properly ended
+    streaming_msg.end(finish_reason);
+
+    // Auto-save after message exchange
+    let _ = auto_save_session(&session_id, &state).await;
 
     Ok(message_id)
 }
@@ -1514,6 +1649,216 @@ pub async fn remove_skill(
     installer
         .uninstall(&name, loc)
         .map_err(|e| format!("Failed to remove skill: {}", e))?;
+
+    Ok(())
+}
+
+// ============================================================================
+// Session Persistence Commands
+// ============================================================================
+
+/// Saved session info for the frontend
+#[derive(Debug, Clone, Serialize)]
+pub struct SavedSessionInfo {
+    pub id: String,
+    pub title: Option<String>,
+    pub message_count: usize,
+    pub provider_type: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub file_size: u64,
+}
+
+/// Sessions directory info
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionsDirectoryInfo {
+    pub path: String,
+    pub session_count: usize,
+    pub total_size: u64,
+}
+
+/// Save the current session to disk
+#[tauri::command]
+pub async fn save_session(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    use crate::session_storage::{generate_title, SessionData, SessionStorage};
+
+    let sessions = state.sessions.read().await;
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
+
+    // Get provider info from config
+    let cm = state.config_manager.read().await;
+    let (provider_type, model) = if let Some(provider) = cm.config().get_default_provider() {
+        (provider.provider_type.clone(), provider.model.clone())
+    } else {
+        ("unknown".to_string(), "unknown".to_string())
+    };
+
+    let now = chrono::Utc::now();
+    let created_at = session
+        .messages
+        .first()
+        .map(|m| m.timestamp)
+        .unwrap_or(now);
+
+    let session_data = SessionData {
+        id: session.id.clone(),
+        title: generate_title(&session.messages),
+        messages: session.messages.clone(),
+        system_prompt: session.system_prompt.clone(),
+        provider_type,
+        model,
+        created_at,
+        updated_at: now,
+    };
+
+    let storage = SessionStorage::new();
+    let path = storage.save(&session_data).map_err(|e| e.to_string())?;
+
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// List all saved sessions
+#[tauri::command]
+pub async fn list_saved_sessions() -> Result<Vec<SavedSessionInfo>, String> {
+    use crate::session_storage::SessionStorage;
+
+    let storage = SessionStorage::new();
+    let sessions = storage.list().map_err(|e| e.to_string())?;
+
+    Ok(sessions
+        .into_iter()
+        .map(|s| SavedSessionInfo {
+            id: s.id,
+            title: s.title,
+            message_count: s.message_count,
+            provider_type: s.provider_type,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+            file_size: s.file_size,
+        })
+        .collect())
+}
+
+/// Load a saved session and make it active
+#[tauri::command]
+pub async fn load_saved_session(
+    saved_session_id: String,
+    state: State<'_, AppState>,
+) -> Result<SessionInfo, String> {
+    use crate::session_storage::SessionStorage;
+
+    let storage = SessionStorage::new();
+    let session_data = storage.load(&saved_session_id).map_err(|e| e.to_string())?;
+
+    // Create a new ChatSession from the saved data
+    let cm = state.config_manager.read().await;
+    let provider_config = cm
+        .config()
+        .get_default_provider()
+        .ok_or_else(|| "No default provider configured".to_string())?;
+    let provider = create_provider_from_config(provider_config)?;
+
+    let mut session = ChatSession::new(provider);
+    // Replace the generated ID with the saved one
+    session.id = session_data.id.clone();
+    session.messages = session_data.messages;
+    session.system_prompt = session_data.system_prompt;
+
+    let info = SessionInfo {
+        id: session.id.clone(),
+        message_count: session.messages.len(),
+        created_at: session_data.created_at,
+    };
+
+    drop(cm);
+
+    let mut sessions = state.sessions.write().await;
+    sessions.insert(session.id.clone(), session);
+
+    Ok(info)
+}
+
+/// Delete a saved session
+#[tauri::command]
+pub async fn delete_saved_session(saved_session_id: String) -> Result<(), String> {
+    use crate::session_storage::SessionStorage;
+
+    let storage = SessionStorage::new();
+    storage.delete(&saved_session_id).map_err(|e| e.to_string())
+}
+
+/// Delete sessions older than specified days
+#[tauri::command]
+pub async fn delete_old_sessions(days: i64) -> Result<Vec<String>, String> {
+    use crate::session_storage::SessionStorage;
+
+    let storage = SessionStorage::new();
+    storage.delete_older_than(days).map_err(|e| e.to_string())
+}
+
+/// Delete all saved sessions
+#[tauri::command]
+pub async fn delete_all_saved_sessions() -> Result<usize, String> {
+    use crate::session_storage::SessionStorage;
+
+    let storage = SessionStorage::new();
+    storage.delete_all().map_err(|e| e.to_string())
+}
+
+/// Get info about the sessions directory
+#[tauri::command]
+pub async fn get_sessions_directory_info() -> Result<SessionsDirectoryInfo, String> {
+    use crate::session_storage::SessionStorage;
+
+    let storage = SessionStorage::new();
+    let sessions = storage.list().map_err(|e| e.to_string())?;
+    let total_size = storage.total_size().unwrap_or(0);
+
+    Ok(SessionsDirectoryInfo {
+        path: storage.sessions_dir().to_string_lossy().to_string(),
+        session_count: sessions.len(),
+        total_size,
+    })
+}
+
+/// Open the sessions folder in the system file manager
+#[tauri::command]
+pub async fn open_sessions_folder() -> Result<(), String> {
+    use crate::session_storage::SessionStorage;
+
+    let storage = SessionStorage::new();
+    storage.ensure_dir().map_err(|e| e.to_string())?;
+
+    let path = storage.sessions_dir();
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
 
     Ok(())
 }

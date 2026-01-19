@@ -406,11 +406,14 @@ impl GenAIProvider {
                             .send(StreamChunk::TextDelta(chunk.content))
                             .await;
                     }
-                    ChatStreamEvent::ReasoningChunk(_) => {
-                        // Reasoning chunks are not displayed to user
+                    ChatStreamEvent::ReasoningChunk(reasoning) => {
+                        // Emit reasoning/thinking content for display
+                        let _ = chunk_tx
+                            .send(StreamChunk::Thinking(reasoning.content))
+                            .await;
                     }
                     ChatStreamEvent::ThoughtSignatureChunk(_) => {
-                        // Thought signatures are not displayed to user
+                        // Thought signatures are internal, not displayed to user
                     }
                     ChatStreamEvent::ToolCallChunk(tc_chunk) => {
                         // Tool call received - genai sends complete tool calls, not deltas
@@ -489,6 +492,7 @@ impl GenAIProvider {
 #[derive(Debug, Clone)]
 pub enum StreamChunk {
     Start,
+    Thinking(String),
     TextDelta(String),
     ToolCallStart { id: String, name: String },
     ToolCallDelta { id: String, delta: String },

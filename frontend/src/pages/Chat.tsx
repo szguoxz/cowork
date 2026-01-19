@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { Send, Loader2, Check, X, Terminal, AlertCircle } from 'lucide-react'
+import { Send, Loader2, Check, X, Terminal, AlertCircle, Brain, ChevronDown, ChevronRight } from 'lucide-react'
 import ContextIndicator from '../components/ContextIndicator'
 
 interface ToolCall {
@@ -35,11 +35,13 @@ export default function Chat() {
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null)
   const [isLoopActive, setIsLoopActive] = useState(false)
   const [streamingText, setStreamingText] = useState('')
+  const [streamingThinking, setStreamingThinking] = useState('')
+  const [showThinking, setShowThinking] = useState(true)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, streamingText])
+  }, [messages, streamingText, streamingThinking])
 
   // Check API key and create session on mount
   useEffect(() => {
@@ -67,10 +69,16 @@ export default function Chat() {
     const unlistenStream = listen<{ type: string; delta?: string; accumulated?: string }>(
       `stream:${sessionId}`,
       (event) => {
-        if (event.payload.type === 'text_delta') {
+        if (event.payload.type === 'start') {
+          setStreamingText('')
+          setStreamingThinking('')
+        } else if (event.payload.type === 'thinking_delta') {
+          setStreamingThinking(event.payload.accumulated || '')
+        } else if (event.payload.type === 'text_delta') {
           setStreamingText(event.payload.accumulated || '')
         } else if (event.payload.type === 'end') {
           setStreamingText('')
+          setStreamingThinking('')
         }
       }
     )
@@ -248,6 +256,33 @@ export default function Chat() {
       .join(', ')
   }
 
+  // Parse thinking content from message
+  const parseThinking = (content: string): { thinking: string | null; text: string } => {
+    const thinkingMatch = content.match(/<thinking>\n?([\s\S]*?)\n?<\/thinking>\n*/);
+    if (thinkingMatch) {
+      return {
+        thinking: thinkingMatch[1].trim(),
+        text: content.replace(thinkingMatch[0], '').trim()
+      };
+    }
+    return { thinking: null, text: content };
+  };
+
+  // State for collapsed thinking in messages
+  const [collapsedThinking, setCollapsedThinking] = useState<Set<string>>(new Set());
+
+  const toggleMessageThinking = (messageId: string) => {
+    setCollapsedThinking(prev => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  };
+
   if (hasApiKey === false) {
     return (
       <div className="flex flex-col h-full items-center justify-center p-8">
@@ -308,8 +343,44 @@ export default function Chat() {
           </div>
         )}
 
-        {messages.map((message) => (
+        {messages.map((message) => {
+          const { thinking, text } = message.role === 'assistant'
+            ? parseThinking(message.content)
+            : { thinking: null, text: message.content };
+          const isThinkingCollapsed = collapsedThinking.has(message.id);
+
+          return (
           <div key={message.id} className="space-y-2">
+            {/* Thinking section for assistant messages */}
+            {message.role === 'assistant' && thinking && (
+              <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => toggleMessageThinking(message.id)}
+                  className="w-full bg-purple-50 dark:bg-purple-900/30 px-3 py-2 flex items-center gap-2 text-left hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+                >
+                  {isThinkingCollapsed ? (
+                    <ChevronRight className="w-4 h-4 text-purple-500" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-purple-500" />
+                  )}
+                  <Brain className="w-4 h-4 text-purple-500" />
+                  <span className="text-sm font-medium text-purple-700 dark:text-purple-300">
+                    Thinking
+                  </span>
+                  <span className="text-xs text-purple-500 dark:text-purple-400 ml-auto">
+                    {thinking.length} chars
+                  </span>
+                </button>
+                {!isThinkingCollapsed && (
+                  <div className="px-3 py-2 bg-purple-50/50 dark:bg-purple-900/20 max-h-48 overflow-y-auto">
+                    <pre className="whitespace-pre-wrap font-mono text-xs text-purple-600 dark:text-purple-400">
+                      {thinking}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Message bubble */}
             <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div
@@ -322,7 +393,7 @@ export default function Chat() {
                 `}
               >
                 <pre className="whitespace-pre-wrap font-sans text-sm">
-                  {message.content || '(thinking...)'}
+                  {text || '(thinking...)'}
                 </pre>
               </div>
             </div>
@@ -396,9 +467,54 @@ export default function Chat() {
               </div>
             )}
           </div>
-        ))}
+        );
+        })}
 
-        {isLoading && (
+        {/* Streaming thinking content */}
+        {(streamingThinking || streamingText) && (
+          <div className="space-y-2">
+            {/* Thinking section - collapsible */}
+            {streamingThinking && (
+              <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => setShowThinking(!showThinking)}
+                  className="w-full bg-purple-50 dark:bg-purple-900/30 px-3 py-2 flex items-center gap-2 text-left hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+                >
+                  {showThinking ? (
+                    <ChevronDown className="w-4 h-4 text-purple-500" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-purple-500" />
+                  )}
+                  <Brain className="w-4 h-4 text-purple-500" />
+                  <span className="text-sm font-medium text-purple-700 dark:text-purple-300">
+                    Thinking...
+                  </span>
+                  <Loader2 className="w-3 h-3 animate-spin text-purple-500 ml-auto" />
+                </button>
+                {showThinking && (
+                  <div className="px-3 py-2 bg-purple-50/50 dark:bg-purple-900/20 max-h-48 overflow-y-auto">
+                    <pre className="whitespace-pre-wrap font-mono text-xs text-purple-600 dark:text-purple-400">
+                      {streamingThinking}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Streaming text response */}
+            {streamingText && (
+              <div className="flex justify-start">
+                <div className="max-w-[80%] bg-gray-200 dark:bg-gray-700 rounded-lg px-4 py-2 text-gray-900 dark:text-white">
+                  <pre className="whitespace-pre-wrap font-sans text-sm">
+                    {streamingText}
+                  </pre>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {isLoading && !streamingText && !streamingThinking && (
           <div className="flex justify-start">
             <div className="bg-gray-200 dark:bg-gray-700 rounded-lg px-4 py-2">
               <Loader2 className="w-5 h-5 animate-spin text-gray-500" />

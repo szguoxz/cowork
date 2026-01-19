@@ -15,6 +15,7 @@ mod genai_provider;
 
 pub use genai_provider::{
     create_provider, models, CompletionResult, GenAIProvider, PendingToolCall, ProviderType,
+    StreamChunk,
 };
 
 use async_trait::async_trait;

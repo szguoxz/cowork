@@ -2,7 +2,7 @@ import { useEffect, useCallback, useState, useRef } from 'react'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 
 export interface StreamEvent {
-  type: 'start' | 'text_delta' | 'tool_call_start' | 'tool_call_delta' | 'tool_call_complete' | 'end' | 'error'
+  type: 'start' | 'thinking_delta' | 'text_delta' | 'tool_call_start' | 'tool_call_delta' | 'tool_call_complete' | 'end' | 'error'
   session_id: string
   message_id?: string
   delta?: string
@@ -24,6 +24,7 @@ export interface ToolCallInfo {
 
 export interface StreamingState {
   isStreaming: boolean
+  currentThinking: string
   currentText: string
   currentToolCalls: Map<string, ToolCallInfo>
   error: string | null
@@ -31,6 +32,7 @@ export interface StreamingState {
 
 export interface UseStreamingOptions {
   sessionId: string | null
+  onThinkingDelta?: (delta: string, accumulated: string) => void
   onTextDelta?: (delta: string, accumulated: string) => void
   onToolCallStart?: (id: string, name: string) => void
   onToolCallComplete?: (toolCall: ToolCallInfo) => void
@@ -40,6 +42,7 @@ export interface UseStreamingOptions {
 
 export function useStreaming({
   sessionId,
+  onThinkingDelta,
   onTextDelta,
   onToolCallStart,
   onToolCallComplete,
@@ -48,6 +51,7 @@ export function useStreaming({
 }: UseStreamingOptions) {
   const [state, setState] = useState<StreamingState>({
     isStreaming: false,
+    currentThinking: '',
     currentText: '',
     currentToolCalls: new Map(),
     error: null,
@@ -63,10 +67,19 @@ export function useStreaming({
           setState((s) => ({
             ...s,
             isStreaming: true,
+            currentThinking: '',
             currentText: '',
             currentToolCalls: new Map(),
             error: null,
           }))
+          break
+
+        case 'thinking_delta':
+          setState((s) => ({
+            ...s,
+            currentThinking: event.accumulated || s.currentThinking + (event.delta || ''),
+          }))
+          onThinkingDelta?.(event.delta || '', event.accumulated || '')
           break
 
         case 'text_delta':
@@ -126,7 +139,7 @@ export function useStreaming({
           break
       }
     },
-    [onTextDelta, onToolCallStart, onToolCallComplete, onEnd, onError]
+    [onThinkingDelta, onTextDelta, onToolCallStart, onToolCallComplete, onEnd, onError]
   )
 
   // Subscribe to stream events
@@ -159,6 +172,7 @@ export function useStreaming({
   const reset = useCallback(() => {
     setState({
       isStreaming: false,
+      currentThinking: '',
       currentText: '',
       currentToolCalls: new Map(),
       error: null,
