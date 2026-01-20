@@ -13,9 +13,9 @@ echo.
 echo [1/2] Building frontend...
 echo ----------------------------------------
 cd frontend
-call npm install
+call npm ci
 if %ERRORLEVEL% NEQ 0 (
-    echo ERROR: npm install failed
+    echo ERROR: npm ci failed
     exit /b %ERRORLEVEL%
 )
 
