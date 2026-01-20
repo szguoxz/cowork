@@ -277,14 +277,32 @@ impl ToolApprovalConfig {
         }
 
         // Check based on approval level
+        // Higher levels are MORE restrictive (require approval for more tools)
         match self.level {
-            ApprovalLevel::None | ApprovalLevel::Low => self.auto_approve.contains(tool_name),
+            ApprovalLevel::None => {
+                // None: auto-approve everything in auto_approve list
+                self.auto_approve.contains(tool_name)
+            }
+            ApprovalLevel::Low => {
+                // Low: auto-approve read-only tools in auto_approve list
+                self.auto_approve.contains(tool_name)
+            }
             ApprovalLevel::Medium => {
+                // Medium: only auto-approve if in auto_approve AND not in always_require
                 self.auto_approve.contains(tool_name)
                     && !self.always_require_approval.contains(tool_name)
             }
-            ApprovalLevel::High | ApprovalLevel::Critical => {
-                !self.always_require_approval.contains(tool_name)
+            ApprovalLevel::High => {
+                // High: only auto-approve read-only tools (those in auto_approve but not destructive)
+                self.auto_approve.contains(tool_name)
+                    && !self.always_require_approval.contains(tool_name)
+                    && !tool_name.contains("write")
+                    && !tool_name.contains("execute")
+                    && !tool_name.contains("delete")
+            }
+            ApprovalLevel::Critical => {
+                // Critical: require approval for everything
+                false
             }
         }
     }

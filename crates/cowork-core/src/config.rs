@@ -469,7 +469,7 @@ impl ProviderConfig {
             provider_type: "gemini".to_string(),
             api_key: None,
             api_key_env: Some("GEMINI_API_KEY".to_string()),
-            model: "gemini-1.5-pro".to_string(),
+            model: "gemini-2.5-pro".to_string(),
             model_tiers: None, // Uses ModelTiers::gemini() as default
             base_url: None,
             default_max_tokens: 4096,
@@ -912,7 +912,7 @@ mod tests {
         assert_eq!(openai.model, "gpt-5");
 
         let gemini = config.get_provider("gemini").unwrap();
-        assert_eq!(gemini.model, "gemini-1.5-pro");
+        assert_eq!(gemini.model, "gemini-2.5-pro");
     }
 
     #[test]

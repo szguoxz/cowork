@@ -75,6 +75,16 @@ export function SessionProvider({ children }: SessionProviderProps) {
         updateSession(sessionId, s => ({ ...s, isIdle: true, updatedAt: new Date() }))
         break
 
+      case 'thinking':
+        updateSession(sessionId, s => ({
+          ...s,
+          isIdle: false,
+          isThinking: true,
+          thinkingContent: output.content,
+          updatedAt: new Date(),
+        }))
+        break
+
       case 'user_message':
         updateSession(sessionId, s => ({
           ...s,
@@ -91,6 +101,8 @@ export function SessionProvider({ children }: SessionProviderProps) {
       case 'assistant_message':
         updateSession(sessionId, s => ({
           ...s,
+          isThinking: false,
+          thinkingContent: undefined,
           messages: [...s.messages, {
             id: output.id,
             type: 'assistant' as const,

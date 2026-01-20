@@ -106,11 +106,11 @@ impl From<&Config> for Settings {
                     provider.base_url.clone(),
                 )
             } else {
-                // Fallback to defaults
+                // Fallback to defaults (must match config.rs defaults)
                 (
                     "anthropic".to_string(),
                     None,
-                    "claude-sonnet-4-20250514".to_string(),
+                    "claude-opus-4-20250514".to_string(),
                     None,
                 )
             };

@@ -251,11 +251,29 @@ impl ChatSession {
     pub fn to_llm_messages(&self) -> Vec<crate::provider::LlmMessage> {
         self.messages
             .iter()
-            .map(|m| crate::provider::LlmMessage {
-                role: m.role.clone(),
-                content: m.content.clone(),
-                tool_calls: None,
-                tool_call_id: None,
+            .map(|m| {
+                // Convert tool calls if present
+                let tool_calls = if m.tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(
+                        m.tool_calls
+                            .iter()
+                            .map(|tc| crate::provider::ToolCall {
+                                id: tc.id.clone(),
+                                name: tc.name.clone(),
+                                arguments: tc.arguments.clone(),
+                            })
+                            .collect(),
+                    )
+                };
+
+                crate::provider::LlmMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                    tool_calls,
+                    tool_call_id: None,
+                }
             })
             .collect()
     }

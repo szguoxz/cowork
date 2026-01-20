@@ -28,6 +28,8 @@ export interface Session {
   messages: Message[]
   isIdle: boolean
   isReady: boolean
+  isThinking?: boolean
+  thinkingContent?: string
   error: string | null
   provider?: SessionProvider  // Per-session provider override
   createdAt: Date

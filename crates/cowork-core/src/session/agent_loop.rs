@@ -513,17 +513,17 @@ impl AgentLoop {
             "answers": answers
         });
 
-        // Find the pending ask_user_question tool call
+        // Find the pending ask_user_question tool call by ID (request_id is the tool call ID)
         let tool_call = self
             .pending_approvals
             .iter()
-            .find(|tc| tc.name == "ask_user_question")
+            .find(|tc| tc.id == request_id || tc.name == "ask_user_question")
             .cloned();
 
         if let Some(tool_call) = tool_call {
-            // Remove from pending
+            // Remove from pending by ID, not by name (fixes bug with multiple questions)
             self.pending_approvals
-                .retain(|tc| tc.name != "ask_user_question");
+                .retain(|tc| tc.id != tool_call.id);
 
             // Add result to session
             self.session
