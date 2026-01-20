@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 import { Send, Loader2, Check, X, Terminal, AlertCircle, Brain, ChevronDown, ChevronRight, Sparkles } from 'lucide-react'
 import ContextIndicator from '../components/ContextIndicator'
 import QuestionModal from '../components/QuestionModal'
+import ToolResultFormatter from '../components/ToolResultFormatter'
 import { Button } from '../components/ui/button'
 
 interface ToolCall {
@@ -525,9 +526,7 @@ export default function Chat() {
                     {/* Tool result */}
                     {tc.result && (
                       <div className="px-3 py-2 border-t border-border bg-card">
-                        <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap max-h-40 overflow-y-auto">
-                          {tc.result}
-                        </pre>
+                        <ToolResultFormatter toolName={tc.name} result={tc.result} />
                       </div>
                     )}
                   </div>
