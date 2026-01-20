@@ -101,6 +101,7 @@ export default function Chat() {
             break
 
           case 'tool_done':
+            console.log('tool_done:', output.id, 'success:', output.success, 'output length:', output.output?.length || 0)
             setMessages(prev => prev.map(msg =>
               msg.tool?.id === output.id
                 ? {
