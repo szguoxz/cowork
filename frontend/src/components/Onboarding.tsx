@@ -178,65 +178,63 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
 
   return (
     <div className="fixed inset-0 bg-gray-900/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
         {/* Progress bar */}
         <div className="h-1 bg-gray-200 dark:bg-gray-700">
           <div
-            className="h-full bg-primary-500 transition-all duration-300"
+            className="h-full bg-blue-500 transition-all duration-300"
             style={{ width: `${progress}%` }}
           />
         </div>
 
         {/* Header */}
-        <div className="px-5 pt-4 pb-2 flex items-center gap-3">
+        <div className="px-4 pt-3 pb-1 flex items-center gap-2">
           {step !== 'provider' && (
             <button
               onClick={handleBack}
-              className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+              className="p-0.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
             >
-              <ChevronLeft className="w-5 h-5 text-gray-500" />
+              <ChevronLeft className="w-4 h-4 text-gray-500" />
             </button>
           )}
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-primary-500" />
-            <span className="font-semibold text-gray-900 dark:text-white">Cowork Setup</span>
+          <div className="flex items-center gap-1.5">
+            <Sparkles className="w-4 h-4 text-blue-500" />
+            <span className="font-medium text-sm text-gray-900 dark:text-white">Setup</span>
           </div>
         </div>
 
         {/* Content */}
-        <div className="px-5 pb-5" onKeyDown={handleKeyDown}>
+        <div className="px-4 pb-4" onKeyDown={handleKeyDown}>
           {/* Provider Selection */}
           {step === 'provider' && (
             <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-                Choose your AI provider:
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                Select provider:
               </p>
-              <div className="grid grid-cols-2 gap-2 max-h-[280px] overflow-y-auto pr-1">
+              <div className="grid grid-cols-3 gap-1.5">
                 {PROVIDERS.map((provider) => (
                   <button
                     key={provider.id}
                     onClick={() => handleProviderSelect(provider.id)}
-                    className={`p-2.5 rounded-lg border text-left text-sm transition-all ${
+                    className={`px-2 py-1.5 rounded border text-xs transition-all truncate ${
                       selectedProvider === provider.id
-                        ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30 ring-1 ring-primary-500'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-primary-300 dark:hover:border-primary-700'
+                        ? 'border-blue-500 bg-blue-500 text-white font-medium'
+                        : 'border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700'
                     }`}
                   >
-                    <span className="font-medium text-gray-900 dark:text-white block truncate">
-                      {provider.name}
-                    </span>
+                    {provider.name.replace(' (Claude)', '').replace(' (GPT-4)', '').replace(' (Grok)', '').replace(' (Local)', '').replace(' AI', '').replace('.cn', '')}
                   </button>
                 ))}
               </div>
               {error && (
-                <p className="mt-2 text-sm text-red-500 flex items-center gap-1">
-                  <AlertCircle className="w-4 h-4" /> {error}
+                <p className="mt-2 text-xs text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> {error}
                 </p>
               )}
               <button
                 onClick={handleProviderNext}
                 disabled={!selectedProvider}
-                className="w-full mt-4 py-2.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
+                className="w-full mt-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
               >
                 Next
                 <ArrowRight className="w-4 h-4" />
@@ -247,8 +245,8 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
           {/* API Key Input */}
           {step === 'apikey' && (
             <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-                Enter your {selectedProviderInfo?.name} API key:
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                {selectedProviderInfo?.name} API key:
               </p>
               <input
                 type="password"
@@ -256,20 +254,20 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder={selectedProviderInfo?.envVar || 'API Key'}
                 autoFocus
-                className="w-full px-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               {error && (
-                <p className="mt-2 text-sm text-red-500 flex items-center gap-1">
-                  <AlertCircle className="w-4 h-4" /> {error}
+                <p className="mt-1.5 text-xs text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> {error}
                 </p>
               )}
-              <p className="mt-2 text-xs text-gray-500">
-                Stored locally. Or set {selectedProviderInfo?.envVar} env var.
+              <p className="mt-1.5 text-xs text-gray-400">
+                Or set {selectedProviderInfo?.envVar} env var
               </p>
               <button
                 onClick={handleApiKeySubmit}
                 disabled={isLoading}
-                className="w-full mt-4 py-2.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
+                className="w-full mt-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
               >
                 {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Continue'}
                 {!isLoading && <ArrowRight className="w-4 h-4" />}
@@ -280,61 +278,63 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
           {/* Model Selection */}
           {step === 'model' && (
             <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">Select a model:</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Select model:</p>
               {isLoading ? (
-                <div className="py-8 flex flex-col items-center">
-                  <Loader2 className="w-6 h-6 text-primary-500 animate-spin" />
-                  <p className="mt-2 text-sm text-gray-500">Loading models...</p>
+                <div className="py-6 flex flex-col items-center">
+                  <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+                  <p className="mt-2 text-xs text-gray-500">Loading...</p>
                 </div>
               ) : models.length > 0 ? (
-                <div className="space-y-1.5 max-h-[240px] overflow-y-auto pr-1">
+                <div className="space-y-1 max-h-[200px] overflow-y-auto">
                   {models.map((model) => (
                     <button
                       key={model.id}
                       onClick={() => setSelectedModel(model.id)}
-                      className={`w-full p-2.5 rounded-lg border text-left text-sm transition-all flex items-center justify-between ${
+                      className={`w-full px-2.5 py-1.5 rounded border text-left text-xs transition-all flex items-center justify-between ${
                         selectedModel === model.id
-                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30'
-                          : 'border-gray-200 dark:border-gray-700 hover:border-primary-300'
+                          ? 'border-blue-500 bg-blue-500 text-white'
+                          : 'border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-blue-400'
                       }`}
                     >
-                      <span className="truncate text-gray-900 dark:text-white">
-                        {model.name || model.id}
-                      </span>
-                      <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="truncate">{model.name || model.id}</span>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
                         {model.recommended && (
-                          <span className="text-xs bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-400 px-1.5 py-0.5 rounded">
+                          <span className={`text-[10px] px-1 py-0.5 rounded ${
+                            selectedModel === model.id
+                              ? 'bg-white/20 text-white'
+                              : 'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-400'
+                          }`}>
                             rec
                           </span>
                         )}
                         {selectedModel === model.id && (
-                          <CheckCircle2 className="w-4 h-4 text-primary-500" />
+                          <CheckCircle2 className="w-3.5 h-3.5" />
                         )}
                       </div>
                     </button>
                   ))}
                 </div>
               ) : (
-                <div className="py-4">
+                <div className="py-2">
                   <input
                     type="text"
                     value={selectedModel}
                     onChange={(e) => setSelectedModel(e.target.value)}
                     placeholder="Enter model name"
-                    className="w-full px-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
                   />
-                  <p className="mt-2 text-xs text-gray-500">Could not fetch models. Enter manually.</p>
+                  <p className="mt-1.5 text-xs text-gray-400">Enter model name manually</p>
                 </div>
               )}
               {error && (
-                <p className="mt-2 text-sm text-red-500 flex items-center gap-1">
-                  <AlertCircle className="w-4 h-4" /> {error}
+                <p className="mt-1.5 text-xs text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> {error}
                 </p>
               )}
               <button
                 onClick={handleModelSubmit}
                 disabled={isLoading || !selectedModel}
-                className="w-full mt-4 py-2.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
+                className="w-full mt-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
               >
                 Test Connection
                 <ArrowRight className="w-4 h-4" />
@@ -344,26 +344,26 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
 
           {/* Testing */}
           {step === 'testing' && (
-            <div className="py-6 text-center">
+            <div className="py-4 text-center">
               {isLoading ? (
                 <>
-                  <Loader2 className="w-10 h-10 text-primary-500 animate-spin mx-auto" />
-                  <p className="mt-3 text-gray-600 dark:text-gray-400">Testing connection...</p>
+                  <Loader2 className="w-8 h-8 text-blue-500 animate-spin mx-auto" />
+                  <p className="mt-2 text-sm text-gray-500">Testing...</p>
                 </>
               ) : testResult?.success ? (
                 <>
-                  <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto" />
-                  <p className="mt-3 font-medium text-gray-900 dark:text-white">Connected!</p>
-                  <p className="text-sm text-gray-500 mt-1">Starting Cowork...</p>
+                  <CheckCircle2 className="w-10 h-10 text-green-500 mx-auto" />
+                  <p className="mt-2 font-medium text-gray-900 dark:text-white">Connected!</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Starting...</p>
                 </>
               ) : (
                 <>
-                  <AlertCircle className="w-12 h-12 text-red-500 mx-auto" />
-                  <p className="mt-3 font-medium text-gray-900 dark:text-white">Connection Failed</p>
-                  <p className="text-sm text-red-500 mt-1">{testResult?.message}</p>
+                  <AlertCircle className="w-10 h-10 text-red-500 mx-auto" />
+                  <p className="mt-2 font-medium text-sm text-gray-900 dark:text-white">Failed</p>
+                  <p className="text-xs text-red-500 mt-1 max-w-[250px] mx-auto">{testResult?.message}</p>
                   <button
                     onClick={handleBack}
-                    className="mt-4 px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
+                    className="mt-3 px-3 py-1.5 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded text-sm transition-colors"
                   >
                     Try Again
                   </button>

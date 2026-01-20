@@ -104,7 +104,12 @@ impl Hinter for SlashCompleter {
             return None;
         }
 
-        // Find first matching command and show hint
+        // If just "/" typed, show hint to press Tab
+        if line == "/" {
+            return Some(" <Tab> for commands".to_string());
+        }
+
+        // Find first matching command and show hint for typeahead
         self.commands
             .iter()
             .find(|(cmd, _)| cmd.starts_with(line) && *cmd != line)
@@ -413,6 +418,8 @@ async fn run_chat(
     let config = Config::builder()
         .history_ignore_space(true)
         .completion_type(rustyline::CompletionType::List)
+        .edit_mode(rustyline::EditMode::Emacs)
+        .auto_add_history(false) // We add manually
         .build();
     let mut rl = Editor::with_config(config)?;
     rl.set_helper(Some(SlashCompleter::new()));
@@ -423,8 +430,11 @@ async fn run_chat(
         .unwrap_or_else(|| PathBuf::from(".cowork_history"));
     let _ = rl.load_history(&history_path);
 
+    // Use simple prompt without ANSI to avoid cursor position issues
+    let prompt = "You> ";
+
     loop {
-        let readline = rl.readline(&format!("{} ", style("You").green().bold()));
+        let readline = rl.readline(prompt);
         let input = match readline {
             Ok(line) => line,
             Err(ReadlineError::Interrupted) => {
