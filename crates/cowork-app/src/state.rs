@@ -18,8 +18,9 @@ pub struct AppState {
     pub registry: Arc<RwLock<AgentRegistry>>,
     /// Workspace root path
     pub workspace_path: PathBuf,
-    /// Active chat sessions
-    pub sessions: Arc<RwLock<HashMap<String, ChatSession>>>,
+    /// Active chat sessions - each session has its own lock to allow
+    /// concurrent reads while the agentic loop holds a write lock
+    pub sessions: Arc<RwLock<HashMap<String, Arc<RwLock<ChatSession>>>>>,
     /// Configuration manager
     pub config_manager: Arc<RwLock<ConfigManager>>,
     /// Active agentic loop handles
