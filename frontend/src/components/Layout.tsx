@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
-import { MessageSquare, Settings, Server, Puzzle, ChevronLeft, ChevronRight, History, HelpCircle, Sparkles, Plus } from 'lucide-react'
+import { Settings, Server, Puzzle, ChevronLeft, ChevronRight, History, HelpCircle, Sparkles, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useSession } from '../context/SessionContext'
 
