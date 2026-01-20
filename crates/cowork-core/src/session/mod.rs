@@ -30,11 +30,8 @@
 //! ```ignore
 //! use cowork_core::session::{SessionManager, SessionConfig, SessionInput};
 //!
-//! // Create manager with config factory
-//! let manager = SessionManager::new(|| SessionConfig::default());
-//!
-//! // Take the output receiver
-//! let output_rx = manager.take_output_receiver().await.unwrap();
+//! // Create manager with config factory (returns manager and output receiver)
+//! let (manager, mut output_rx) = SessionManager::new(|| SessionConfig::default());
 //!
 //! // Send a message (creates session if needed)
 //! manager.push_message("my-session", SessionInput::user_message("Hello!")).await?;
@@ -57,7 +54,7 @@ mod manager;
 mod types;
 
 pub use agent_loop::AgentLoop;
-pub use manager::{ConfigFactory, SessionManager};
+pub use manager::{ConfigFactory, OutputReceiver, SessionManager};
 pub use types::{
     QuestionInfo, QuestionOption, SessionConfig, SessionId, SessionInput, SessionOutput,
 };

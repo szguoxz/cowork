@@ -14,8 +14,8 @@ use crate::error::Result;
 /// Factory function type for creating session configs
 pub type ConfigFactory = Arc<dyn Fn() -> SessionConfig + Send + Sync>;
 
-/// Type alias for the output receiver to simplify complex type
-type OutputReceiver = Arc<tokio::sync::Mutex<Option<mpsc::Receiver<(SessionId, SessionOutput)>>>>;
+/// Type alias for the output receiver
+pub type OutputReceiver = mpsc::Receiver<(SessionId, SessionOutput)>;
 
 /// Manages multiple concurrent agent sessions
 pub struct SessionManager {
@@ -23,8 +23,6 @@ pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<SessionId, mpsc::Sender<SessionInput>>>>,
     /// Channel for all session outputs (session_id, output)
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
-    /// Receiver for outputs (given to consumer via take_output_receiver)
-    output_rx: OutputReceiver,
     /// Factory for creating session configs
     config_factory: ConfigFactory,
     /// Channel buffer size for session input/output
@@ -34,9 +32,10 @@ pub struct SessionManager {
 impl SessionManager {
     /// Create a new session manager with the given config factory
     ///
+    /// Returns the manager and an output receiver for consuming session outputs.
     /// The config factory is called each time a new session is created,
     /// allowing customization of session parameters.
-    pub fn new<F>(config_factory: F) -> Self
+    pub fn new<F>(config_factory: F) -> (Self, OutputReceiver)
     where
         F: Fn() -> SessionConfig + Send + Sync + 'static,
     {
@@ -44,19 +43,22 @@ impl SessionManager {
     }
 
     /// Create a new session manager with custom buffer size
-    pub fn with_buffer_size<F>(config_factory: F, buffer_size: usize) -> Self
+    ///
+    /// Returns the manager and an output receiver for consuming session outputs.
+    pub fn with_buffer_size<F>(config_factory: F, buffer_size: usize) -> (Self, OutputReceiver)
     where
         F: Fn() -> SessionConfig + Send + Sync + 'static,
     {
         let (output_tx, output_rx) = mpsc::channel(buffer_size);
 
-        Self {
+        let manager = Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             output_tx,
-            output_rx: Arc::new(tokio::sync::Mutex::new(Some(output_rx))),
             config_factory: Arc::new(config_factory),
             channel_buffer_size: buffer_size,
-        }
+        };
+
+        (manager, output_rx)
     }
 
     /// Push a message to a session
@@ -131,17 +133,6 @@ impl SessionManager {
             .await;
 
         Ok(input_tx)
-    }
-
-    /// Take the output receiver
-    ///
-    /// This can only be called once - subsequent calls will return None.
-    /// The receiver yields (session_id, output) tuples from all sessions.
-    pub async fn take_output_receiver(
-        &self,
-    ) -> Option<mpsc::Receiver<(SessionId, SessionOutput)>> {
-        let mut rx_guard = self.output_rx.lock().await;
-        rx_guard.take()
     }
 
     /// Get a clone of the output sender (for testing or special cases)
@@ -241,21 +232,66 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_creation() {
-        let manager = SessionManager::new(test_config);
+        let (manager, _output_rx) = SessionManager::new(test_config);
         assert_eq!(manager.session_count().await, 0);
         assert!(manager.list_sessions().await.is_empty());
     }
 
     #[tokio::test]
-    async fn test_take_output_receiver() {
-        let manager = SessionManager::new(test_config);
+    async fn test_has_session() {
+        let (manager, _output_rx) = SessionManager::new(test_config);
 
-        // First take should succeed
-        let rx1 = manager.take_output_receiver().await;
-        assert!(rx1.is_some());
+        // Session shouldn't exist yet
+        assert!(!manager.has_session("test-session").await);
+    }
 
-        // Second take should return None
-        let rx2 = manager.take_output_receiver().await;
-        assert!(rx2.is_none());
+    #[tokio::test]
+    async fn test_stop_nonexistent_session() {
+        let (manager, _output_rx) = SessionManager::new(test_config);
+
+        // Stopping a non-existent session should be a no-op
+        let result = manager.stop_session("nonexistent").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_stop_all_empty() {
+        let (manager, _output_rx) = SessionManager::new(test_config);
+
+        // Stopping all when empty should be fine
+        let result = manager.stop_all().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_custom_buffer_size() {
+        let (manager, _output_rx) = SessionManager::with_buffer_size(test_config, 64);
+        assert_eq!(manager.channel_buffer_size, 64);
+    }
+
+    #[tokio::test]
+    async fn test_output_sender_clone() {
+        let (manager, _output_rx) = SessionManager::new(test_config);
+        let _sender = manager.output_sender();
+        // Just verify we can get a clone of the sender
+    }
+
+    #[tokio::test]
+    async fn test_remove_session() {
+        let (manager, _output_rx) = SessionManager::new(test_config);
+
+        // Add a session entry directly for testing
+        {
+            let (tx, _rx) = mpsc::channel(1);
+            let mut sessions = manager.sessions.write().await;
+            sessions.insert("test-session".to_string(), tx);
+        }
+
+        assert!(manager.has_session("test-session").await);
+
+        // Remove it
+        manager.remove_session("test-session").await;
+
+        assert!(!manager.has_session("test-session").await);
     }
 }

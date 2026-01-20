@@ -10,7 +10,7 @@ pub mod streaming;
 
 use std::sync::Arc;
 use tauri::Manager;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use cowork_core::session::{SessionConfig, SessionManager};
 use cowork_core::{AgentRegistry, ApprovalLevel, ConfigManager, Context, Workspace};
@@ -33,7 +33,7 @@ pub fn init_state(workspace_path: std::path::PathBuf, config_manager: ConfigMana
 
     // Create session manager with config factory
     let workspace_for_factory = workspace_path.clone();
-    let session_manager = SessionManager::new(move || {
+    let (session_manager, output_rx) = SessionManager::new(move || {
         let mut approval_config = cowork_core::ToolApprovalConfig::default();
         approval_config.set_level(approval_level);
 
@@ -65,6 +65,7 @@ pub fn init_state(workspace_path: std::path::PathBuf, config_manager: ConfigMana
         workspace_path,
         config_manager: Arc::new(RwLock::new(config_manager)),
         session_manager: Arc::new(session_manager),
+        output_rx: Mutex::new(Some(output_rx)),
     }
 }
 

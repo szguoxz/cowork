@@ -291,7 +291,7 @@ async fn run_one_shot(
     };
 
     // Create session manager with a config factory
-    let session_manager = SessionManager::new(move || {
+    let (session_manager, mut output_rx) = SessionManager::new(move || {
         let mut config = SessionConfig::new(workspace.clone())
             .with_provider(provider_type)
             .with_approval_config(approval_config.clone());
@@ -303,12 +303,6 @@ async fn run_one_shot(
         }
         config
     });
-
-    // Take the output receiver
-    let mut output_rx = session_manager
-        .take_output_receiver()
-        .await
-        .expect("Output receiver already taken");
 
     let session_id = "cli-oneshot";
 
@@ -453,7 +447,7 @@ async fn run_chat(
     let session_approval = Arc::new(tokio::sync::Mutex::new(base_approval_config.clone()));
 
     // Create session manager
-    let session_manager = Arc::new(SessionManager::new({
+    let (session_manager, mut output_rx) = SessionManager::new({
         let workspace_path = workspace_path.clone();
         let model = model.clone();
         let api_key = api_key.clone();
@@ -470,13 +464,8 @@ async fn run_chat(
             }
             config
         }
-    }));
-
-    // Take the output receiver
-    let mut output_rx = session_manager
-        .take_output_receiver()
-        .await
-        .expect("Output receiver already taken");
+    });
+    let session_manager = Arc::new(session_manager);
 
     // Channel for sending approval decisions back to the output handler
     let (approval_tx, mut approval_rx) = mpsc::channel::<ApprovalDecision>(16);

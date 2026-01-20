@@ -27,10 +27,10 @@ pub async fn start_loop(
     tracing::info!("start_loop called - initializing output handler");
 
     // Take the output receiver (can only be done once)
-    let output_rx = state
-        .session_manager
-        .take_output_receiver()
-        .await;
+    let output_rx = {
+        let mut rx_guard = state.output_rx.lock().await;
+        rx_guard.take()
+    };
 
     let output_rx = match output_rx {
         Some(rx) => rx,
