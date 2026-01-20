@@ -31,6 +31,38 @@ impl Default for SummarizerConfig {
     }
 }
 
+/// Default summary prompt matching Anthropic SDK
+pub const DEFAULT_SUMMARY_PROMPT: &str = r#"You have been working on the task described above but have not yet completed it. Write a continuation summary that will allow you (or another instance of yourself) to resume work efficiently in a future context window where the conversation history will be replaced with this summary. Your summary should be structured, concise, and actionable. Include:
+
+1. Task Overview
+   - The user's core request and success criteria
+   - Any clarifications or constraints they specified
+
+2. Current State
+   - What has been completed so far
+   - Files created, modified, or analyzed (with paths if relevant)
+   - Key outputs or artifacts produced
+
+3. Important Discoveries
+   - Technical constraints or requirements uncovered
+   - Decisions made and their rationale
+   - Errors encountered and how they were resolved
+   - What approaches were tried that didn't work (and why)
+
+4. Next Steps
+   - Specific actions needed to complete the task
+   - Any blockers or open questions to resolve
+   - Priority order if multiple steps remain
+
+5. Context to Preserve
+   - User preferences or style requirements
+   - Domain-specific details that aren't obvious
+   - Any promises made to the user
+
+Be concise but complete—err on the side of including information that would prevent duplicate work or repeated mistakes. Write in a way that enables immediate resumption of the task.
+
+Wrap your summary in <summary></summary> tags."#;
+
 /// Configuration for context compaction
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactConfig {
@@ -39,11 +71,8 @@ pub struct CompactConfig {
     pub preserve_instructions: Option<String>,
     /// Whether to use the LLM for summarization (vs simple heuristics)
     pub use_llm: bool,
-    /// Target ratio of tokens to keep after compaction (0.0 - 1.0)
-    /// e.g., 0.3 means keep approximately 30% of tokens
-    pub target_ratio: f64,
-    /// Minimum number of recent messages to always keep intact
-    pub min_keep_recent: usize,
+    /// Custom summary prompt (if None, uses DEFAULT_SUMMARY_PROMPT)
+    pub summary_prompt: Option<String>,
 }
 
 impl Default for CompactConfig {
@@ -51,8 +80,7 @@ impl Default for CompactConfig {
         Self {
             preserve_instructions: None,
             use_llm: true,
-            target_ratio: 0.3,
-            min_keep_recent: 5,
+            summary_prompt: None, // Uses DEFAULT_SUMMARY_PROMPT
         }
     }
 }
@@ -83,34 +111,32 @@ impl CompactConfig {
         self
     }
 
-    /// Set the target ratio
-    pub fn with_target_ratio(mut self, ratio: f64) -> Self {
-        self.target_ratio = ratio.clamp(0.1, 0.9);
+    /// Set custom summary prompt
+    pub fn with_summary_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.summary_prompt = Some(prompt.into());
         self
     }
 
-    /// Set minimum recent messages to keep
-    pub fn with_min_keep_recent(mut self, count: usize) -> Self {
-        self.min_keep_recent = count;
-        self
+    /// Get the summary prompt to use
+    pub fn get_summary_prompt(&self) -> &str {
+        self.summary_prompt.as_deref().unwrap_or(DEFAULT_SUMMARY_PROMPT)
     }
 }
 
 /// Result of a compaction operation
+///
+/// Following Anthropic SDK approach: after compaction, the entire conversation
+/// is replaced with a single user message containing the summary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactResult {
-    /// The summary message to prepend to the conversation
+    /// The summary message (role: User) that replaces the entire conversation
     pub summary: Message,
-    /// Messages that were kept (not summarized)
-    pub kept_messages: Vec<Message>,
     /// Token count before compaction
     pub tokens_before: usize,
     /// Token count after compaction
     pub tokens_after: usize,
     /// Number of messages that were summarized
     pub messages_summarized: usize,
-    /// Number of messages kept
-    pub messages_kept: usize,
 }
 
 /// Summarizes conversation history
@@ -190,8 +216,7 @@ impl ConversationSummarizer {
         let summary_message = Message {
             role: MessageRole::System,
             content: format!(
-                "=== Summary of earlier conversation ({} messages) ===\n{}\n=== End of summary ===",
-                to_summarize.len(),
+                "<summary>\n{}\n</summary>",
                 summary_content
             ),
             timestamp: chrono::Utc::now(),
@@ -255,36 +280,34 @@ impl ConversationSummarizer {
         }
 
         let mut summary = format!(
-            "=== Summary of earlier conversation ({} messages) ===\n",
+            "Summary of {} earlier messages:\n",
             to_summarize.len()
         );
 
         if !topics.is_empty() {
-            summary.push_str("\nTopics discussed:\n");
+            summary.push_str("\n## Topics Discussed\n");
             for (i, topic) in topics.iter().take(5).enumerate() {
-                summary.push_str(&format!("  {}. {}...\n", i + 1, topic.chars().take(80).collect::<String>()));
+                summary.push_str(&format!("{}. {}...\n", i + 1, topic.chars().take(80).collect::<String>()));
             }
         }
 
         if !files_mentioned.is_empty() {
-            summary.push_str("\nFiles mentioned:\n");
+            summary.push_str("\n## Files Mentioned\n");
             for file in files_mentioned.iter().take(10) {
-                summary.push_str(&format!("  - {}\n", file));
+                summary.push_str(&format!("- {}\n", file));
             }
         }
 
         if !commands_run.is_empty() {
-            summary.push_str("\nCommands executed:\n");
+            summary.push_str("\n## Commands Executed\n");
             for cmd in commands_run.iter().take(5) {
-                summary.push_str(&format!("  - {}\n", cmd));
+                summary.push_str(&format!("- {}\n", cmd));
             }
         }
 
-        summary.push_str("=== End of summary ===");
-
         let summary_message = Message {
             role: MessageRole::System,
-            content: summary,
+            content: format!("<summary>\n{}</summary>", summary),
             timestamp: chrono::Utc::now(),
         };
 
@@ -292,6 +315,11 @@ impl ConversationSummarizer {
     }
 
     /// Compact the conversation using the provided configuration
+    ///
+    /// Following Anthropic SDK approach:
+    /// 1. Append the summary prompt as a user message to the conversation
+    /// 2. Call LLM to generate summary wrapped in <summary></summary> tags
+    /// 3. Replace entire conversation with a single user message containing the summary
     ///
     /// This is the main entry point for context compaction, supporting both
     /// auto-compact and manual `/compact` command scenarios.
@@ -304,84 +332,45 @@ impl ConversationSummarizer {
     ) -> Result<CompactResult> {
         let tokens_before = counter.count_messages(messages);
 
-        // Determine how many messages to keep based on target ratio
-        let target_tokens = (tokens_before as f64 * config.target_ratio) as usize;
-
-        // Calculate split point, ensuring we keep at least min_keep_recent
-        let split_point = self.calculate_split_point(messages, counter, target_tokens, config.min_keep_recent);
-
-        if split_point == 0 {
-            // Nothing to compact - return all messages
+        if messages.is_empty() {
+            // Nothing to compact
             return Ok(CompactResult {
                 summary: Message {
-                    role: MessageRole::System,
-                    content: "No prior context to summarize.".to_string(),
+                    role: MessageRole::User,
+                    content: "<summary>No prior context.</summary>".to_string(),
                     timestamp: chrono::Utc::now(),
                 },
-                kept_messages: messages.to_vec(),
-                tokens_before,
-                tokens_after: tokens_before,
+                tokens_before: 0,
+                tokens_after: 0,
                 messages_summarized: 0,
-                messages_kept: messages.len(),
             });
         }
 
-        let to_summarize = &messages[..split_point];
-        let to_keep = &messages[split_point..];
-
-        // Generate summary
+        // Generate summary - following Anthropic SDK approach
         let summary = match provider {
             Some(p) if config.use_llm => {
-                self.generate_llm_compact_summary(to_summarize, p, &config).await?
+                self.generate_llm_compact_summary(messages, p, &config).await?
             }
-            _ => self.generate_simple_compact_summary(to_summarize, &config),
+            _ => self.generate_simple_compact_summary(messages, &config),
         };
 
-        let tokens_after = counter.count(&summary.content) + counter.count_messages(to_keep);
+        let tokens_after = counter.count(&summary.content);
 
         Ok(CompactResult {
             summary,
-            kept_messages: to_keep.to_vec(),
             tokens_before,
             tokens_after,
-            messages_summarized: to_summarize.len(),
-            messages_kept: to_keep.len(),
+            messages_summarized: messages.len(),
         })
     }
 
-    /// Calculate the split point for compaction
-    fn calculate_split_point(
-        &self,
-        messages: &[Message],
-        counter: &TokenCounter,
-        target_tokens: usize,
-        min_keep_recent: usize,
-    ) -> usize {
-        // Always keep at least min_keep_recent messages
-        if messages.len() <= min_keep_recent {
-            return 0;
-        }
-
-        // Start from the end and work backwards, counting tokens
-        let mut kept_tokens = 0;
-        let mut keep_count = 0;
-
-        for msg in messages.iter().rev() {
-            let msg_tokens = counter.count(&msg.content) + 4; // +4 for message overhead
-
-            if kept_tokens + msg_tokens > target_tokens && keep_count >= min_keep_recent {
-                break;
-            }
-
-            kept_tokens += msg_tokens;
-            keep_count += 1;
-        }
-
-        // Return the split point
-        messages.len().saturating_sub(keep_count)
-    }
-
     /// Generate an LLM-powered summary for compaction
+    ///
+    /// Following Anthropic SDK approach:
+    /// 1. Format the conversation history
+    /// 2. Append the summary prompt (DEFAULT_SUMMARY_PROMPT or custom)
+    /// 3. Call LLM to generate summary wrapped in <summary></summary> tags
+    /// 4. Return as a USER message (to be the new single message in conversation)
     async fn generate_llm_compact_summary(
         &self,
         messages: &[Message],
@@ -390,51 +379,39 @@ impl ConversationSummarizer {
     ) -> Result<Message> {
         let conversation_text = format_for_summarization(messages);
 
-        let mut prompt = "Please provide a concise summary of the following conversation. \
-             Focus on: key decisions made, files modified, code changes, commands executed, \
-             and important context that should be remembered for continuing the work.\n\n"
-            .to_string();
+        // Build the messages for the summarization request
+        // Following Anthropic SDK: append the summary prompt to the conversation
+        let mut summary_prompt = config.get_summary_prompt().to_string();
 
         // Add custom preservation instructions if provided
         if let Some(ref instructions) = config.preserve_instructions {
-            prompt.push_str(&format!(
-                "IMPORTANT: Pay special attention to and preserve details about: {}\n\n",
-                instructions
-            ));
+            summary_prompt = format!(
+                "IMPORTANT: Pay special attention to and preserve details about: {}\n\n{}",
+                instructions,
+                summary_prompt
+            );
         }
 
-        prompt.push_str(&format!(
-            "Keep the summary under {} tokens.\n\n\
-             Conversation to summarize:\n{}",
-            self.config.target_summary_tokens,
-            conversation_text
-        ));
-
+        // Create the request with conversation + summary prompt
         let request = LlmRequest::new(vec![
-            LlmMessage {
-                role: "system".to_string(),
-                content: "You are a helpful assistant that summarizes conversations accurately and concisely. \
-                         Focus on preserving actionable context needed to continue the work.".to_string(),
-                tool_calls: None,
-                tool_call_id: None,
-            },
-            LlmMessage::user(prompt),
+            LlmMessage::user(format!(
+                "Here is the conversation history:\n\n{}\n\n{}",
+                conversation_text,
+                summary_prompt
+            )),
         ])
         .with_max_tokens(self.config.target_summary_tokens as u32);
 
         let response = provider.complete(request).await?;
 
         let summary_content = response.content.unwrap_or_else(|| {
-            "Previous conversation involved various development tasks.".to_string()
+            "<summary>Previous conversation involved various development tasks.</summary>".to_string()
         });
 
+        // The summary becomes a USER message (following Anthropic SDK)
         Ok(Message {
-            role: MessageRole::System,
-            content: format!(
-                "=== Conversation Summary ({} messages compacted) ===\n{}\n=== End of Summary ===",
-                messages.len(),
-                summary_content
-            ),
+            role: MessageRole::User,
+            content: summary_content,
             timestamp: chrono::Utc::now(),
         })
     }
@@ -500,50 +477,49 @@ impl ConversationSummarizer {
             }
         }
 
-        // Build summary
+        // Build summary using Claude Code format
         let mut summary = format!(
-            "=== Conversation Summary ({} messages compacted) ===\n",
+            "Summary of {} messages compacted:\n",
             messages.len()
         );
 
         // Add custom preservation note if specified
         if let Some(ref instructions) = config.preserve_instructions {
-            summary.push_str(&format!("\n[Preserved context: {}]\n", instructions));
+            summary.push_str(&format!("\n## Preserved Context\n{}\n", instructions));
         }
 
         if !decisions.is_empty() {
-            summary.push_str("\nTopics discussed:\n");
+            summary.push_str("\n## Topics Discussed\n");
             for (i, topic) in decisions.iter().take(5).enumerate() {
-                summary.push_str(&format!("  {}. {}...\n", i + 1, topic));
+                summary.push_str(&format!("{}. {}...\n", i + 1, topic));
             }
         }
 
         if !files_mentioned.is_empty() {
-            summary.push_str("\nFiles worked on:\n");
+            summary.push_str("\n## Files Worked On\n");
             for file in files_mentioned.iter().take(15) {
-                summary.push_str(&format!("  - {}\n", file));
+                summary.push_str(&format!("- {}\n", file));
             }
         }
 
         if !key_actions.is_empty() {
-            summary.push_str("\nKey actions:\n");
+            summary.push_str("\n## Key Actions\n");
             for action in key_actions.iter().take(10) {
-                summary.push_str(&format!("  - {}\n", action));
+                summary.push_str(&format!("- {}\n", action));
             }
         }
 
         if !commands_run.is_empty() {
-            summary.push_str("\nCommands executed:\n");
+            summary.push_str("\n## Commands Executed\n");
             for cmd in commands_run.iter().take(5) {
-                summary.push_str(&format!("  - {}\n", cmd));
+                summary.push_str(&format!("- {}\n", cmd));
             }
         }
 
-        summary.push_str("=== End of Summary ===");
-
+        // The summary becomes a USER message (following Anthropic SDK)
         Message {
-            role: MessageRole::System,
-            content: summary,
+            role: MessageRole::User,
+            content: format!("<summary>\n{}</summary>", summary),
             timestamp: chrono::Utc::now(),
         }
     }

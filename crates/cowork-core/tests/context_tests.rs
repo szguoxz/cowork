@@ -600,10 +600,8 @@ mod compact_config_tests {
         let config = CompactConfig::default();
 
         assert!(config.use_llm);
-        assert!(config.target_ratio > 0.0);
-        assert!(config.target_ratio < 1.0);
-        assert!(config.min_keep_recent > 0);
         assert!(config.preserve_instructions.is_none());
+        assert!(config.summary_prompt.is_none()); // Uses DEFAULT_SUMMARY_PROMPT
     }
 
     #[test]
@@ -611,7 +609,6 @@ mod compact_config_tests {
         let config = CompactConfig::auto();
 
         assert!(config.use_llm);
-        assert_eq!(config.target_ratio, 0.3);
     }
 
     #[test]
@@ -629,26 +626,25 @@ mod compact_config_tests {
         let config = CompactConfig::default()
             .with_instructions("preserve auth logic")
             .without_llm()
-            .with_target_ratio(0.5)
-            .with_min_keep_recent(10);
+            .with_summary_prompt("Custom prompt");
 
         assert_eq!(
             config.preserve_instructions,
             Some("preserve auth logic".to_string())
         );
         assert!(!config.use_llm);
-        assert_eq!(config.target_ratio, 0.5);
-        assert_eq!(config.min_keep_recent, 10);
+        assert_eq!(config.summary_prompt, Some("Custom prompt".to_string()));
     }
 
     #[test]
-    fn test_target_ratio_clamping() {
-        // Should clamp to valid range
-        let config = CompactConfig::default().with_target_ratio(1.5);
-        assert_eq!(config.target_ratio, 0.9);
+    fn test_get_summary_prompt() {
+        // Default uses DEFAULT_SUMMARY_PROMPT
+        let config = CompactConfig::default();
+        assert!(config.get_summary_prompt().contains("continuation summary"));
 
-        let config = CompactConfig::default().with_target_ratio(0.0);
-        assert_eq!(config.target_ratio, 0.1);
+        // Custom prompt overrides
+        let config = CompactConfig::default().with_summary_prompt("My custom prompt");
+        assert_eq!(config.get_summary_prompt(), "My custom prompt");
     }
 }
 
@@ -682,24 +678,24 @@ mod compaction_tests {
         let messages = generate_conversation(5);
         let result = summarizer.compact(&messages, &counter, config, None).await.unwrap();
 
-        // Small conversation shouldn't be compacted much
-        assert!(result.messages_kept >= result.messages_summarized);
+        // Following Anthropic SDK: all messages are summarized into single user message
+        assert_eq!(result.messages_summarized, 5);
+        assert!(result.summary.content.contains("<summary>"));
     }
 
     #[tokio::test]
     async fn test_compact_large_conversation() {
         let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
         let counter = TokenCounter::new(ProviderType::Anthropic);
-        let config = CompactConfig::default()
-            .without_llm()
-            .with_target_ratio(0.3);
+        let config = CompactConfig::default().without_llm();
 
         let messages = generate_conversation(50);
         let result = summarizer.compact(&messages, &counter, config, None).await.unwrap();
 
-        assert!(result.messages_summarized > 0, "Should summarize some messages");
+        assert_eq!(result.messages_summarized, 50, "Should summarize all messages");
         assert!(result.tokens_after <= result.tokens_before, "Should reduce tokens");
         assert!(!result.summary.content.is_empty(), "Should have a summary");
+        assert!(result.summary.content.contains("<summary>"), "Should wrap in summary tags");
     }
 
     #[tokio::test]
@@ -715,21 +711,21 @@ mod compaction_tests {
 
         // The summary should mention the preserved topic
         // (Note: without LLM, this is best-effort heuristic)
-        assert!(result.summary.content.contains("Preserved context: API endpoints"));
+        assert!(result.summary.content.contains("Preserved Context") &&
+                result.summary.content.contains("API endpoints"));
     }
 
     #[tokio::test]
-    async fn test_compact_keeps_recent() {
+    async fn test_compact_returns_user_message() {
+        // Following Anthropic SDK: summary is a USER message
         let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
         let counter = TokenCounter::new(ProviderType::Anthropic);
-        let config = CompactConfig::default()
-            .without_llm()
-            .with_min_keep_recent(10);
+        let config = CompactConfig::default().without_llm();
 
         let messages = generate_conversation(30);
         let result = summarizer.compact(&messages, &counter, config, None).await.unwrap();
 
-        assert!(result.messages_kept >= 10, "Should keep at least 10 recent messages");
+        assert_eq!(result.summary.role, MessageRole::User, "Summary should be a USER message");
     }
 
     #[test]

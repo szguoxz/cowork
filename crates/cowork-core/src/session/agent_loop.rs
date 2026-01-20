@@ -606,26 +606,24 @@ impl AgentLoop {
         )))
         .await;
 
-        // Use simple compaction (without LLM) to avoid recursive LLM calls
-        // during the agentic loop. LLM-powered compaction could cause issues
-        // if we're already at context limit.
-        let config = CompactConfig::auto().without_llm();
+        // Use LLM-powered compaction for better context preservation
+        // This is a separate API call, not recursive - Claude Code does this too
+        let config = CompactConfig::auto();
         let result = self
             .summarizer
             .compact(
                 &messages,
                 self.context_monitor.counter(),
                 config,
-                None, // Don't use LLM for auto-compaction to avoid recursion
+                Some(&self.provider), // Use LLM for better summaries
             )
             .await?;
 
         info!(
-            "Compaction complete: {} -> {} tokens ({} messages summarized, {} kept)",
+            "Compaction complete: {} -> {} tokens ({} messages summarized)",
             result.tokens_before,
             result.tokens_after,
-            result.messages_summarized,
-            result.messages_kept
+            result.messages_summarized
         );
 
         // Replace session messages with compacted version
@@ -642,27 +640,16 @@ impl AgentLoop {
     }
 
     /// Apply compaction result to the session
+    ///
+    /// Following Anthropic SDK approach: replace entire conversation with
+    /// a single USER message containing the summary wrapped in <summary> tags.
     fn apply_compaction_result(&mut self, result: &crate::context::CompactResult) {
         // Clear existing messages
         self.session.clear();
 
-        // Add the summary as a system message (but keep original system prompt)
-        // The summary becomes part of the conversation context
-        self.session.messages.push(ChatMessage::system(&result.summary.content));
-
-        // Add back the kept messages, converting from Message to ChatMessage
-        for msg in &result.kept_messages {
-            let chat_msg = match msg.role {
-                MessageRole::User => ChatMessage::user(&msg.content),
-                MessageRole::Assistant => ChatMessage::assistant(&msg.content),
-                MessageRole::System => ChatMessage::system(&msg.content),
-                MessageRole::Tool => {
-                    // Tool results were stored as user messages with special format
-                    ChatMessage::user(&msg.content)
-                }
-            };
-            self.session.messages.push(chat_msg);
-        }
+        // Add the summary as a single USER message (following Anthropic SDK)
+        // The summary contains <summary>...</summary> tags
+        self.session.messages.push(ChatMessage::user(&result.summary.content));
     }
 
     /// Emit an output

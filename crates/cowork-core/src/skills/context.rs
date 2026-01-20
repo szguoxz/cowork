@@ -62,8 +62,6 @@ impl Skill for CompactSkill {
                 "preserve_instructions": preserve_instructions,
                 "config": {
                     "use_llm": config.use_llm,
-                    "target_ratio": config.target_ratio,
-                    "min_keep_recent": config.min_keep_recent,
                 }
             }))
         })
