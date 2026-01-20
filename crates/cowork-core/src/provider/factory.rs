@@ -202,13 +202,15 @@ mod tests {
         let config_manager = ConfigManager::with_path(config_path).unwrap();
 
         // Set environment variable
-        std::env::set_var("ANTHROPIC_API_KEY", "test-key-from-env");
+        // SAFETY: Test runs in isolation, no concurrent access to this env var
+        unsafe { std::env::set_var("ANTHROPIC_API_KEY", "test-key-from-env") };
 
         let api_key = get_api_key(&config_manager, ProviderType::Anthropic);
         assert_eq!(api_key, Some("test-key-from-env".to_string()));
 
         // Clean up
-        std::env::remove_var("ANTHROPIC_API_KEY");
+        // SAFETY: Test runs in isolation, no concurrent access to this env var
+        unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
     }
 
     #[test]
@@ -227,7 +229,8 @@ mod tests {
         let config_manager = ConfigManager::with_path(config_path).unwrap();
 
         // Make sure no env var is set
-        std::env::remove_var("ANTHROPIC_API_KEY");
+        // SAFETY: Test runs in isolation, no concurrent access to this env var
+        unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
 
         assert!(!has_api_key_configured(&config_manager, ProviderType::Anthropic));
     }

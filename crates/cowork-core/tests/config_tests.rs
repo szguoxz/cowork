@@ -491,13 +491,15 @@ mod api_key_resolution_tests {
         };
 
         // Set env var
-        std::env::set_var("TEST_COWORK_API_KEY_12345", "env-key");
+        // SAFETY: Test runs in isolation, no concurrent access to this env var
+        unsafe { std::env::set_var("TEST_COWORK_API_KEY_12345", "env-key") };
 
         let key = provider.get_api_key();
         assert_eq!(key, Some("env-key".to_string()));
 
         // Clean up
-        std::env::remove_var("TEST_COWORK_API_KEY_12345");
+        // SAFETY: Test runs in isolation, no concurrent access to this env var
+        unsafe { std::env::remove_var("TEST_COWORK_API_KEY_12345") };
     }
 
     #[test]

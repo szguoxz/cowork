@@ -53,7 +53,10 @@ mod agent_loop;
 mod manager;
 mod types;
 
-pub use agent_loop::AgentLoop;
+pub use agent_loop::{
+    get_sessions_dir, list_saved_sessions, load_session, AgentLoop, SavedMessage, SavedSession,
+    SavedToolCall,
+};
 pub use manager::{ConfigFactory, OutputReceiver, SessionManager};
 pub use types::{
     QuestionInfo, QuestionOption, SessionConfig, SessionId, SessionInput, SessionOutput,

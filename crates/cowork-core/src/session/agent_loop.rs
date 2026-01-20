@@ -6,7 +6,10 @@
 //! - Executing tools based on approval config
 //! - Emitting outputs for display
 //! - Automatic context window management
+//! - Saving session state on close
 
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -34,6 +37,33 @@ struct LlmToolCall {
     id: String,
     name: String,
     arguments: serde_json::Value,
+}
+
+/// Saved message for persistence
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedMessage {
+    pub role: String,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<SavedToolCall>,
+}
+
+/// Saved tool call for persistence
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+/// Saved session state for persistence
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedSession {
+    pub id: String,
+    pub name: String,
+    pub messages: Vec<SavedMessage>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// The unified agent loop
@@ -161,12 +191,13 @@ impl AgentLoop {
                         self.emit(SessionOutput::error(e.to_string())).await;
                     }
                 }
-                SessionInput::Stop => {
-                    info!("Stop signal received for session: {}", self.session_id);
-                    self.emit(SessionOutput::stopped()).await;
-                    break;
-                }
             }
+        }
+
+        // Channel closed - save session before exiting
+        info!("Saving session {} before exit", self.session_id);
+        if let Err(e) = self.save_session().await {
+            error!("Failed to save session {}: {}", self.session_id, e);
         }
 
         info!("Agent loop ended for session: {}", self.session_id);
@@ -644,6 +675,103 @@ impl AgentLoop {
             error!("Failed to emit output: {}", e);
         }
     }
+
+    /// Save session to disk
+    async fn save_session(&self) -> Result<()> {
+        // Don't save empty sessions
+        if self.session.messages.is_empty() {
+            debug!("Session {} has no messages, skipping save", self.session_id);
+            return Ok(());
+        }
+
+        // Get sessions directory
+        let sessions_dir = get_sessions_dir()?;
+        std::fs::create_dir_all(&sessions_dir)?;
+
+        // Convert ChatMessages to SavedMessages
+        let messages: Vec<SavedMessage> = self
+            .session
+            .messages
+            .iter()
+            .map(|cm| SavedMessage {
+                role: cm.role.clone(),
+                content: cm.content.clone(),
+                tool_calls: cm
+                    .tool_calls
+                    .iter()
+                    .map(|tc| SavedToolCall {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        arguments: tc.arguments.clone(),
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        let now = chrono::Utc::now();
+        let saved = SavedSession {
+            id: self.session_id.clone(),
+            name: format!("Session {}", self.session_id),
+            messages,
+            created_at: now, // TODO: track actual creation time
+            updated_at: now,
+        };
+
+        // Write to file
+        let path = sessions_dir.join(format!("{}.json", self.session_id));
+        let json = serde_json::to_string_pretty(&saved)?;
+        std::fs::write(&path, json)?;
+
+        info!("Saved session {} to {:?}", self.session_id, path);
+        Ok(())
+    }
+}
+
+/// Get the sessions directory path
+pub fn get_sessions_dir() -> Result<PathBuf> {
+    let base = dirs::data_dir()
+        .map(|p| p.join("cowork"))
+        .unwrap_or_else(|| PathBuf::from(".cowork"));
+    Ok(base.join("sessions"))
+}
+
+/// Load a saved session by ID
+pub fn load_session(session_id: &str) -> Result<Option<SavedSession>> {
+    let path = get_sessions_dir()?.join(format!("{}.json", session_id));
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let json = std::fs::read_to_string(&path)?;
+    let saved: SavedSession = serde_json::from_str(&json)?;
+    Ok(Some(saved))
+}
+
+/// List all saved sessions
+pub fn list_saved_sessions() -> Result<Vec<SavedSession>> {
+    let sessions_dir = get_sessions_dir()?;
+    if !sessions_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut sessions = Vec::new();
+    for entry in std::fs::read_dir(&sessions_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().map_or(false, |ext| ext == "json") {
+            match std::fs::read_to_string(&path) {
+                Ok(json) => match serde_json::from_str::<SavedSession>(&json) {
+                    Ok(session) => sessions.push(session),
+                    Err(e) => warn!("Failed to parse session {:?}: {}", path, e),
+                },
+                Err(e) => warn!("Failed to read session {:?}: {}", path, e),
+            }
+        }
+    }
+
+    // Sort by updated_at descending (most recent first)
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(sessions)
 }
 
 #[cfg(test)]

@@ -350,9 +350,6 @@ async fn run_one_shot(
                 // Done processing
                 break;
             }
-            SessionOutput::Stopped => {
-                break;
-            }
             _ => {}
         }
     }
@@ -670,16 +667,10 @@ async fn run_chat(
                                     }
                                     println!("{}", style(format!("Error: {}", message)).red());
                                 }
-                                SessionOutput::Stopped => {
-                                    if let Some(s) = spinner.take() {
-                                        s.finish_and_clear();
-                                    }
-                                    break;
-                                }
                             }
                         }
                         None => {
-                            // Channel closed
+                            // Channel closed - session ended
                             break;
                         }
                     }

@@ -27,8 +27,6 @@ pub enum SessionInput {
         request_id: String,
         answers: HashMap<String, String>,
     },
-    /// Stop the session
-    Stop,
 }
 
 impl SessionInput {
@@ -60,11 +58,6 @@ impl SessionInput {
             request_id: request_id.into(),
             answers,
         }
-    }
-
-    /// Create a stop input
-    pub fn stop() -> Self {
-        Self::Stop
     }
 }
 
@@ -109,8 +102,6 @@ pub enum SessionOutput {
     },
     /// Error occurred
     Error { message: String },
-    /// Session stopped
-    Stopped,
 }
 
 impl SessionOutput {
@@ -195,11 +186,6 @@ impl SessionOutput {
         Self::Error {
             message: message.into(),
         }
-    }
-
-    /// Create a stopped output
-    pub fn stopped() -> Self {
-        Self::Stopped
     }
 }
 

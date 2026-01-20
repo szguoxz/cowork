@@ -936,11 +936,13 @@ mod tests {
         };
 
         // Set env var
-        std::env::set_var("TEST_API_KEY_12345", "test-key");
+        // SAFETY: Test runs in isolation, no concurrent access to this env var
+        unsafe { std::env::set_var("TEST_API_KEY_12345", "test-key") };
         assert_eq!(config.get_api_key(), Some("test-key".to_string()));
 
         // Clean up
-        std::env::remove_var("TEST_API_KEY_12345");
+        // SAFETY: Test runs in isolation, no concurrent access to this env var
+        unsafe { std::env::remove_var("TEST_API_KEY_12345") };
     }
 
     #[test]

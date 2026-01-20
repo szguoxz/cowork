@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::agent_loop::AgentLoop;
 use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
@@ -140,27 +140,14 @@ impl SessionManager {
     }
 
     /// Stop a specific session
+    ///
+    /// Simply removes the session from the registry, which drops the input sender.
+    /// The agent loop will detect the closed channel and save the session before exiting.
     pub async fn stop_session(&self, session_id: &str) -> Result<()> {
-        let tx = {
-            let sessions = self.sessions.read().await;
-            sessions.get(session_id).cloned()
-        };
-
-        if let Some(tx) = tx {
-            // Send stop signal
-            if let Err(e) = tx.send(SessionInput::Stop).await {
-                warn!("Failed to send stop to session {}: {}", session_id, e);
-            }
-
-            // Remove from registry
-            {
-                let mut sessions = self.sessions.write().await;
-                sessions.remove(session_id);
-            }
-
+        let mut sessions = self.sessions.write().await;
+        if sessions.remove(session_id).is_some() {
             info!("Stopped session: {}", session_id);
         }
-
         Ok(())
     }
 

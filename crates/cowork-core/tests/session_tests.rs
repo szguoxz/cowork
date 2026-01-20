@@ -150,18 +150,11 @@ mod session_input_tests {
     }
 
     #[test]
-    fn test_stop_creation() {
-        let input = SessionInput::stop();
-        assert!(matches!(input, SessionInput::Stop));
-    }
-
-    #[test]
     fn test_input_serialization_roundtrip() {
         let inputs = vec![
             SessionInput::user_message("test message"),
             SessionInput::approve_tool("tool-1"),
             SessionInput::reject_tool("tool-2", Some("reason".to_string())),
-            SessionInput::stop(),
         ];
 
         for input in inputs {
@@ -315,12 +308,6 @@ mod session_output_tests {
     }
 
     #[test]
-    fn test_stopped_creation() {
-        let output = SessionOutput::stopped();
-        assert!(matches!(output, SessionOutput::Stopped));
-    }
-
-    #[test]
     fn test_question_output_creation() {
         use cowork_core::session::{QuestionInfo, QuestionOption};
 
@@ -415,7 +402,6 @@ mod session_output_tests {
             SessionOutput::tool_start("t1", "tool", serde_json::json!({})),
             SessionOutput::tool_done("t1", "tool", true, "output"),
             SessionOutput::error("error message"),
-            SessionOutput::stopped(),
         ];
 
         for output in outputs {
