@@ -451,7 +451,7 @@ mod tests {
         let anthropic_tiers = ModelTiers::anthropic();
         assert_eq!(
             get_model_for_tier(&ModelTier::Balanced, &anthropic_tiers),
-            "claude-sonnet-4-20250514"
+            "claude-opus-4-20250514"
         );
         assert_eq!(
             get_model_for_tier(&ModelTier::Powerful, &anthropic_tiers),
@@ -466,7 +466,7 @@ mod tests {
         let openai_tiers = ModelTiers::openai();
         assert_eq!(
             get_model_for_tier(&ModelTier::Balanced, &openai_tiers),
-            "gpt-4o"
+            "gpt-5"
         );
         assert_eq!(
             get_model_for_tier(&ModelTier::Fast, &openai_tiers),

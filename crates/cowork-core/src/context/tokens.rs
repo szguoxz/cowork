@@ -12,6 +12,8 @@ use tiktoken_rs::{cl100k_base, CoreBPE};
 pub struct TokenCounter {
     /// Provider type for model-specific counting
     provider: ProviderType,
+    /// Model name for precise context limits
+    model: Option<String>,
     /// Tiktoken encoder (when feature is enabled)
     #[cfg(feature = "tiktoken")]
     encoder: Option<CoreBPE>,
@@ -23,12 +25,40 @@ impl TokenCounter {
         {
             // Use cl100k_base encoding (used by GPT-4, Claude, etc.)
             let encoder = cl100k_base().ok();
-            Self { provider, encoder }
+            Self {
+                provider,
+                model: None,
+                encoder,
+            }
         }
 
         #[cfg(not(feature = "tiktoken"))]
         {
-            Self { provider }
+            Self {
+                provider,
+                model: None,
+            }
+        }
+    }
+
+    /// Create a token counter with a specific model
+    pub fn with_model(provider: ProviderType, model: impl Into<String>) -> Self {
+        #[cfg(feature = "tiktoken")]
+        {
+            let encoder = cl100k_base().ok();
+            Self {
+                provider,
+                model: Some(model.into()),
+                encoder,
+            }
+        }
+
+        #[cfg(not(feature = "tiktoken"))]
+        {
+            Self {
+                provider,
+                model: Some(model.into()),
+            }
         }
     }
 
@@ -109,14 +139,31 @@ impl TokenCounter {
     }
 
     /// Get the context limit for the current provider/model
+    ///
+    /// Uses model-specific limits when available, falls back to provider defaults.
     pub fn context_limit(&self) -> usize {
-        match self.provider {
-            ProviderType::Anthropic => 200_000,  // Claude 3.5 Sonnet
-            ProviderType::OpenAI => 128_000,     // GPT-4o
-            ProviderType::Gemini => 1_000_000,   // Gemini 1.5
+        use crate::provider::model_listing::get_model_context_limit;
+
+        // Check model-specific limits first using centralized function
+        if let Some(ref model) = self.model {
+            if let Some(limit) = get_model_context_limit(self.provider, model) {
+                return limit;
+            }
+        }
+
+        // Fall back to provider defaults
+        Self::provider_default_limit(self.provider)
+    }
+
+    /// Get default context limit for a provider (when model is unknown)
+    fn provider_default_limit(provider: ProviderType) -> usize {
+        match provider {
+            ProviderType::Anthropic => 200_000,  // Claude 4.5/Sonnet 4 default
+            ProviderType::OpenAI => 256_000,     // GPT-5 default
+            ProviderType::Gemini => 1_000_000,   // Gemini 2.x
             ProviderType::Cohere => 128_000,     // Command R+
             ProviderType::Groq => 128_000,       // Llama 3
-            ProviderType::DeepSeek => 64_000,    // DeepSeek
+            ProviderType::DeepSeek => 131_072,   // DeepSeek V3
             ProviderType::XAI => 131_072,        // Grok 2
             ProviderType::Perplexity => 128_000, // Sonar
             ProviderType::Together => 128_000,   // Varies by model
@@ -195,7 +242,7 @@ mod tests {
         assert_eq!(anthropic.context_limit(), 200_000);
 
         let openai = TokenCounter::new(ProviderType::OpenAI);
-        assert_eq!(openai.context_limit(), 128_000);
+        assert_eq!(openai.context_limit(), 256_000); // GPT-5 default
 
         let gemini = TokenCounter::new(ProviderType::Gemini);
         assert_eq!(gemini.context_limit(), 1_000_000);
@@ -223,5 +270,66 @@ mod tests {
         let counter = TokenCounter::new(ProviderType::Anthropic);
         // When tiktoken feature is enabled, it should be available
         assert!(counter.is_using_tiktoken());
+    }
+
+    #[test]
+    fn test_model_specific_limits() {
+        // Claude models
+        let claude_sonnet = TokenCounter::with_model(ProviderType::Anthropic, "claude-3-5-sonnet-20241022");
+        assert_eq!(claude_sonnet.context_limit(), 200_000);
+
+        let claude_haiku = TokenCounter::with_model(ProviderType::Anthropic, "claude-3-haiku");
+        assert_eq!(claude_haiku.context_limit(), 200_000);
+
+        // GPT-4 models
+        let gpt4o = TokenCounter::with_model(ProviderType::OpenAI, "gpt-4o");
+        assert_eq!(gpt4o.context_limit(), 128_000);
+
+        let gpt4_turbo = TokenCounter::with_model(ProviderType::OpenAI, "gpt-4-turbo");
+        assert_eq!(gpt4_turbo.context_limit(), 128_000);
+
+        let gpt4_base = TokenCounter::with_model(ProviderType::OpenAI, "gpt-4");
+        assert_eq!(gpt4_base.context_limit(), 8_192);
+
+        let gpt35 = TokenCounter::with_model(ProviderType::OpenAI, "gpt-3.5-turbo");
+        assert_eq!(gpt35.context_limit(), 4_096);
+
+        let gpt35_16k = TokenCounter::with_model(ProviderType::OpenAI, "gpt-3.5-turbo-16k");
+        assert_eq!(gpt35_16k.context_limit(), 16_385);
+
+        // GPT-5 models (new)
+        let gpt5 = TokenCounter::with_model(ProviderType::OpenAI, "gpt-5");
+        assert_eq!(gpt5.context_limit(), 256_000);
+
+        // DeepSeek models
+        let deepseek = TokenCounter::with_model(ProviderType::DeepSeek, "deepseek-chat");
+        assert_eq!(deepseek.context_limit(), 131_072);
+
+        let deepseek_coder = TokenCounter::with_model(ProviderType::DeepSeek, "deepseek-coder");
+        assert_eq!(deepseek_coder.context_limit(), 128_000);
+
+        // Gemini models
+        let gemini_pro = TokenCounter::with_model(ProviderType::Gemini, "gemini-1.5-pro");
+        assert_eq!(gemini_pro.context_limit(), 1_000_000);
+
+        // Llama models
+        let llama3 = TokenCounter::with_model(ProviderType::Groq, "llama-3.1-70b");
+        assert_eq!(llama3.context_limit(), 128_000);
+
+        // Unknown model should fall back to provider default
+        let unknown = TokenCounter::with_model(ProviderType::OpenAI, "some-unknown-model");
+        assert_eq!(unknown.context_limit(), 256_000); // OpenAI default (GPT-5 era)
+    }
+
+    #[test]
+    fn test_model_limit_via_provider_module() {
+        use crate::provider::model_listing::get_model_context_limit;
+
+        // Test via the centralized function
+        assert_eq!(get_model_context_limit(ProviderType::Anthropic, "claude-3-opus"), Some(200_000));
+        assert_eq!(get_model_context_limit(ProviderType::OpenAI, "gpt-4o-mini"), Some(128_000));
+        assert_eq!(get_model_context_limit(ProviderType::OpenAI, "gpt-5"), Some(256_000));
+        assert_eq!(get_model_context_limit(ProviderType::OpenAI, "o1-preview"), Some(200_000));
+        assert_eq!(get_model_context_limit(ProviderType::DeepSeek, "deepseek-chat"), Some(131_072));
     }
 }

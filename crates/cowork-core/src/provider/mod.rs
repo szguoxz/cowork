@@ -13,7 +13,7 @@
 
 pub mod factory;
 mod genai_provider;
-mod model_listing;
+pub mod model_listing;
 
 pub use factory::{
     create_provider_from_config, create_provider_from_provider_config, create_provider_with_settings,
@@ -23,7 +23,7 @@ pub use genai_provider::{
     create_provider, models, CompletionResult, GenAIProvider, PendingToolCall, ProviderType,
     StreamChunk,
 };
-pub use model_listing::{fetch_models, ModelInfo};
+pub use model_listing::{fetch_models, get_model_context_limit, ModelInfo};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -182,7 +182,7 @@ impl Default for ProviderConfig {
             provider_type: ProviderType::Anthropic,
             api_key: None,
             base_url: None,
-            model: "claude-sonnet-4-20250514".to_string(),
+            model: "claude-opus-4-20250514".to_string(),
             default_max_tokens: 4096,
         }
     }

@@ -239,7 +239,7 @@ impl ModelTiers {
     pub fn anthropic() -> Self {
         Self {
             fast: "claude-3-5-haiku-20241022".to_string(),
-            balanced: "claude-sonnet-4-20250514".to_string(),
+            balanced: "claude-opus-4-20250514".to_string(),
             powerful: "claude-opus-4-20250514".to_string(),
         }
     }
@@ -248,8 +248,8 @@ impl ModelTiers {
     pub fn openai() -> Self {
         Self {
             fast: "gpt-4o-mini".to_string(),
-            balanced: "gpt-4o".to_string(),
-            powerful: "o1".to_string(),
+            balanced: "gpt-5".to_string(),
+            powerful: "gpt-5".to_string(),
         }
     }
 
@@ -441,7 +441,7 @@ impl ProviderConfig {
             provider_type: "anthropic".to_string(),
             api_key: None,
             api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
-            model: "claude-sonnet-4-20250514".to_string(),
+            model: "claude-opus-4-20250514".to_string(),
             model_tiers: None, // Uses ModelTiers::anthropic() as default
             base_url: None,
             default_max_tokens: 4096,
@@ -455,7 +455,7 @@ impl ProviderConfig {
             provider_type: "openai".to_string(),
             api_key: None,
             api_key_env: Some("OPENAI_API_KEY".to_string()),
-            model: "gpt-4o".to_string(),
+            model: "gpt-5".to_string(),
             model_tiers: None, // Uses ModelTiers::openai() as default
             base_url: None,
             default_max_tokens: 4096,
@@ -897,7 +897,7 @@ mod tests {
         // Check default provider settings
         let anthropic = config.get_default_provider().unwrap();
         assert_eq!(anthropic.provider_type, "anthropic");
-        assert_eq!(anthropic.model, "claude-sonnet-4-20250514");
+        assert_eq!(anthropic.model, "claude-opus-4-20250514");
     }
 
     #[test]
@@ -906,10 +906,10 @@ mod tests {
 
         // Check each provider
         let anthropic = config.get_provider("anthropic").unwrap();
-        assert_eq!(anthropic.model, "claude-sonnet-4-20250514");
+        assert_eq!(anthropic.model, "claude-opus-4-20250514");
 
         let openai = config.get_provider("openai").unwrap();
-        assert_eq!(openai.model, "gpt-4o");
+        assert_eq!(openai.model, "gpt-5");
 
         let gemini = config.get_provider("gemini").unwrap();
         assert_eq!(gemini.model, "gemini-1.5-pro");

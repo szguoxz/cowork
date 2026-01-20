@@ -23,6 +23,110 @@ pub struct ModelInfo {
     pub recommended: bool,
 }
 
+/// Get context window limit for a model without making API calls
+///
+/// This uses hardcoded known values for common models. Returns None if unknown.
+/// For accurate real-time values, use `fetch_models` and check `context_window`.
+pub fn get_model_context_limit(provider: ProviderType, model: &str) -> Option<usize> {
+    let model_lower = model.to_lowercase();
+
+    match provider {
+        ProviderType::Anthropic => get_anthropic_context_window(&model_lower),
+        ProviderType::OpenAI => get_openai_context_window(&model_lower).map(|v| v as usize),
+        ProviderType::DeepSeek => get_deepseek_context_window(&model_lower).map(|v| v as usize),
+        ProviderType::Gemini => get_gemini_context_window(&model_lower),
+        ProviderType::Groq => get_groq_context_window(&model_lower),
+        ProviderType::XAI => Some(131_072), // Grok models
+        ProviderType::Together | ProviderType::Fireworks | ProviderType::Nebius => {
+            get_open_source_context_window(&model_lower)
+        }
+        ProviderType::Ollama => get_ollama_context_window(&model_lower),
+        _ => None,
+    }
+}
+
+fn get_anthropic_context_window(model: &str) -> Option<usize> {
+    // All current Claude models have 200K context
+    if model.contains("claude") {
+        // Claude 2.0/instant had 100K
+        if model.contains("2.0") || model.contains("instant") {
+            return Some(100_000);
+        }
+        return Some(200_000);
+    }
+    None
+}
+
+fn get_gemini_context_window(model: &str) -> Option<usize> {
+    if model.contains("gemini") {
+        if model.contains("1.5") || model.contains("2.0") || model.contains("2.5") {
+            return Some(1_000_000);
+        }
+        if model.contains("1.0") {
+            return Some(32_000);
+        }
+        // Default for newer Gemini
+        return Some(1_000_000);
+    }
+    None
+}
+
+fn get_groq_context_window(model: &str) -> Option<usize> {
+    // Groq hosts various open source models
+    if model.contains("llama") {
+        if model.contains("3.1") || model.contains("3.2") || model.contains("3.3") {
+            return Some(128_000);
+        }
+        return Some(8_192);
+    }
+    if model.contains("mixtral") {
+        return Some(32_000);
+    }
+    Some(32_000) // Conservative default for Groq
+}
+
+fn get_open_source_context_window(model: &str) -> Option<usize> {
+    // Common open source models hosted on Together, Fireworks, etc.
+    if model.contains("llama") {
+        if model.contains("3.1") || model.contains("3.2") || model.contains("3.3") {
+            return Some(128_000);
+        }
+        return Some(8_192);
+    }
+    if model.contains("mistral") || model.contains("mixtral") {
+        if model.contains("large") {
+            return Some(128_000);
+        }
+        return Some(32_000);
+    }
+    if model.contains("qwen") {
+        return Some(32_000);
+    }
+    if model.contains("codellama") || model.contains("deepseek") {
+        return Some(16_000);
+    }
+    None
+}
+
+fn get_ollama_context_window(model: &str) -> Option<usize> {
+    // Ollama uses default context of 2048, but can be configured
+    // These are the model's native context limits
+    if model.contains("llama3") {
+        return Some(8_192);
+    }
+    if model.contains("mistral") || model.contains("mixtral") {
+        return Some(32_000);
+    }
+    if model.contains("codellama") {
+        return Some(16_000);
+    }
+    if model.contains("qwen") {
+        return Some(32_000);
+    }
+    // Conservative default for local models
+    Some(4_096)
+}
+
 impl ModelInfo {
     pub fn new(id: impl Into<String>) -> Self {
         Self {
@@ -126,6 +230,10 @@ async fn fetch_openai_models(client: &Client, api_key: &str) -> Result<Vec<Model
             if is_openai_recommended(&m.id) {
                 info = info.recommended();
             }
+            // Add context window if known
+            if let Some(ctx) = get_openai_context_window(&m.id) {
+                info = info.with_context_window(ctx);
+            }
             info
         })
         .collect();
@@ -133,24 +241,71 @@ async fn fetch_openai_models(client: &Client, api_key: &str) -> Result<Vec<Model
     let mut models = sort_models(chat_models);
 
     // Ensure we have at least the known good models at the top
-    ensure_model_exists(&mut models, "gpt-4o", true);
-    ensure_model_exists(&mut models, "gpt-4o-mini", false);
-    ensure_model_exists(&mut models, "o1", false);
-    ensure_model_exists(&mut models, "o1-mini", false);
+    ensure_model_exists_with_context(&mut models, "gpt-5", true, 256_000);
+    ensure_model_exists_with_context(&mut models, "gpt-4o", false, 128_000);
+    ensure_model_exists_with_context(&mut models, "gpt-4o-mini", false, 128_000);
+    ensure_model_exists_with_context(&mut models, "o1", false, 200_000);
 
     Ok(models)
 }
 
 fn is_openai_chat_model(id: &str) -> bool {
-    // Include GPT-4, GPT-3.5, o1 models, exclude embeddings, whisper, dall-e, etc.
-    (id.starts_with("gpt-4") || id.starts_with("gpt-3.5") || id.starts_with("o1") || id.starts_with("o3"))
+    // Include GPT-5, GPT-4, GPT-3.5, o1/o3 models, exclude embeddings, whisper, dall-e, etc.
+    (id.starts_with("gpt-5") || id.starts_with("gpt-4") || id.starts_with("gpt-3.5") || id.starts_with("o1") || id.starts_with("o3"))
         && !id.contains("instruct")
         && !id.contains("vision")
         && !id.contains("realtime")
 }
 
 fn is_openai_recommended(id: &str) -> bool {
-    id == "gpt-4o" || id == "gpt-4o-mini" || id == "o1"
+    id == "gpt-5" || id.starts_with("gpt-5-") || id == "gpt-4o" || id == "o1"
+}
+
+/// Get context window for an OpenAI model
+fn get_openai_context_window(model_id: &str) -> Option<u32> {
+    let id = model_id.to_lowercase();
+
+    // GPT-5 series (estimated based on typical progression)
+    if id.starts_with("gpt-5") {
+        return Some(256_000);
+    }
+
+    // o1/o3 reasoning models
+    if id.starts_with("o1") || id.starts_with("o3") {
+        return Some(200_000);
+    }
+
+    // GPT-4o and variants
+    if id.contains("gpt-4o") || id.contains("4o-") {
+        return Some(128_000);
+    }
+
+    // GPT-4 Turbo
+    if id.contains("gpt-4-turbo") || id.contains("gpt-4-1106") || id.contains("gpt-4-0125") {
+        return Some(128_000);
+    }
+
+    // GPT-4 32K
+    if id.contains("gpt-4-32k") {
+        return Some(32_768);
+    }
+
+    // Base GPT-4
+    if id.starts_with("gpt-4") {
+        return Some(8_192);
+    }
+
+    // GPT-3.5 16K
+    if id.contains("gpt-3.5") && id.contains("16k") {
+        return Some(16_385);
+    }
+
+    // Base GPT-3.5
+    if id.contains("gpt-3.5") {
+        return Some(4_096);
+    }
+
+    None
 }
 
 // ============================================================================
@@ -212,15 +367,22 @@ async fn fetch_anthropic_models(client: &Client, api_key: &str) -> Result<Vec<Mo
 
 fn get_anthropic_known_models() -> Vec<ModelInfo> {
     vec![
+        ModelInfo::new("claude-opus-4-20250514")
+            .with_name("Claude Opus 4.5")
+            .with_context_window(200_000)
+            .recommended(),
         ModelInfo::new("claude-sonnet-4-20250514")
             .with_name("Claude Sonnet 4")
-            .recommended(),
+            .with_context_window(200_000),
         ModelInfo::new("claude-3-5-sonnet-20241022")
-            .with_name("Claude 3.5 Sonnet"),
+            .with_name("Claude 3.5 Sonnet")
+            .with_context_window(200_000),
         ModelInfo::new("claude-3-5-haiku-20241022")
-            .with_name("Claude 3.5 Haiku"),
+            .with_name("Claude 3.5 Haiku")
+            .with_context_window(200_000),
         ModelInfo::new("claude-3-opus-20240229")
-            .with_name("Claude 3 Opus"),
+            .with_name("Claude 3 Opus")
+            .with_context_window(200_000),
     ]
 }
 
@@ -374,13 +536,7 @@ async fn fetch_deepseek_models(client: &Client, api_key: &str) -> Result<Vec<Mod
 
     if !response.status().is_success() {
         // Return known models if API fails
-        return Ok(vec![
-            ModelInfo::new("deepseek-chat")
-                .with_name("DeepSeek Chat")
-                .recommended(),
-            ModelInfo::new("deepseek-reasoner")
-                .with_name("DeepSeek Reasoner"),
-        ]);
+        return Ok(get_deepseek_known_models());
     }
 
     let models_response: OpenAIModelsResponse = response
@@ -397,11 +553,40 @@ async fn fetch_deepseek_models(client: &Client, api_key: &str) -> Result<Vec<Mod
             if recommended {
                 info = info.recommended();
             }
+            // Add context window
+            if let Some(ctx) = get_deepseek_context_window(&m.id) {
+                info = info.with_context_window(ctx);
+            }
             info
         })
         .collect();
 
     Ok(sort_models(models))
+}
+
+fn get_deepseek_known_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo::new("deepseek-chat")
+            .with_name("DeepSeek Chat")
+            .with_context_window(131_072)
+            .recommended(),
+        ModelInfo::new("deepseek-reasoner")
+            .with_name("DeepSeek Reasoner (R1)")
+            .with_context_window(131_072),
+        ModelInfo::new("deepseek-coder")
+            .with_name("DeepSeek Coder")
+            .with_context_window(128_000),
+    ]
+}
+
+fn get_deepseek_context_window(model_id: &str) -> Option<u32> {
+    let id = model_id.to_lowercase();
+    if id.contains("coder") {
+        Some(128_000)
+    } else {
+        // deepseek-chat, deepseek-reasoner, etc.
+        Some(131_072)
+    }
 }
 
 // ============================================================================
@@ -612,10 +797,15 @@ fn sort_models(mut models: Vec<ModelInfo>) -> Vec<ModelInfo> {
     models
 }
 
-/// Ensure a model exists in the list, adding it if missing
-fn ensure_model_exists(models: &mut Vec<ModelInfo>, id: &str, recommended: bool) {
+/// Ensure a model exists with context window, adding it if missing
+fn ensure_model_exists_with_context(
+    models: &mut Vec<ModelInfo>,
+    id: &str,
+    recommended: bool,
+    context_window: u32,
+) {
     if !models.iter().any(|m| m.id == id) {
-        let mut info = ModelInfo::new(id);
+        let mut info = ModelInfo::new(id).with_context_window(context_window);
         if recommended {
             info = info.recommended();
         }
@@ -623,6 +813,13 @@ fn ensure_model_exists(models: &mut Vec<ModelInfo>, id: &str, recommended: bool)
             models.insert(0, info);
         } else {
             models.push(info);
+        }
+    } else {
+        // Update existing model's context window if not set
+        if let Some(model) = models.iter_mut().find(|m| m.id == id) {
+            if model.context_window.is_none() {
+                model.context_window = Some(context_window);
+            }
         }
     }
 }

@@ -1,13 +1,21 @@
-import { Outlet, Link, useLocation } from 'react-router-dom'
-import { MessageSquare, Settings, Server, Puzzle, ChevronLeft, ChevronRight, History, HelpCircle, Sparkles } from 'lucide-react'
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
+import { MessageSquare, Settings, Server, Puzzle, ChevronLeft, ChevronRight, History, HelpCircle, Sparkles, Plus } from 'lucide-react'
 import { useState } from 'react'
+import { useSession } from '../context/SessionContext'
 
 export default function Layout() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const { createNewSession } = useSession()
   const [collapsed, setCollapsed] = useState(false)
 
+  const handleNewChat = () => {
+    createNewSession()
+    navigate('/')
+  }
+
   const navItems = [
-    { path: '/', icon: MessageSquare, label: 'Chat' },
+    { path: '/', icon: Plus, label: 'New Chat', onClick: handleNewChat },
     { path: '/sessions', icon: History, label: 'History' },
     { path: '/mcp', icon: Server, label: 'MCP Servers' },
     { path: '/skills', icon: Puzzle, label: 'Skills' },
@@ -40,7 +48,29 @@ export default function Layout() {
         <nav className="flex-1 p-2 space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon
-            const isActive = location.pathname === item.path
+            const isActive = location.pathname === item.path && !item.onClick
+
+            // Special "New Chat" button
+            if (item.onClick) {
+              return (
+                <button
+                  key={item.path}
+                  onClick={item.onClick}
+                  className={`
+                    flex items-center gap-3 px-3 py-2.5 rounded-lg w-full
+                    transition-all duration-200
+                    text-muted-foreground hover:text-primary hover:bg-primary/10 hover:border-primary/20 border border-transparent
+                    ${collapsed ? 'justify-center' : ''}
+                  `}
+                  title={collapsed ? item.label : undefined}
+                >
+                  <Icon className="w-5 h-5 shrink-0" />
+                  {!collapsed && (
+                    <span className="text-sm font-medium">{item.label}</span>
+                  )}
+                </button>
+              )
+            }
 
             return (
               <Link

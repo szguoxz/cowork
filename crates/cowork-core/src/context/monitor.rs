@@ -78,10 +78,34 @@ impl ContextMonitor {
         }
     }
 
+    /// Create a new context monitor with a specific model
+    ///
+    /// This provides more accurate context limits based on the model name.
+    pub fn with_model(provider: ProviderType, model: impl Into<String>) -> Self {
+        Self {
+            counter: TokenCounter::with_model(provider, model),
+            config: MonitorConfig::default(),
+            iteration_count: 0,
+        }
+    }
+
     /// Create a new context monitor with custom config
     pub fn with_config(provider: ProviderType, config: MonitorConfig) -> Self {
         Self {
             counter: TokenCounter::new(provider),
+            config,
+            iteration_count: 0,
+        }
+    }
+
+    /// Create a new context monitor with model and custom config
+    pub fn with_model_and_config(
+        provider: ProviderType,
+        model: impl Into<String>,
+        config: MonitorConfig,
+    ) -> Self {
+        Self {
+            counter: TokenCounter::with_model(provider, model),
             config,
             iteration_count: 0,
         }

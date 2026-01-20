@@ -5,14 +5,18 @@
 //! - Calling the LLM provider
 //! - Executing tools based on approval config
 //! - Emitting outputs for display
+//! - Automatic context window management
 
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
 use crate::approval::ToolApprovalConfig;
+use crate::context::{
+    CompactConfig, ContextMonitor, ConversationSummarizer, Message, MessageRole, SummarizerConfig,
+};
 use crate::error::Result;
-use crate::orchestration::{ChatSession, ToolCallInfo, ToolRegistryBuilder};
+use crate::orchestration::{ChatMessage, ChatSession, ToolCallInfo, ToolRegistryBuilder};
 use crate::provider::{CompletionResult, GenAIProvider};
 use crate::tools::{ToolDefinition, ToolRegistry};
 
@@ -55,6 +59,10 @@ pub struct AgentLoop {
     workspace_path: std::path::PathBuf,
     /// Pending tool calls awaiting approval
     pending_approvals: Vec<ToolCallInfo>,
+    /// Context monitor for tracking token usage
+    context_monitor: ContextMonitor,
+    /// Conversation summarizer for auto-compaction
+    summarizer: ConversationSummarizer,
 }
 
 impl AgentLoop {
@@ -94,6 +102,15 @@ impl AgentLoop {
 
         let tool_definitions = tool_registry.list();
 
+        // Initialize context monitor with provider and model for accurate limits
+        let context_monitor = match &config.model {
+            Some(model) => ContextMonitor::with_model(config.provider_type, model),
+            None => ContextMonitor::new(config.provider_type),
+        };
+
+        // Initialize summarizer with default config
+        let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
+
         Ok(Self {
             session_id,
             input_rx,
@@ -105,6 +122,8 @@ impl AgentLoop {
             approval_config: config.approval_config,
             workspace_path: config.workspace_path,
             pending_approvals: Vec::new(),
+            context_monitor,
+            summarizer,
         })
     }
 
@@ -179,6 +198,11 @@ impl AgentLoop {
                 return Err(crate::error::Error::Agent(
                     "Max iteration limit reached".to_string(),
                 ));
+            }
+
+            // Check and compact context if needed before calling LLM
+            if let Err(e) = self.check_and_compact_context().await {
+                warn!("Context compaction failed: {}, continuing anyway", e);
             }
 
             // Call LLM
@@ -491,6 +515,123 @@ impl AgentLoop {
         }
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Context Management
+    // ========================================================================
+
+    /// Convert ChatMessages to context Messages for token counting
+    fn chat_messages_to_context_messages(&self) -> Vec<Message> {
+        self.session
+            .messages
+            .iter()
+            .map(|cm| {
+                let role = match cm.role.as_str() {
+                    "user" => MessageRole::User,
+                    "assistant" => MessageRole::Assistant,
+                    "system" => MessageRole::System,
+                    _ => MessageRole::Tool,
+                };
+                Message::with_timestamp(role, &cm.content, cm.timestamp)
+            })
+            .collect()
+    }
+
+    /// Check context usage and compact if necessary
+    ///
+    /// This implements automatic context management similar to Claude Code:
+    /// - Calculates current token usage
+    /// - If above threshold (75%), triggers auto-compaction
+    /// - Uses LLM-powered summarization when possible, falls back to heuristics
+    async fn check_and_compact_context(&mut self) -> Result<()> {
+        let messages = self.chat_messages_to_context_messages();
+        let usage = self.context_monitor.calculate_usage(
+            &messages,
+            &self.session.system_prompt,
+            None, // No memory content for now
+        );
+
+        debug!(
+            "Context usage: {:.1}% ({}/{} tokens)",
+            usage.used_percentage * 100.0,
+            usage.used_tokens,
+            usage.limit_tokens
+        );
+
+        if !usage.should_compact {
+            return Ok(());
+        }
+
+        info!(
+            "Context threshold exceeded ({:.1}%), initiating auto-compaction",
+            usage.used_percentage * 100.0
+        );
+
+        // Emit compaction notification
+        self.emit(SessionOutput::thinking(format!(
+            "Context at {:.0}% - compacting conversation history...",
+            usage.used_percentage * 100.0
+        )))
+        .await;
+
+        // Use simple compaction (without LLM) to avoid recursive LLM calls
+        // during the agentic loop. LLM-powered compaction could cause issues
+        // if we're already at context limit.
+        let config = CompactConfig::auto().without_llm();
+        let result = self
+            .summarizer
+            .compact(
+                &messages,
+                self.context_monitor.counter(),
+                config,
+                None, // Don't use LLM for auto-compaction to avoid recursion
+            )
+            .await?;
+
+        info!(
+            "Compaction complete: {} -> {} tokens ({} messages summarized, {} kept)",
+            result.tokens_before,
+            result.tokens_after,
+            result.messages_summarized,
+            result.messages_kept
+        );
+
+        // Replace session messages with compacted version
+        self.apply_compaction_result(&result);
+
+        // Emit completion notification
+        self.emit(SessionOutput::thinking(format!(
+            "Compacted {} messages into summary ({} -> {} tokens)",
+            result.messages_summarized, result.tokens_before, result.tokens_after
+        )))
+        .await;
+
+        Ok(())
+    }
+
+    /// Apply compaction result to the session
+    fn apply_compaction_result(&mut self, result: &crate::context::CompactResult) {
+        // Clear existing messages
+        self.session.clear();
+
+        // Add the summary as a system message (but keep original system prompt)
+        // The summary becomes part of the conversation context
+        self.session.messages.push(ChatMessage::system(&result.summary.content));
+
+        // Add back the kept messages, converting from Message to ChatMessage
+        for msg in &result.kept_messages {
+            let chat_msg = match msg.role {
+                MessageRole::User => ChatMessage::user(&msg.content),
+                MessageRole::Assistant => ChatMessage::assistant(&msg.content),
+                MessageRole::System => ChatMessage::system(&msg.content),
+                MessageRole::Tool => {
+                    // Tool results were stored as user messages with special format
+                    ChatMessage::user(&msg.content)
+                }
+            };
+            self.session.messages.push(chat_msg);
+        }
     }
 
     /// Emit an output

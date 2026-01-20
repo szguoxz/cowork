@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { LoopOutput, Session } from '../bindings'
+import type { LoopOutput, Session, SessionProvider as SessionProviderType } from '../bindings'
 import { createSession, generateSessionId } from '../bindings'
 
 interface SessionContextType {
@@ -12,8 +12,9 @@ interface SessionContextType {
 
   // Session management
   setActiveSession: (id: string) => void
-  createNewSession: (name?: string) => string
+  createNewSession: (name?: string, provider?: SessionProviderType) => string
   closeSession: (id: string) => Promise<void>
+  updateSessionProvider: (id: string, provider: SessionProviderType) => void
 
   // Message sending
   sendMessage: (content: string, sessionId?: string) => Promise<void>
@@ -236,15 +237,19 @@ export function SessionProvider({ children }: SessionProviderProps) {
     }
   }, [sessions])
 
-  const createNewSession = useCallback((name?: string): string => {
+  const createNewSession = useCallback((name?: string, provider?: SessionProviderType): string => {
     const id = generateSessionId()
-    const session = createSession(id, name)
+    const session = createSession(id, name, provider)
     session.isReady = true
     session.isIdle = true
     setSessions(prev => new Map(prev).set(id, session))
     setActiveSessionId(id)
     return id
   }, [])
+
+  const updateSessionProvider = useCallback((id: string, provider: SessionProviderType) => {
+    updateSession(id, s => ({ ...s, provider }))
+  }, [updateSession])
 
   const closeSession = useCallback(async (id: string) => {
     try {
@@ -323,6 +328,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
     setActiveSession,
     createNewSession,
     closeSession,
+    updateSessionProvider,
     sendMessage,
     approveTool,
     rejectTool,

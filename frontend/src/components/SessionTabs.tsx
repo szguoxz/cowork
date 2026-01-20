@@ -12,11 +12,6 @@ interface SessionTabsProps {
 export default function SessionTabs({ sessions, activeId, onSelect, onNew, onClose }: SessionTabsProps) {
   const sessionList = Array.from(sessions.entries())
 
-  if (sessionList.length <= 1) {
-    // Don't show tabs if only one session
-    return null
-  }
-
   return (
     <div className="flex items-center gap-1 px-2 py-1.5 bg-card/50 border-b border-border overflow-x-auto">
       {sessionList.map(([id, session]) => (
@@ -59,10 +54,11 @@ export default function SessionTabs({ sessions, activeId, onSelect, onNew, onClo
 
       <button
         onClick={onNew}
-        className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-all"
-        title="New Session"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all border border-transparent hover:border-primary/20"
+        title="New Chat"
       >
         <Plus className="w-4 h-4" />
+        <span className="text-sm">New Chat</span>
       </button>
     </div>
   )

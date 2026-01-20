@@ -103,8 +103,8 @@ impl ProviderType {
     /// Get the default model for this provider
     pub fn default_model(&self) -> &'static str {
         match self {
-            ProviderType::OpenAI => "gpt-4o",
-            ProviderType::Anthropic => "claude-sonnet-4-20250514",
+            ProviderType::OpenAI => "gpt-5",
+            ProviderType::Anthropic => "claude-opus-4-20250514",
             ProviderType::Gemini => "gemini-2.0-flash",
             ProviderType::Cohere => "command-r-plus",
             ProviderType::Perplexity => "llama-3.1-sonar-large-128k-online",

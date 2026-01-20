@@ -249,7 +249,7 @@ mod tests {
 
         let tiers = get_model_tiers(&config_manager, ProviderType::Anthropic);
         assert_eq!(tiers.fast, "claude-3-5-haiku-20241022");
-        assert_eq!(tiers.balanced, "claude-sonnet-4-20250514");
+        assert_eq!(tiers.balanced, "claude-opus-4-20250514");
         assert_eq!(tiers.powerful, "claude-opus-4-20250514");
     }
 

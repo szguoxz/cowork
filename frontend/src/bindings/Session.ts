@@ -17,6 +17,11 @@ export interface Message {
   tool?: ToolInfo
 }
 
+export interface SessionProvider {
+  type: string  // 'anthropic', 'openai', 'deepseek', etc.
+  model: string
+}
+
 export interface Session {
   id: string
   name: string
@@ -24,19 +29,21 @@ export interface Session {
   isIdle: boolean
   isReady: boolean
   error: string | null
+  provider?: SessionProvider  // Per-session provider override
   createdAt: Date
   updatedAt: Date
 }
 
-export function createSession(id: string, name?: string): Session {
+export function createSession(id: string, name?: string, provider?: SessionProvider): Session {
   const now = new Date()
   return {
     id,
-    name: name || `Session ${id}`,
+    name: name || `Chat ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
     messages: [],
     isIdle: false,
     isReady: false,
     error: null,
+    provider,
     createdAt: now,
     updatedAt: now,
   }
