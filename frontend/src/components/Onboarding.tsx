@@ -75,16 +75,20 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
   const handleProviderSelect = (providerId: string) => {
     setSelectedProvider(providerId)
     setError(null)
-    // Auto-advance after selection
-    setTimeout(() => {
-      if (providerId === 'ollama') {
-        setApiKey('')
-        setStep('model')
-        fetchModelsForProvider(providerId, '')
-      } else {
-        setStep('apikey')
-      }
-    }, 150)
+  }
+
+  const handleProviderNext = () => {
+    if (!selectedProvider) {
+      setError('Please select a provider')
+      return
+    }
+    if (selectedProvider === 'ollama') {
+      setApiKey('')
+      setStep('model')
+      fetchModelsForProvider(selectedProvider, '')
+    } else {
+      setStep('apikey')
+    }
   }
 
   const fetchModelsForProvider = async (provider: string, key: string) => {
@@ -207,7 +211,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
                 Choose your AI provider:
               </p>
-              <div className="grid grid-cols-2 gap-2 max-h-[320px] overflow-y-auto pr-1">
+              <div className="grid grid-cols-2 gap-2 max-h-[280px] overflow-y-auto pr-1">
                 {PROVIDERS.map((provider) => (
                   <button
                     key={provider.id}
@@ -224,6 +228,19 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                   </button>
                 ))}
               </div>
+              {error && (
+                <p className="mt-2 text-sm text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-4 h-4" /> {error}
+                </p>
+              )}
+              <button
+                onClick={handleProviderNext}
+                disabled={!selectedProvider}
+                className="w-full mt-4 py-2.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
+              >
+                Next
+                <ArrowRight className="w-4 h-4" />
+              </button>
             </div>
           )}
 

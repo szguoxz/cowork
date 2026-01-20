@@ -67,9 +67,13 @@ function App() {
     )
   }
 
+  // Show onboarding INSTEAD of app (not as overlay)
+  if (showOnboarding) {
+    return <Onboarding onComplete={handleOnboardingComplete} />
+  }
+
   return (
     <BrowserRouter>
-      {showOnboarding && <Onboarding onComplete={handleOnboardingComplete} />}
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Chat />} />
