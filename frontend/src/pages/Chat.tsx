@@ -400,7 +400,10 @@ export default function Chat() {
           </div>
         )}
 
-        {messages.map((message) => {
+        {messages
+          // Filter out tool result messages (they're shown in the tool call cards)
+          .filter((m) => !(m.role === 'user' && m.content.startsWith('Tool result for ')))
+          .map((message) => {
           const { thinking, text } = message.role === 'assistant'
             ? parseThinking(message.content)
             : { thinking: null, text: message.content };
@@ -438,22 +441,24 @@ export default function Chat() {
               </div>
             )}
 
-            {/* Message bubble */}
-            <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div
-                className={`
-                  max-w-[80%] rounded-xl px-4 py-3
-                  ${message.role === 'user'
-                    ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white shadow-glow-sm'
-                    : 'bg-card border border-border text-foreground'
-                  }
-                `}
-              >
-                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
-                  {text || '(thinking...)'}
-                </pre>
+            {/* Message bubble - only show if there's text content or it's a user message */}
+            {(text || message.role === 'user') && (
+              <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`
+                    max-w-[80%] rounded-xl px-4 py-3
+                    ${message.role === 'user'
+                      ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white shadow-glow-sm'
+                      : 'bg-card border border-border text-foreground'
+                    }
+                  `}
+                >
+                  <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
+                    {text}
+                  </pre>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Tool calls */}
             {message.tool_calls && message.tool_calls.length > 0 && (
