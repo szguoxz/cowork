@@ -267,26 +267,37 @@ export default function Chat() {
     e.preventDefault()
     if (!input.trim() || isLoading || !sessionId) return
 
+    const userMessage = input
+    setInput('')
     setError(null)
     setIsLoading(true)
 
-    try {
-      await invoke<Message>('send_message', {
-        sessionId,
-        content: input,
-      })
+    // Add user message to UI immediately for responsiveness
+    const userMsg: Message = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: userMessage,
+      tool_calls: [],
+      timestamp: new Date().toISOString(),
+    }
+    setMessages((prev) => [...prev, userMsg])
 
-      // Fetch updated messages
-      const allMessages = await invoke<Message[]>('get_session_messages', {
+    try {
+      // Start the agentic loop which handles auto-approval based on config
+      // The loop runs in the background and emits events to update the UI
+      await invoke('start_loop', {
         sessionId,
+        prompt: userMessage,
       })
-      setMessages(allMessages)
-      setInput('')
+      // isLoopActive will be set to true by loop events
+      // isLoading is cleared since the request to start succeeded
+      setIsLoading(false)
     } catch (err) {
       console.error('Send error:', err)
       setError(String(err))
-    } finally {
       setIsLoading(false)
+      // Refresh to get actual state on error
+      await refreshMessages()
     }
   }
 
@@ -656,11 +667,11 @@ export default function Chat() {
               focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50
               transition-all duration-200 hover:border-border-hover
             "
-            disabled={isLoading || !sessionId}
+            disabled={isLoading || isLoopActive || !sessionId}
           />
           <Button
             type="submit"
-            disabled={isLoading || !input.trim() || !sessionId}
+            disabled={isLoading || isLoopActive || !input.trim() || !sessionId}
             variant="gradient"
             size="lg"
             className="px-6"
