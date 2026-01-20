@@ -73,6 +73,7 @@ export default function Chat() {
             break
 
           case 'tool_start':
+            console.log('tool_start:', output.id, output.name)
             setMessages(prev => [...prev, {
               id: output.id,
               type: 'tool',
@@ -101,19 +102,23 @@ export default function Chat() {
             break
 
           case 'tool_done':
-            console.log('tool_done:', output.id, 'success:', output.success, 'output length:', output.output?.length || 0)
-            setMessages(prev => prev.map(msg =>
-              msg.tool?.id === output.id
-                ? {
-                    ...msg,
-                    tool: {
-                      ...msg.tool!,
-                      status: output.success ? 'done' : 'failed',
-                      output: output.output,
+            console.log('tool_done:', output.id, 'success:', output.success, 'output:', output.output?.substring(0, 100))
+            setMessages(prev => {
+              const found = prev.some(msg => msg.tool?.id === output.id)
+              console.log('tool_done: found matching message:', found)
+              return prev.map(msg =>
+                msg.tool?.id === output.id
+                  ? {
+                      ...msg,
+                      tool: {
+                        ...msg.tool!,
+                        status: output.success ? 'done' : 'failed',
+                        output: output.output,
+                      }
                     }
-                  }
-                : msg
-            ))
+                  : msg
+              )
+            })
             break
 
           case 'error':

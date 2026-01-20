@@ -213,6 +213,7 @@ impl SimpleLoop {
 
                 if should_auto {
                     // Auto-execute
+                    tracing::info!("Executing tool: {} with id: {}", tc.name, tc.id);
                     self.emit(LoopOutput::ToolStart {
                         id: tc.id.clone(),
                         name: tc.name.clone(),
@@ -220,6 +221,7 @@ impl SimpleLoop {
                     });
 
                     let result = self.execute_tool(&tc.name, &tc.arguments).await;
+                    tracing::info!("Tool {} result: {:?}", tc.name, result.as_ref().map(|s| s.len()).unwrap_or(0));
                     let (success, output) = match result {
                         Ok(out) => (true, out),
                         Err(e) => (false, e),
