@@ -6,13 +6,13 @@
 //! - stop_loop: Stop the loop
 
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
 
 use cowork_core::provider::create_provider_from_provider_config;
 use cowork_core::{ApprovalLevel, ToolApprovalConfig};
 
-use crate::loop_channel::LoopInput;
+use crate::loop_channel::{LoopInput, LoopOutput};
 use crate::simple_loop::{LoopInputHandle, SimpleLoop};
 use crate::state::AppState;
 
@@ -25,21 +25,26 @@ pub async fn start_loop(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    tracing::info!("start_loop called");
+
     // Check if loop is already running
     {
         let guard = state.loop_input.read().await;
         if guard.is_some() {
+            tracing::warn!("Loop already running");
             return Err("Loop already running".to_string());
         }
     }
 
     // Get provider from config
+    tracing::info!("Getting provider config...");
     let cm = state.config_manager.read().await;
     let provider_config = cm
         .config()
         .get_default_provider()
         .ok_or_else(|| "No provider configured".to_string())?;
 
+    tracing::info!("Creating provider...");
     let provider = create_provider_from_provider_config(provider_config)
         .map_err(|e| e.to_string())?;
 
@@ -65,7 +70,16 @@ pub async fn start_loop(
         *guard = Some(handle);
     }
 
-    // Create the loop
+    // Emit Ready and Idle BEFORE spawning (synchronously, so frontend listener catches them)
+    tracing::info!("Emitting Ready and Idle events...");
+    if let Err(e) = app.emit("loop_output", &LoopOutput::Ready) {
+        tracing::error!("Failed to emit Ready: {}", e);
+    }
+    if let Err(e) = app.emit("loop_output", &LoopOutput::Idle) {
+        tracing::error!("Failed to emit Idle: {}", e);
+    }
+
+    // Create the loop (after emitting initial events)
     let simple_loop = SimpleLoop::new(
         input_rx,
         app,
@@ -75,11 +89,13 @@ pub async fn start_loop(
         approval_config,
     );
 
-    // Run the loop in background
+    // Run the loop in background (it will skip initial Ready/Idle since we emitted them)
+    tracing::info!("Spawning loop task...");
     tokio::spawn(async move {
-        simple_loop.run().await;
+        simple_loop.run_without_initial_events().await;
     });
 
+    tracing::info!("start_loop returning Ok");
     Ok(())
 }
 

@@ -64,6 +64,7 @@ impl SimpleLoop {
 
     /// Send output to frontend
     fn emit(&self, output: LoopOutput) {
+        tracing::debug!("Emitting event '{}': {:?}", self.event_name, output);
         if let Err(e) = self.app.emit(&self.event_name, &output) {
             tracing::error!("Failed to emit: {}", e);
         }
@@ -71,8 +72,21 @@ impl SimpleLoop {
 
     /// Run the loop - this blocks until Stop is received
     pub async fn run(mut self) {
+        tracing::info!("SimpleLoop starting, emitting Ready and Idle...");
         self.emit(LoopOutput::Ready);
         self.emit(LoopOutput::Idle);
+        self.run_loop().await;
+    }
+
+    /// Run without emitting initial Ready/Idle (used when caller emits them synchronously)
+    pub async fn run_without_initial_events(mut self) {
+        tracing::info!("SimpleLoop starting (initial events already emitted)...");
+        self.run_loop().await;
+    }
+
+    /// Internal loop logic
+    async fn run_loop(&mut self) {
+        tracing::info!("SimpleLoop now waiting for input...");
 
         loop {
             // Wait for user input (this blocks)

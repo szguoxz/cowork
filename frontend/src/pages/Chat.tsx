@@ -39,10 +39,12 @@ export default function Chat() {
     let unlistenFn: (() => void) | null = null
 
     const init = async () => {
+      console.log('Setting up event listener...')
+
       // 1. Set up event listener FIRST (before starting loop)
       unlistenFn = await listen<LoopOutput>('loop_output', (event) => {
         const output = event.payload
-        console.log('Loop output:', output)
+        console.log('Loop output received:', output)
 
         switch (output.type) {
           case 'ready':
@@ -125,14 +127,21 @@ export default function Chat() {
         }
       })
 
+      console.log('Event listener set up, checking API key...')
+
       // 2. Check API key
       try {
         const hasKey = await invoke<boolean>('check_api_key')
+        console.log('API key check result:', hasKey)
         setHasApiKey(hasKey)
 
         // 3. Start the loop (listener is already active)
         if (hasKey) {
+          console.log('Starting loop...')
           await invoke('start_loop')
+          console.log('start_loop returned successfully')
+          // Set started immediately - the Ready event will confirm but this ensures we progress
+          setIsLoopStarted(true)
         }
       } catch (err) {
         console.error('Init error:', err)
