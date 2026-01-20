@@ -1,168 +1,44 @@
 import { useState, useRef, useEffect } from 'react'
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
 import { Send, Loader2, Check, X, Terminal, AlertCircle, Sparkles } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import type { LoopOutput } from '../bindings'
-
-interface ToolInfo {
-  id: string
-  name: string
-  arguments: Record<string, unknown>
-  status: 'pending' | 'executing' | 'done' | 'failed'
-  output?: string
-}
-
-interface Message {
-  id: string
-  type: 'user' | 'assistant' | 'tool'
-  content: string
-  tool?: ToolInfo
-}
+import SessionTabs from '../components/SessionTabs'
+import { useSession } from '../context/SessionContext'
 
 export default function Chat() {
+  const {
+    sessions,
+    activeSessionId,
+    isInitialized,
+    hasApiKey,
+    setActiveSession,
+    createNewSession,
+    closeSession,
+    sendMessage,
+    approveTool,
+    rejectTool,
+    getActiveSession,
+  } = useSession()
+
   const [input, setInput] = useState('')
-  const [messages, setMessages] = useState<Message[]>([])
-  const [isIdle, setIsIdle] = useState(false)
-  const [isLoopStarted, setIsLoopStarted] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const session = getActiveSession()
+  const messages = session?.messages || []
+  const isIdle = session?.isIdle ?? false
+  const isReady = session?.isReady ?? false
 
   // Scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Initialize: set up listener FIRST, then start loop
+  // Sync session error to local error state
   useEffect(() => {
-    let unlistenFn: (() => void) | null = null
-
-    const init = async () => {
-      console.log('Setting up event listener...')
-
-      // 1. Set up event listener FIRST (before starting loop)
-      unlistenFn = await listen<LoopOutput>('loop_output', (event) => {
-        const output = event.payload
-        console.log('Loop output received:', output)
-
-        switch (output.type) {
-          case 'ready':
-            setIsLoopStarted(true)
-            break
-
-          case 'idle':
-            setIsIdle(true)
-            break
-
-          case 'user_message':
-            setIsIdle(false)
-            setMessages(prev => [...prev, {
-              id: output.id,
-              type: 'user',
-              content: output.content,
-            }])
-            break
-
-          case 'assistant_message':
-            setMessages(prev => [...prev, {
-              id: output.id,
-              type: 'assistant',
-              content: output.content,
-            }])
-            break
-
-          case 'tool_start':
-            console.log('tool_start:', output.id, output.name)
-            setMessages(prev => [...prev, {
-              id: output.id,
-              type: 'tool',
-              content: '',
-              tool: {
-                id: output.id,
-                name: output.name,
-                arguments: output.arguments as Record<string, unknown>,
-                status: 'executing',
-              }
-            }])
-            break
-
-          case 'tool_pending':
-            setMessages(prev => [...prev, {
-              id: output.id,
-              type: 'tool',
-              content: '',
-              tool: {
-                id: output.id,
-                name: output.name,
-                arguments: output.arguments as Record<string, unknown>,
-                status: 'pending',
-              }
-            }])
-            break
-
-          case 'tool_done':
-            console.log('tool_done:', output.id, 'success:', output.success, 'output:', output.output?.substring(0, 100))
-            setMessages(prev => {
-              const found = prev.some(msg => msg.tool?.id === output.id)
-              console.log('tool_done: found matching message:', found)
-              return prev.map(msg =>
-                msg.tool?.id === output.id
-                  ? {
-                      ...msg,
-                      tool: {
-                        ...msg.tool!,
-                        status: output.success ? 'done' : 'failed',
-                        output: output.output,
-                      }
-                    }
-                  : msg
-              )
-            })
-            break
-
-          case 'error':
-            setError(output.message)
-            setIsIdle(true)
-            break
-
-          case 'stopped':
-            setIsLoopStarted(false)
-            setIsIdle(false)
-            break
-        }
-      })
-
-      console.log('Event listener set up, checking API key...')
-
-      // 2. Check API key
-      try {
-        const hasKey = await invoke<boolean>('check_api_key')
-        console.log('API key check result:', hasKey)
-        setHasApiKey(hasKey)
-
-        // 3. Start the loop (listener is already active)
-        if (hasKey) {
-          console.log('Starting loop...')
-          await invoke('start_loop')
-          console.log('start_loop returned successfully')
-          // Set started immediately - the Ready event will confirm but this ensures we progress
-          setIsLoopStarted(true)
-        }
-      } catch (err) {
-        console.error('Init error:', err)
-        setError(String(err))
-      }
+    if (session?.error) {
+      setError(session.error)
     }
-
-    init()
-
-    // Cleanup
-    return () => {
-      if (unlistenFn) unlistenFn()
-      invoke('stop_loop').catch(console.error)
-    }
-  }, [])
+  }, [session?.error])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -173,7 +49,7 @@ export default function Chat() {
     setError(null)
 
     try {
-      await invoke('send_message', { content: userMessage })
+      await sendMessage(userMessage)
     } catch (err) {
       console.error('Send error:', err)
       setError(String(err))
@@ -182,12 +58,7 @@ export default function Chat() {
 
   const handleApproveTool = async (toolId: string) => {
     try {
-      await invoke('approve_tool', { toolId })
-      setMessages(prev => prev.map(msg =>
-        msg.tool?.id === toolId
-          ? { ...msg, tool: { ...msg.tool!, status: 'executing' } }
-          : msg
-      ))
+      await approveTool(toolId)
     } catch (err) {
       setError(String(err))
     }
@@ -195,17 +66,23 @@ export default function Chat() {
 
   const handleRejectTool = async (toolId: string) => {
     try {
-      await invoke('reject_tool', { toolId })
-      setMessages(prev => prev.map(msg =>
-        msg.tool?.id === toolId
-          ? { ...msg, tool: { ...msg.tool!, status: 'failed', output: 'Rejected by user' } }
-          : msg
-      ))
+      await rejectTool(toolId)
     } catch (err) {
       setError(String(err))
     }
   }
 
+  // Loading state
+  if (!isInitialized) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center p-8 bg-background">
+        <Loader2 className="w-8 h-8 animate-spin text-primary mb-4" />
+        <p className="text-muted-foreground">Initializing...</p>
+      </div>
+    )
+  }
+
+  // No API key
   if (hasApiKey === false) {
     return (
       <div className="flex flex-col h-full items-center justify-center p-8 bg-background">
@@ -227,9 +104,18 @@ export default function Chat() {
         <Sparkles className="w-5 h-5 text-primary mr-2" />
         <h1 className="font-semibold">Cowork</h1>
         <span className="ml-auto text-xs text-muted-foreground">
-          {isLoopStarted ? (isIdle ? 'Ready' : 'Working...') : 'Starting...'}
+          {isReady ? (isIdle ? 'Ready' : 'Working...') : 'Starting...'}
         </span>
       </header>
+
+      {/* Session Tabs */}
+      <SessionTabs
+        sessions={sessions}
+        activeId={activeSessionId}
+        onSelect={setActiveSession}
+        onNew={() => createNewSession()}
+        onClose={closeSession}
+      />
 
       {/* Error Banner */}
       {error && (
@@ -322,7 +208,7 @@ export default function Chat() {
         ))}
 
         {/* Loading indicator when not idle */}
-        {isLoopStarted && !isIdle && (
+        {isReady && !isIdle && (
           <div className="flex justify-start">
             <div className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin text-primary" />

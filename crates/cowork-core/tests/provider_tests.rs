@@ -24,10 +24,7 @@ async fn validate_anthropic_key() -> bool {
     }
 
     let provider = GenAIProvider::new(ProviderType::Anthropic, Some("claude-3-haiku-20240307"));
-    let messages = vec![LlmMessage {
-        role: "user".to_string(),
-        content: "Hi".to_string(),
-    }];
+    let messages = vec![LlmMessage::user("Hi")];
 
     provider.chat(messages, None).await.is_ok()
 }
@@ -39,10 +36,7 @@ async fn validate_openai_key() -> bool {
     }
 
     let provider = GenAIProvider::new(ProviderType::OpenAI, Some("gpt-4o-mini"));
-    let messages = vec![LlmMessage {
-        role: "user".to_string(),
-        content: "Hi".to_string(),
-    }];
+    let messages = vec![LlmMessage::user("Hi")];
 
     provider.chat(messages, None).await.is_ok()
 }
@@ -197,10 +191,7 @@ mod integration_tests {
         let provider = GenAIProvider::new(ProviderType::Anthropic, None)
             .with_system_prompt("You are a helpful assistant. Keep responses brief.");
 
-        let messages = vec![LlmMessage {
-            role: "user".to_string(),
-            content: "What is 2 + 2? Reply with just the number.".to_string(),
-        }];
+        let messages = vec![LlmMessage::user("What is 2 + 2? Reply with just the number.")];
 
         let result = provider.chat(messages, None).await;
         println!("Anthropic result: {:?}", result);
@@ -234,10 +225,7 @@ mod integration_tests {
         let provider = GenAIProvider::new(ProviderType::OpenAI, None)
             .with_system_prompt("You are a helpful assistant. Keep responses brief.");
 
-        let messages = vec![LlmMessage {
-            role: "user".to_string(),
-            content: "What is 2 + 2? Reply with just the number.".to_string(),
-        }];
+        let messages = vec![LlmMessage::user("What is 2 + 2? Reply with just the number.")];
 
         let result = provider.chat(messages, None).await;
         println!("OpenAI result: {:?}", result);
@@ -290,10 +278,7 @@ mod integration_tests {
             }),
         }];
 
-        let messages = vec![LlmMessage {
-            role: "user".to_string(),
-            content: "What's the weather in Paris?".to_string(),
-        }];
+        let messages = vec![LlmMessage::user("What's the weather in Paris?")];
 
         let result = provider.chat(messages, Some(tools)).await;
         println!("Anthropic tool result: {:?}", result);
@@ -348,10 +333,7 @@ mod integration_tests {
             }),
         }];
 
-        let messages = vec![LlmMessage {
-            role: "user".to_string(),
-            content: "What's the weather in Paris?".to_string(),
-        }];
+        let messages = vec![LlmMessage::user("What's the weather in Paris?")];
 
         let result = provider.chat(messages, Some(tools)).await;
         println!("OpenAI tool result: {:?}", result);
@@ -388,10 +370,7 @@ mod integration_tests {
             .with_system_prompt("You are a helpful assistant. Keep responses very brief.");
 
         // First message
-        let messages1 = vec![LlmMessage {
-            role: "user".to_string(),
-            content: "My name is Alice.".to_string(),
-        }];
+        let messages1 = vec![LlmMessage::user("My name is Alice.")];
 
         let result1 = provider.chat(messages1.clone(), None).await;
         assert!(result1.is_ok(), "First API call failed: {:?}", result1.err());
@@ -404,14 +383,8 @@ mod integration_tests {
 
         // Second message - test context
         let mut messages2 = messages1;
-        messages2.push(LlmMessage {
-            role: "assistant".to_string(),
-            content: response1,
-        });
-        messages2.push(LlmMessage {
-            role: "user".to_string(),
-            content: "What is my name?".to_string(),
-        });
+        messages2.push(LlmMessage::assistant(response1));
+        messages2.push(LlmMessage::user("What is my name?"));
 
         let result2 = provider.chat(messages2, None).await;
         assert!(result2.is_ok(), "Second API call failed: {:?}", result2.err());

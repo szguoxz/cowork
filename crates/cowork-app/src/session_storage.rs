@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::chat::ChatMessage;
+use cowork_core::ChatMessage;
 
 /// Serializable session data (without the provider)
 #[derive(Debug, Clone, Serialize, Deserialize)]

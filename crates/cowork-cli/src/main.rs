@@ -1,9 +1,13 @@
 //! Cowork CLI - Multi-agent assistant command line tool
+//!
+//! This CLI uses the unified session architecture from cowork-core,
+//! sharing the same agent loop logic with the UI application.
 
 mod onboarding;
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use console::style;
@@ -15,22 +19,23 @@ use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Config, Editor, Helper};
+use tokio::sync::mpsc;
 
 use onboarding::OnboardingWizard;
 
 use cowork_core::config::ConfigManager;
 use cowork_core::mcp_manager::McpServerManager;
 use cowork_core::provider::{
-    create_provider_from_config, get_api_key, get_model_tiers, has_api_key_configured,
-    CompletionResult, GenAIProvider, LlmMessage, ProviderType,
+    has_api_key_configured, ProviderType,
 };
-use cowork_core::orchestration::{create_standard_tool_registry, format_size, format_tool_result, SystemPrompt};
+use cowork_core::orchestration::format_size;
+use cowork_core::session::{SessionConfig, SessionInput, SessionManager, SessionOutput};
 use cowork_core::ToolApprovalConfig;
 use cowork_core::skills::SkillRegistry;
 // Only import tools that are used directly (for quick commands like /ls, /read, /search)
 use cowork_core::tools::filesystem::{ListDirectory, ReadFile, SearchFiles};
 use cowork_core::tools::shell::ExecuteCommand;
-use cowork_core::tools::{Tool, ToolDefinition, ToolRegistry};
+use cowork_core::tools::Tool;
 
 /// Slash command completer for readline
 #[derive(Default)]
@@ -274,46 +279,103 @@ async fn run_one_shot(
 ) -> anyhow::Result<()> {
     // Load config
     let config_manager = ConfigManager::new()?;
+    let api_key = cowork_core::provider::get_api_key(&config_manager, provider_type);
 
-    // Create system prompt
-    let system_prompt = SystemPrompt::new()
-        .with_workspace_context(workspace)
-        .build();
-
-    // Create provider from config or environment
-    let provider = create_provider_from_config(&config_manager, provider_type, model)?
-        .with_system_prompt(&system_prompt);
-
-    // Get API key and model tiers for subagents
-    let api_key = get_api_key(&config_manager, provider_type);
-    let model_tiers = get_model_tiers(&config_manager, provider_type);
-
-    // Create tool registry with API key and model tiers for subagent execution
-    let tool_registry = create_tool_registry(workspace, provider_type, api_key.as_deref(), Some(model_tiers));
-    let tool_definitions = tool_registry.list();
-
-    // Chat history
-    let mut messages: Vec<LlmMessage> = Vec::new();
-
-    // Tool approval configuration
-    let mut approval_config = if auto_approve {
+    // Create session config
+    let workspace = workspace.to_path_buf();
+    let model = model.map(|s| s.to_string());
+    let approval_config = if auto_approve {
         ToolApprovalConfig::trust_all()
     } else {
         ToolApprovalConfig::default()
     };
 
-    // Process the single message
-    process_ai_message(
-        prompt,
-        &provider,
-        &tool_registry,
-        &tool_definitions,
-        &mut messages,
-        &mut approval_config,
-    )
-    .await?;
+    // Create session manager with a config factory
+    let session_manager = SessionManager::new(move || {
+        let mut config = SessionConfig::new(workspace.clone())
+            .with_provider(provider_type)
+            .with_approval_config(approval_config.clone());
+        if let Some(ref m) = model {
+            config = config.with_model(m.clone());
+        }
+        if let Some(ref key) = api_key {
+            config = config.with_api_key(key.clone());
+        }
+        config
+    });
+
+    // Take the output receiver
+    let mut output_rx = session_manager
+        .take_output_receiver()
+        .await
+        .expect("Output receiver already taken");
+
+    let session_id = "cli-oneshot";
+
+    // Send the prompt
+    session_manager
+        .push_message(session_id, SessionInput::user_message(prompt))
+        .await?;
+
+    // Process outputs until idle
+    while let Some((_, output)) = output_rx.recv().await {
+        match output {
+            SessionOutput::AssistantMessage { content, .. } => {
+                println!("{}: {}", style("Assistant").bold().green(), content);
+            }
+            SessionOutput::ToolStart { name, .. } => {
+                println!("  {} {}", style("[Executing:").dim(), style(&name).yellow());
+            }
+            SessionOutput::ToolDone { name, success, output, .. } => {
+                if success {
+                    let truncated = truncate_output(&output, 500);
+                    println!("  {} {} {}", style("[Done:").dim(), style(&name).green(), style(truncated).dim());
+                } else {
+                    println!("  {} {} {}", style("[Failed:").dim(), style(&name).red(), style(&output).red());
+                }
+            }
+            SessionOutput::ToolPending { id, name, arguments, .. } => {
+                // In one-shot mode with auto_approve=false, we need to handle approval
+                if auto_approve {
+                    session_manager
+                        .push_message(session_id, SessionInput::approve_tool(&id))
+                        .await?;
+                } else {
+                    // Show tool and auto-reject in non-interactive one-shot mode
+                    println!("{}: {} (auto-rejected in one-shot mode)", style("Tool pending").yellow(), name);
+                    println!("  Args: {}", serde_json::to_string_pretty(&arguments).unwrap_or_default());
+                    session_manager
+                        .push_message(session_id, SessionInput::reject_tool(&id, Some("Non-interactive mode".to_string())))
+                        .await?;
+                }
+            }
+            SessionOutput::Error { message } => {
+                println!("{}", style(format!("Error: {}", message)).red());
+            }
+            SessionOutput::Idle => {
+                // Done processing
+                break;
+            }
+            SessionOutput::Stopped => {
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    // Stop the session
+    session_manager.stop_session(session_id).await?;
 
     Ok(())
+}
+
+/// Truncate output for display
+fn truncate_output(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len])
+    }
 }
 
 async fn run_chat(
@@ -368,57 +430,289 @@ async fn run_chat(
     println!();
 
     // Initialize MCP server manager (servers start lazily when tools are called)
-    let mcp_manager = std::sync::Arc::new(
+    let mcp_manager = Arc::new(
         McpServerManager::with_configs(config_manager.config().mcp_servers.clone())
     );
 
-    // Create system prompt with workspace context
-    let system_prompt = SystemPrompt::new()
-        .with_workspace_context(workspace)
-        .build();
-
-    // Create provider from config or environment
-    let provider = match create_provider_from_config(&config_manager, provider_type, model) {
-        Ok(p) => p.with_system_prompt(&system_prompt),
-        Err(e) => {
-            println!(
-                "{}",
-                style(format!("Warning: {}. The AI may not work.", e)).yellow()
-            );
-            println!();
-            GenAIProvider::new(provider_type, model).with_system_prompt(&system_prompt)
-        }
-    };
-
-    // Get API key and model tiers for subagents
-    let api_key = get_api_key(&config_manager, provider_type);
-    let model_tiers = get_model_tiers(&config_manager, provider_type);
-
-    // Create tool registry with API key and model tiers for subagent execution
-    let tool_registry = create_tool_registry(workspace, provider_type, api_key.as_deref(), Some(model_tiers));
-    let tool_definitions = tool_registry.list();
+    // Get API key for session config
+    let api_key = cowork_core::provider::get_api_key(&config_manager, provider_type);
 
     // Create skill registry for slash commands with MCP manager
     let skill_registry = SkillRegistry::with_builtins_and_mcp(workspace.to_path_buf(), Some(mcp_manager));
 
-    // Chat history
-    let mut messages: Vec<LlmMessage> = Vec::new();
-
-    // Tool approval configuration (shared with UI)
-    let mut approval_config = if auto_approve {
+    // Create session config factory
+    let workspace_path = workspace.to_path_buf();
+    let model = model.map(|s| s.to_string());
+    let base_approval_config = if auto_approve {
         ToolApprovalConfig::trust_all()
     } else {
         ToolApprovalConfig::default()
     };
 
+    // Session-level approval state (can be modified during session)
+    let session_approval = Arc::new(tokio::sync::Mutex::new(base_approval_config.clone()));
+
+    // Create session manager
+    let session_manager = Arc::new(SessionManager::new({
+        let workspace_path = workspace_path.clone();
+        let model = model.clone();
+        let api_key = api_key.clone();
+        let approval_config = base_approval_config.clone();
+        move || {
+            let mut config = SessionConfig::new(workspace_path.clone())
+                .with_provider(provider_type)
+                .with_approval_config(approval_config.clone());
+            if let Some(ref m) = model {
+                config = config.with_model(m.clone());
+            }
+            if let Some(ref key) = api_key {
+                config = config.with_api_key(key.clone());
+            }
+            config
+        }
+    }));
+
+    // Take the output receiver
+    let mut output_rx = session_manager
+        .take_output_receiver()
+        .await
+        .expect("Output receiver already taken");
+
+    // Channel for sending approval decisions back to the output handler
+    let (approval_tx, mut approval_rx) = mpsc::channel::<ApprovalDecision>(16);
+
+    // Spawn output handler task
+    let session_manager_clone = Arc::clone(&session_manager);
+    let session_approval_clone = Arc::clone(&session_approval);
+    let output_handle = tokio::spawn(async move {
+        let mut spinner: Option<ProgressBar> = None;
+
+        loop {
+            tokio::select! {
+                // Handle session outputs
+                output = output_rx.recv() => {
+                    match output {
+                        Some((session_id, output)) => {
+                            match output {
+                                SessionOutput::Ready => {
+                                    // Session ready, nothing to display
+                                }
+                                SessionOutput::Idle => {
+                                    // Clear spinner if any
+                                    if let Some(s) = spinner.take() {
+                                        s.finish_and_clear();
+                                    }
+                                }
+                                SessionOutput::UserMessage { .. } => {
+                                    // User message echo - we already printed it
+                                }
+                                SessionOutput::Thinking { .. } => {
+                                    // Show spinner
+                                    let s = ProgressBar::new_spinner();
+                                    s.set_style(
+                                        ProgressStyle::default_spinner()
+                                            .template("{spinner:.blue} {msg}")
+                                            .unwrap(),
+                                    );
+                                    s.set_message("Thinking...");
+                                    s.enable_steady_tick(std::time::Duration::from_millis(100));
+                                    spinner = Some(s);
+                                }
+                                SessionOutput::AssistantMessage { content, .. } => {
+                                    if let Some(s) = spinner.take() {
+                                        s.finish_and_clear();
+                                    }
+                                    if !content.is_empty() {
+                                        println!("{}: {}", style("Assistant").bold().green(), content);
+                                    }
+                                }
+                                SessionOutput::ToolStart { name, arguments, .. } => {
+                                    if let Some(s) = spinner.take() {
+                                        s.finish_and_clear();
+                                    }
+                                    println!();
+                                    println!("{}", style("┌─ Tool Executing ────────────────────────────────").dim());
+                                    println!("│ {} {}", style("Tool:").bold(), style(&name).yellow().bold());
+                                    let args_str = serde_json::to_string_pretty(&arguments)
+                                        .unwrap_or_else(|_| arguments.to_string());
+                                    for (i, line) in args_str.lines().enumerate() {
+                                        if i == 0 {
+                                            println!("│ {} {}", style("Args:").bold(), line);
+                                        } else {
+                                            println!("│       {}", line);
+                                        }
+                                    }
+                                    println!("{}", style("└─────────────────────────────────────────────────").dim());
+
+                                    // Show executing spinner
+                                    let s = ProgressBar::new_spinner();
+                                    s.set_style(
+                                        ProgressStyle::default_spinner()
+                                            .template("{spinner:.blue} Executing...")
+                                            .unwrap(),
+                                    );
+                                    s.enable_steady_tick(std::time::Duration::from_millis(100));
+                                    spinner = Some(s);
+                                }
+                                SessionOutput::ToolPending { id, name, arguments, .. } => {
+                                    if let Some(s) = spinner.take() {
+                                        s.finish_and_clear();
+                                    }
+
+                                    // Display tool call in a formatted box
+                                    println!();
+                                    println!("{}", style("┌─ Tool Call (Needs Approval) ────────────────────").dim());
+                                    println!("│ {} {}", style("Tool:").bold(), style(&name).yellow().bold());
+                                    let args_str = serde_json::to_string_pretty(&arguments)
+                                        .unwrap_or_else(|_| arguments.to_string());
+                                    for (i, line) in args_str.lines().enumerate() {
+                                        if i == 0 {
+                                            println!("│ {} {}", style("Args:").bold(), line);
+                                        } else {
+                                            println!("│       {}", line);
+                                        }
+                                    }
+                                    println!("{}", style("└─────────────────────────────────────────────────").dim());
+
+                                    // Check if should auto-approve based on session state
+                                    let approval_config = session_approval_clone.lock().await;
+                                    if approval_config.should_auto_approve(&name) {
+                                        println!("  {} {}", style("✓").green(), style("Auto-approved").dim());
+                                        drop(approval_config);
+                                        let _ = session_manager_clone
+                                            .push_message(&session_id, SessionInput::approve_tool(&id))
+                                            .await;
+                                    } else {
+                                        drop(approval_config);
+                                        // Need user approval - show options
+                                        let options: Vec<String> = vec![
+                                            "Yes - approve this call".to_string(),
+                                            "No - reject this call".to_string(),
+                                            format!("Always - auto-approve '{}' for session", name),
+                                            "Approve all - auto-approve everything for session".to_string(),
+                                        ];
+
+                                        let selection = Select::with_theme(&ColorfulTheme::default())
+                                            .with_prompt("Approve?")
+                                            .items(&options)
+                                            .default(0)
+                                            .interact()
+                                            .unwrap_or(1); // Default to reject on error
+
+                                        match selection {
+                                            0 => {
+                                                // Yes - approve this call
+                                                let _ = session_manager_clone
+                                                    .push_message(&session_id, SessionInput::approve_tool(&id))
+                                                    .await;
+                                            }
+                                            1 => {
+                                                // No - reject
+                                                let _ = session_manager_clone
+                                                    .push_message(&session_id, SessionInput::reject_tool(&id, None))
+                                                    .await;
+                                                println!("  {}", style("✗ Rejected by user").yellow());
+                                            }
+                                            2 => {
+                                                // Always - add to session approved
+                                                {
+                                                    let mut approval_config = session_approval_clone.lock().await;
+                                                    approval_config.approve_for_session(name.clone());
+                                                }
+                                                println!("  {} '{}' will be auto-approved for this session",
+                                                    style("✓").green(), name);
+                                                let _ = session_manager_clone
+                                                    .push_message(&session_id, SessionInput::approve_tool(&id))
+                                                    .await;
+                                            }
+                                            3 => {
+                                                // Approve all
+                                                {
+                                                    let mut approval_config = session_approval_clone.lock().await;
+                                                    approval_config.approve_all_for_session();
+                                                }
+                                                println!("  {} All tools will be auto-approved for this session",
+                                                    style("✓").green());
+                                                let _ = session_manager_clone
+                                                    .push_message(&session_id, SessionInput::approve_tool(&id))
+                                                    .await;
+                                            }
+                                            _ => {
+                                                let _ = session_manager_clone
+                                                    .push_message(&session_id, SessionInput::reject_tool(&id, None))
+                                                    .await;
+                                            }
+                                        }
+                                    }
+                                }
+                                SessionOutput::ToolDone { name, success, output, .. } => {
+                                    if let Some(s) = spinner.take() {
+                                        s.finish_and_clear();
+                                    }
+                                    if success {
+                                        let formatted = format_tool_result_cli(&name, &output);
+                                        println!("  {}", style("Result:").bold().green());
+                                        for line in formatted.lines() {
+                                            println!("    {}", line);
+                                        }
+                                    } else {
+                                        println!("  {}", style(format!("Error: {}", output)).red());
+                                    }
+                                }
+                                SessionOutput::Question { request_id, questions } => {
+                                    if let Some(s) = spinner.take() {
+                                        s.finish_and_clear();
+                                    }
+                                    // Handle ask_user_question interactively
+                                    match handle_questions_interactive(&questions) {
+                                        Ok(answers) => {
+                                            let _ = session_manager_clone
+                                                .push_message(&session_id, SessionInput::answer_question(request_id, answers))
+                                                .await;
+                                        }
+                                        Err(e) => {
+                                            println!("{}", style(format!("Error handling question: {}", e)).red());
+                                        }
+                                    }
+                                }
+                                SessionOutput::Error { message } => {
+                                    if let Some(s) = spinner.take() {
+                                        s.finish_and_clear();
+                                    }
+                                    println!("{}", style(format!("Error: {}", message)).red());
+                                }
+                                SessionOutput::Stopped => {
+                                    if let Some(s) = spinner.take() {
+                                        s.finish_and_clear();
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        None => {
+                            // Channel closed
+                            break;
+                        }
+                    }
+                }
+                // Handle approval decisions from main thread
+                decision = approval_rx.recv() => {
+                    if decision.is_none() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
     // Set up readline with history and slash command completion
-    let config = Config::builder()
+    let rl_config = Config::builder()
         .history_ignore_space(true)
         .completion_type(rustyline::CompletionType::List)
         .edit_mode(rustyline::EditMode::Emacs)
         .auto_add_history(false) // We add manually
         .build();
-    let mut rl = Editor::with_config(config)?;
+    let mut rl = Editor::with_config(rl_config)?;
     rl.set_helper(Some(SlashCompleter::new()));
 
     // Load history from file
@@ -429,6 +723,8 @@ async fn run_chat(
 
     // Use simple prompt without ANSI to avoid cursor position issues
     let prompt = "You> ";
+
+    let session_id = "cli-session";
 
     loop {
         let readline = rl.readline(prompt);
@@ -469,52 +765,52 @@ async fn run_chat(
                 show_tools();
             }
             "/clear" => {
-                messages.clear();
+                // Stop current session and create a new one
+                let _ = session_manager.stop_session(session_id).await;
                 println!("{}", style("Conversation cleared.").green());
             }
             cmd if cmd.starts_with("/run ") => {
                 let command = &cmd[5..];
-                run_command(workspace, command).await?;
+                run_command(&workspace_path, command).await?;
             }
             cmd if cmd.starts_with("/ls ") || cmd.starts_with("/list ") => {
                 let path = cmd.split_whitespace().nth(1).unwrap_or(".");
-                list_files(workspace, path).await?;
+                list_files(&workspace_path, path).await?;
             }
             "/ls" | "/list" => {
-                list_files(workspace, ".").await?;
+                list_files(&workspace_path, ".").await?;
             }
             cmd if cmd.starts_with("/cat ") || cmd.starts_with("/read ") => {
                 let path = cmd.split_whitespace().nth(1).unwrap_or("");
                 if path.is_empty() {
                     println!("{}", style("Usage: /read <file>").yellow());
                 } else {
-                    read_file(workspace, path).await?;
+                    read_file(&workspace_path, path).await?;
                 }
             }
             cmd if cmd.starts_with("/search ") || cmd.starts_with("/find ") => {
                 let pattern = &cmd[cmd.find(' ').unwrap_or(0) + 1..];
-                search_files(workspace, pattern, false).await?;
+                search_files(&workspace_path, pattern, false).await?;
             }
             cmd if cmd.starts_with('/') => {
                 // Handle slash commands via skill registry
-                handle_slash_command(cmd, workspace, &skill_registry).await;
+                handle_slash_command(cmd, &workspace_path, &skill_registry).await;
             }
             _ => {
-                // Process with AI
-                process_ai_message(
-                    input,
-                    &provider,
-                    &tool_registry,
-                    &tool_definitions,
-                    &mut messages,
-                    &mut approval_config,
-                )
-                .await?;
+                // Send to session manager
+                session_manager
+                    .push_message(session_id, SessionInput::user_message(input))
+                    .await?;
             }
         }
 
         println!();
     }
+
+    // Stop session and clean up
+    let _ = session_manager.stop_all().await;
+    drop(approval_tx);
+    let _ = output_handle.await;
 
     // Save history on exit
     if let Some(parent) = history_path.parent() {
@@ -525,259 +821,31 @@ async fn run_chat(
     Ok(())
 }
 
-/// Process a message through the AI
-async fn process_ai_message(
-    input: &str,
-    provider: &GenAIProvider,
-    tool_registry: &ToolRegistry,
-    tool_definitions: &[ToolDefinition],
-    messages: &mut Vec<LlmMessage>,
-    approval_config: &mut ToolApprovalConfig,
-) -> anyhow::Result<()> {
-    // Add user message
-    messages.push(LlmMessage {
-        role: "user".to_string(),
-        content: input.to_string(),
-    });
-
-    // Agentic loop - keep going until we get a text response (no more tool calls)
-    loop {
-        // Show spinner while waiting for AI
-        let spinner = ProgressBar::new_spinner();
-        spinner.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.blue} {msg}")
-                .unwrap(),
-        );
-        spinner.set_message("Thinking...");
-        spinner.enable_steady_tick(std::time::Duration::from_millis(100));
-
-        // Get response from AI
-        let result = provider
-            .chat(messages.clone(), Some(tool_definitions.to_vec()))
-            .await;
-
-        spinner.finish_and_clear();
-
-        match result {
-            Ok(CompletionResult::Message(text)) => {
-                // Got a text response - display it and we're done
-                println!("{}: {}", style("Assistant").bold().green(), text);
-                messages.push(LlmMessage {
-                    role: "assistant".to_string(),
-                    content: text,
-                });
-                break;
-            }
-            Ok(CompletionResult::ToolCalls(calls)) => {
-                // AI wants to use tools
-                println!(
-                    "{}",
-                    style(format!("AI wants to use {} tool(s)", calls.len())).cyan()
-                );
-
-                let mut tool_results = Vec::new();
-
-                for call in &calls {
-                    // Display tool call in a formatted box
-                    println!();
-                    println!("{}", style("┌─ Tool Call ─────────────────────────────────────").dim());
-                    println!("│ {} {}", style("Tool:").bold(), style(&call.name).yellow().bold());
-
-                    // Format arguments nicely
-                    let args_str = serde_json::to_string_pretty(&call.arguments)
-                        .unwrap_or_else(|_| call.arguments.to_string());
-                    for (i, line) in args_str.lines().enumerate() {
-                        if i == 0 {
-                            println!("│ {} {}", style("Args:").bold(), line);
-                        } else {
-                            println!("│       {}", line);
-                        }
-                    }
-                    println!("{}", style("└─────────────────────────────────────────────────").dim());
-
-                    // Determine approval status using shared approval config
-                    let approved = if approval_config.should_auto_approve(&call.name) {
-                        // Auto-approved (read-only or session approved)
-                        println!("  {} {}", style("✓").green(), style("Auto-approved").dim());
-                        true
-                    } else if !approval_config.needs_approval(&call.name) {
-                        // Configured as auto-approve
-                        println!("  {} {}", style("✓").green(), style("Auto-approved (configured)").dim());
-                        true
-                    } else {
-                        // Need user approval - show options
-                        let options: Vec<String> = vec![
-                            "Yes - approve this call".to_string(),
-                            "No - reject this call".to_string(),
-                            format!("Always - auto-approve '{}' for session", call.name),
-                            "Approve all - auto-approve everything for session".to_string(),
-                        ];
-
-                        let selection = Select::with_theme(&ColorfulTheme::default())
-                            .with_prompt("Approve?")
-                            .items(&options)
-                            .default(0)
-                            .interact()?;
-
-                        match selection {
-                            0 => true,  // Yes
-                            1 => false, // No
-                            2 => {
-                                // Always - add to session approved
-                                approval_config.approve_for_session(call.name.clone());
-                                println!("  {} '{}' will be auto-approved for this session",
-                                    style("✓").green(), call.name);
-                                true
-                            }
-                            3 => {
-                                // Approve all
-                                approval_config.approve_all_for_session();
-                                println!("  {} All tools will be auto-approved for this session",
-                                    style("✓").green());
-                                true
-                            }
-                            _ => false,
-                        }
-                    };
-
-                    if approved {
-                        // Special handling for ask_user_question - intercept and handle interactively
-                        if call.name == "ask_user_question" {
-                            match handle_ask_user_question(&call.arguments) {
-                                Ok(result_str) => {
-                                    println!("  {} {}", style("✓").green(), style("User answered questions").dim());
-                                    tool_results.push((call.name.clone(), result_str, true));
-                                }
-                                Err(e) => {
-                                    let error_msg = format!("Error: {}", e);
-                                    println!("  {}", style(&error_msg).red());
-                                    tool_results.push((call.name.clone(), error_msg, false));
-                                }
-                            }
-                            continue;
-                        }
-
-                        // Execute tool
-                        let exec_spinner = ProgressBar::new_spinner();
-                        exec_spinner.set_style(
-                            ProgressStyle::default_spinner()
-                                .template("{spinner:.blue} Executing...")
-                                .unwrap(),
-                        );
-                        exec_spinner.enable_steady_tick(std::time::Duration::from_millis(100));
-
-                        if let Some(tool) = tool_registry.get(&call.name) {
-                            match tool.execute(call.arguments.clone()).await {
-                                Ok(output) => {
-                                    exec_spinner.finish_and_clear();
-                                    let result_str = output.content.to_string();
-                                    let formatted = format_tool_result(&call.name, &result_str);
-                                    println!("  {}", style("Result:").bold().green());
-                                    for line in formatted.lines() {
-                                        println!("    {}", line);
-                                    }
-
-                                    tool_results.push((call.name.clone(), result_str, true));
-                                }
-                                Err(e) => {
-                                    exec_spinner.finish_and_clear();
-                                    let error_msg = format!("Error: {}", e);
-                                    println!("  {}", style(&error_msg).red());
-                                    tool_results.push((call.name.clone(), error_msg, false));
-                                }
-                            }
-                        } else {
-                            exec_spinner.finish_and_clear();
-                            let error_msg = format!("Unknown tool: {}", call.name);
-                            println!("  {}", style(&error_msg).red());
-                            tool_results.push((call.name.clone(), error_msg, false));
-                        }
-                    } else {
-                        println!("  {}", style("✗ Rejected by user").yellow());
-                        tool_results.push((
-                            call.name.clone(),
-                            "User rejected this tool call".to_string(),
-                            false,
-                        ));
-                    }
-                }
-
-                // Add tool results to messages for context
-                // Format as a user message with the tool execution results
-                // This simulates the system reporting back what happened
-                let results_summary: Vec<String> = tool_results
-                    .iter()
-                    .map(|(name, result, success)| {
-                        if *success {
-                            format!("[Tool '{}' executed successfully]\nResult: {}", name, result)
-                        } else {
-                            format!("[Tool '{}' failed]\nError: {}", name, result)
-                        }
-                    })
-                    .collect();
-
-                // Add as user message so the AI knows to continue with next steps
-                messages.push(LlmMessage {
-                    role: "user".to_string(),
-                    content: format!(
-                        "Tool execution results:\n\n{}\n\nPlease continue with the next step of the task.",
-                        results_summary.join("\n\n")
-                    ),
-                });
-
-                // Continue the loop to let AI process tool results
-            }
-            Err(e) => {
-                println!("{}", style(format!("Error: {}", e)).red());
-                // Remove the last user message since the request failed
-                messages.pop();
-                break;
-            }
-        }
-    }
-
-    Ok(())
+/// Approval decision from user
+#[derive(Debug)]
+enum ApprovalDecision {
+    #[allow(dead_code)]
+    Approve(String),
+    #[allow(dead_code)]
+    Reject(String, Option<String>),
 }
 
-
-/// Handle ask_user_question tool call interactively in CLI
-fn handle_ask_user_question(args: &serde_json::Value) -> Result<String, String> {
-    let questions = args
-        .get("questions")
-        .and_then(|q| q.as_array())
-        .ok_or_else(|| "Missing questions array".to_string())?;
-
-    let mut answers: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+/// Handle questions from ask_user_question tool interactively
+fn handle_questions_interactive(
+    questions: &[cowork_core::QuestionInfo],
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let mut answers = std::collections::HashMap::new();
 
     for (i, question) in questions.iter().enumerate() {
-        let question_text = question
-            .get("question")
-            .and_then(|q| q.as_str())
-            .unwrap_or("Question");
-        let header = question
-            .get("header")
-            .and_then(|h| h.as_str())
-            .unwrap_or("");
-        let multi_select = question
-            .get("multiSelect")
-            .and_then(|m| m.as_bool())
-            .unwrap_or(false);
-        let options = question
-            .get("options")
-            .and_then(|o| o.as_array())
-            .ok_or_else(|| format!("Question {} missing options", i + 1))?;
-
         // Build display items with label and description
-        let mut items: Vec<String> = options
+        let mut items: Vec<String> = question
+            .options
             .iter()
             .map(|opt| {
-                let label = opt.get("label").and_then(|l| l.as_str()).unwrap_or("");
-                let desc = opt.get("description").and_then(|d| d.as_str()).unwrap_or("");
-                if desc.is_empty() {
-                    label.to_string()
+                if let Some(ref desc) = opt.description {
+                    format!("{} - {}", opt.label, style(desc).dim())
                 } else {
-                    format!("{} - {}", label, style(desc).dim())
+                    opt.label.clone()
                 }
             })
             .collect();
@@ -787,11 +855,12 @@ fn handle_ask_user_question(args: &serde_json::Value) -> Result<String, String> 
 
         // Display the question
         println!();
+        let header = question.header.as_deref().unwrap_or("Question");
         println!("{}", style(format!("┌─ {} ─────────────────────────────────────", header)).cyan());
-        println!("│ {}", style(question_text).bold());
+        println!("│ {}", style(&question.question).bold());
         println!("{}", style("└─────────────────────────────────────────────────").cyan());
 
-        if multi_select {
+        if question.multi_select {
             // Multi-select mode
             let selections = MultiSelect::with_theme(&ColorfulTheme::default())
                 .items(&items)
@@ -808,16 +877,10 @@ fn handle_ask_user_question(args: &serde_json::Value) -> Result<String, String> 
                         .map_err(|e| format!("Input failed: {}", e))?;
                     selected_labels.push(custom);
                 } else {
-                    // Get the original label (not the formatted display string)
-                    let label = options[idx]
-                        .get("label")
-                        .and_then(|l| l.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    selected_labels.push(label);
+                    selected_labels.push(question.options[idx].label.clone());
                 }
             }
-            answers.insert(i.to_string(), serde_json::json!(selected_labels.join(", ")));
+            answers.insert(i.to_string(), selected_labels.join(", "));
         } else {
             // Single select mode
             let selection = Select::with_theme(&ColorfulTheme::default())
@@ -834,24 +897,25 @@ fn handle_ask_user_question(args: &serde_json::Value) -> Result<String, String> 
                     .map_err(|e| format!("Input failed: {}", e))?;
                 custom
             } else {
-                // Get the original label
-                options[selection]
-                    .get("label")
-                    .and_then(|l| l.as_str())
-                    .unwrap_or("")
-                    .to_string()
+                question.options[selection].label.clone()
             };
-            answers.insert(i.to_string(), serde_json::json!(answer));
+            answers.insert(i.to_string(), answer);
         }
     }
 
-    // Return the answers as JSON
-    let result = serde_json::json!({
-        "answered": true,
-        "answers": answers
-    });
+    Ok(answers)
+}
 
-    serde_json::to_string(&result).map_err(|e| format!("JSON serialization failed: {}", e))
+/// Format tool result for CLI display
+#[allow(dead_code)]
+fn format_tool_result_cli(_tool_name: &str, result: &str) -> String {
+    // Truncate long results
+    let max_len = 2000;
+    if result.len() > max_len {
+        format!("{}... (truncated, {} total chars)", &result[..max_len], result.len())
+    } else {
+        result.to_string()
+    }
 }
 
 /// Handle slash commands
@@ -865,17 +929,6 @@ async fn handle_slash_command(cmd: &str, workspace: &Path, registry: &SkillRegis
             style(format!("Error: {}", result.error.unwrap_or_default())).red()
         );
     }
-}
-
-/// Create tool registry with all available tools
-/// Uses the shared tool registry factory from cowork-core
-fn create_tool_registry(
-    workspace: &Path,
-    provider_type: ProviderType,
-    api_key: Option<&str>,
-    model_tiers: Option<cowork_core::config::ModelTiers>,
-) -> ToolRegistry {
-    create_standard_tool_registry(workspace, provider_type, api_key, model_tiers)
 }
 
 fn print_help() {

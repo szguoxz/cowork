@@ -2,5 +2,16 @@
 
 /**
  * Messages sent from loop to frontend
+ * Now includes session_id for multi-session support
  */
-export type LoopOutput = { "type": "ready" } | { "type": "user_message", id: string, content: string, } | { "type": "thinking", content: string, } | { "type": "assistant_message", id: string, content: string, } | { "type": "tool_start", id: string, name: string, arguments: Record<string, unknown>, } | { "type": "tool_pending", id: string, name: string, arguments: Record<string, unknown>, } | { "type": "tool_done", id: string, name: string, success: boolean, output: string, } | { "type": "idle" } | { "type": "error", message: string, } | { "type": "stopped" };
+export type LoopOutput =
+  | { type: "ready"; session_id: string }
+  | { type: "user_message"; session_id: string; id: string; content: string }
+  | { type: "thinking"; session_id: string; content: string }
+  | { type: "assistant_message"; session_id: string; id: string; content: string }
+  | { type: "tool_start"; session_id: string; id: string; name: string; arguments: Record<string, unknown> }
+  | { type: "tool_pending"; session_id: string; id: string; name: string; arguments: Record<string, unknown> }
+  | { type: "tool_done"; session_id: string; id: string; name: string; success: boolean; output: string }
+  | { type: "idle"; session_id: string }
+  | { type: "error"; session_id: string; message: string }
+  | { type: "stopped"; session_id: string };

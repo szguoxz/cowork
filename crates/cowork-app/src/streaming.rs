@@ -6,7 +6,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
-use crate::chat::ToolCallInfo;
+use cowork_core::ToolCallInfo;
 
 /// Events emitted during streaming
 #[derive(Debug, Clone, Serialize)]

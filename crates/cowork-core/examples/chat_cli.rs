@@ -77,10 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Add user message
-        messages.push(LlmMessage {
-            role: "user".to_string(),
-            content: input.to_string(),
-        });
+        messages.push(LlmMessage::user(input));
 
         // Get response
         print!("Assistant: ");
@@ -91,10 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match result {
                     cowork_core::provider::CompletionResult::Message(text) => {
                         println!("{}", text);
-                        messages.push(LlmMessage {
-                            role: "assistant".to_string(),
-                            content: text,
-                        });
+                        messages.push(LlmMessage::assistant(text));
                     }
                     cowork_core::provider::CompletionResult::ToolCalls(calls) => {
                         println!("(wants to use {} tool(s))", calls.len());
@@ -124,17 +118,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             );
 
                                             // Add tool result to messages
-                                            messages.push(LlmMessage {
-                                                role: "assistant".to_string(),
-                                                content: format!("Used tool {} with result: {}", call.name, output.content),
-                                            });
+                                            messages.push(LlmMessage::assistant(
+                                                format!("Used tool {} with result: {}", call.name, output.content)
+                                            ));
                                         }
                                         Err(e) => {
                                             println!("  Error: {}", e);
-                                            messages.push(LlmMessage {
-                                                role: "assistant".to_string(),
-                                                content: format!("Tool {} failed: {}", call.name, e),
-                                            });
+                                            messages.push(LlmMessage::assistant(
+                                                format!("Tool {} failed: {}", call.name, e)
+                                            ));
                                         }
                                     }
                                 } else {
@@ -142,10 +134,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             } else {
                                 println!("  Rejected");
-                                messages.push(LlmMessage {
-                                    role: "assistant".to_string(),
-                                    content: format!("User rejected tool call: {}", call.name),
-                                });
+                                messages.push(LlmMessage::assistant(
+                                    format!("User rejected tool call: {}", call.name)
+                                ));
                             }
                         }
                     }

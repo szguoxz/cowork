@@ -9,6 +9,7 @@ import Skills from './pages/Skills'
 import Sessions from './pages/Sessions'
 import Help from './pages/Help'
 import Onboarding from './components/Onboarding'
+import { SessionProvider } from './context/SessionContext'
 
 function App() {
   const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null)
@@ -73,18 +74,20 @@ function App() {
   }
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Layout />}>
-          <Route index element={<Chat />} />
-          <Route path="sessions" element={<Sessions />} />
-          <Route path="mcp" element={<Mcp />} />
-          <Route path="skills" element={<Skills />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="help" element={<Help />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <SessionProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Layout />}>
+            <Route index element={<Chat />} />
+            <Route path="sessions" element={<Sessions />} />
+            <Route path="mcp" element={<Mcp />} />
+            <Route path="skills" element={<Skills />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="help" element={<Help />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </SessionProvider>
   )
 }
 

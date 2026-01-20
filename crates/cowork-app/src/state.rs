@@ -2,11 +2,10 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{OnceCell, RwLock};
+use tokio::sync::RwLock;
 
+use cowork_core::session::SessionManager;
 use cowork_core::{AgentRegistry, Config, ConfigManager, Context};
-
-use crate::simple_loop::LoopInputHandle;
 
 /// Global application state
 pub struct AppState {
@@ -18,8 +17,8 @@ pub struct AppState {
     pub workspace_path: PathBuf,
     /// Configuration manager
     pub config_manager: Arc<RwLock<ConfigManager>>,
-    /// Handle to send input to the loop (set once, never changes)
-    pub loop_input: OnceCell<LoopInputHandle>,
+    /// Session manager for the unified agent loop
+    pub session_manager: Arc<SessionManager>,
 }
 
 impl AppState {

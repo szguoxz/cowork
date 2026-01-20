@@ -461,10 +461,7 @@ impl OnboardingWizard {
         // Create provider and make test call
         let provider = GenAIProvider::with_api_key(provider_type, api_key, Some(model));
 
-        let test_messages = vec![cowork_core::provider::LlmMessage {
-            role: "user".to_string(),
-            content: "Say 'hello' in one word.".to_string(),
-        }];
+        let test_messages = vec![cowork_core::provider::LlmMessage::user("Say 'hello' in one word.")];
 
         let result = provider.chat(test_messages, None).await;
 

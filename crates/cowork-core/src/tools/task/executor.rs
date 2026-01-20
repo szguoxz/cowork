@@ -266,10 +266,7 @@ pub async fn execute_agent_loop(
     let tool_definitions = tool_registry.list();
 
     // Initialize conversation with the prompt
-    let mut messages: Vec<LlmMessage> = vec![LlmMessage {
-        role: "user".to_string(),
-        content: prompt.to_string(),
-    }];
+    let mut messages: Vec<LlmMessage> = vec![LlmMessage::user(prompt)];
 
     let mut turns = 0u64;
     let final_result: String;
@@ -331,13 +328,10 @@ pub async fn execute_agent_loop(
                     })
                     .collect();
 
-                messages.push(LlmMessage {
-                    role: "user".to_string(),
-                    content: format!(
-                        "Tool execution results:\n\n{}\n\nContinue with the task.",
-                        results_summary.join("\n\n")
-                    ),
-                });
+                messages.push(LlmMessage::user(format!(
+                    "Tool execution results:\n\n{}\n\nContinue with the task.",
+                    results_summary.join("\n\n")
+                )));
             }
             Err(e) => {
                 final_result = format!("Agent error: {}", e);

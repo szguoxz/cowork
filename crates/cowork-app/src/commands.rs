@@ -89,10 +89,7 @@ pub async fn test_api_connection(
     let provider = create_provider_with_settings(ptype, &api_key, &model);
 
     // Try a simple completion
-    let request = LlmRequest::new(vec![cowork_core::provider::LlmMessage {
-        role: "user".to_string(),
-        content: "Say 'hello' and nothing else.".to_string(),
-    }])
+    let request = LlmRequest::new(vec![cowork_core::provider::LlmMessage::user("Say 'hello' and nothing else.")])
     .with_max_tokens(10);
 
     let response = provider.complete(request).await.map_err(|e| e.to_string())?;

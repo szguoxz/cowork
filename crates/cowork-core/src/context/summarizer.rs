@@ -174,11 +174,10 @@ impl ConversationSummarizer {
             LlmMessage {
                 role: "system".to_string(),
                 content: "You are a helpful assistant that summarizes conversations accurately and concisely.".to_string(),
+                tool_calls: None,
+                tool_call_id: None,
             },
-            LlmMessage {
-                role: "user".to_string(),
-                content: summarization_prompt,
-            },
+            LlmMessage::user(summarization_prompt),
         ])
         .with_max_tokens(self.config.target_summary_tokens as u32);
 
@@ -416,11 +415,10 @@ impl ConversationSummarizer {
                 role: "system".to_string(),
                 content: "You are a helpful assistant that summarizes conversations accurately and concisely. \
                          Focus on preserving actionable context needed to continue the work.".to_string(),
+                tool_calls: None,
+                tool_call_id: None,
             },
-            LlmMessage {
-                role: "user".to_string(),
-                content: prompt,
-            },
+            LlmMessage::user(prompt),
         ])
         .with_max_tokens(self.config.target_summary_tokens as u32);
 

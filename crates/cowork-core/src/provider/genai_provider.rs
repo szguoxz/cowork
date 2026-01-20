@@ -253,15 +253,48 @@ impl GenAIProvider {
             chat_req = chat_req.with_system(system.as_str());
         }
 
-        // Convert messages
+        // Convert messages with proper tool call/result handling
         for msg in messages {
-            let chat_msg = match msg.role.as_str() {
-                "user" => ChatMessage::user(&msg.content),
-                "assistant" => ChatMessage::assistant(&msg.content),
-                "system" => ChatMessage::system(&msg.content),
-                _ => ChatMessage::user(&msg.content),
-            };
-            chat_req = chat_req.append_message(chat_msg);
+            match msg.role.as_str() {
+                "user" => {
+                    chat_req = chat_req.append_message(ChatMessage::user(&msg.content));
+                }
+                "assistant" => {
+                    // Check if this assistant message has tool calls
+                    if let Some(tool_calls) = &msg.tool_calls {
+                        // First add text content if any
+                        if !msg.content.is_empty() {
+                            chat_req = chat_req.append_message(ChatMessage::assistant(&msg.content));
+                        }
+                        // Then add tool calls
+                        let genai_tool_calls: Vec<ToolCall> = tool_calls
+                            .iter()
+                            .map(|tc| ToolCall {
+                                call_id: tc.id.clone(),
+                                fn_name: tc.name.clone(),
+                                fn_arguments: tc.arguments.clone(),
+                                thought_signatures: None,
+                            })
+                            .collect();
+                        chat_req = chat_req.append_message(genai_tool_calls);
+                    } else {
+                        chat_req = chat_req.append_message(ChatMessage::assistant(&msg.content));
+                    }
+                }
+                "tool" => {
+                    // Tool result message
+                    if let Some(call_id) = &msg.tool_call_id {
+                        let tool_response = ToolResponse::new(call_id.clone(), msg.content.clone());
+                        chat_req = chat_req.append_message(tool_response);
+                    }
+                }
+                "system" => {
+                    chat_req = chat_req.append_message(ChatMessage::system(&msg.content));
+                }
+                _ => {
+                    chat_req = chat_req.append_message(ChatMessage::user(&msg.content));
+                }
+            }
         }
 
         // Add tools if provided
@@ -357,15 +390,44 @@ impl GenAIProvider {
             chat_req = chat_req.with_system(system.as_str());
         }
 
-        // Convert messages
+        // Convert messages with proper tool call/result handling
         for msg in messages {
-            let chat_msg = match msg.role.as_str() {
-                "user" => ChatMessage::user(&msg.content),
-                "assistant" => ChatMessage::assistant(&msg.content),
-                "system" => ChatMessage::system(&msg.content),
-                _ => ChatMessage::user(&msg.content),
-            };
-            chat_req = chat_req.append_message(chat_msg);
+            match msg.role.as_str() {
+                "user" => {
+                    chat_req = chat_req.append_message(ChatMessage::user(&msg.content));
+                }
+                "assistant" => {
+                    if let Some(tool_calls) = &msg.tool_calls {
+                        if !msg.content.is_empty() {
+                            chat_req = chat_req.append_message(ChatMessage::assistant(&msg.content));
+                        }
+                        let genai_tool_calls: Vec<ToolCall> = tool_calls
+                            .iter()
+                            .map(|tc| ToolCall {
+                                call_id: tc.id.clone(),
+                                fn_name: tc.name.clone(),
+                                fn_arguments: tc.arguments.clone(),
+                                thought_signatures: None,
+                            })
+                            .collect();
+                        chat_req = chat_req.append_message(genai_tool_calls);
+                    } else {
+                        chat_req = chat_req.append_message(ChatMessage::assistant(&msg.content));
+                    }
+                }
+                "tool" => {
+                    if let Some(call_id) = &msg.tool_call_id {
+                        let tool_response = ToolResponse::new(call_id.clone(), msg.content.clone());
+                        chat_req = chat_req.append_message(tool_response);
+                    }
+                }
+                "system" => {
+                    chat_req = chat_req.append_message(ChatMessage::system(&msg.content));
+                }
+                _ => {
+                    chat_req = chat_req.append_message(ChatMessage::user(&msg.content));
+                }
+            }
         }
 
         // Add tools if provided
@@ -540,6 +602,8 @@ impl LlmProvider for GenAIProvider {
                 LlmMessage {
                     role: "system".to_string(),
                     content: system.clone(),
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
             );
         }
@@ -568,10 +632,7 @@ impl LlmProvider for GenAIProvider {
     }
 
     async fn health_check(&self) -> Result<bool> {
-        let request = LlmRequest::new(vec![LlmMessage {
-            role: "user".to_string(),
-            content: "Hi".to_string(),
-        }]);
+        let request = LlmRequest::new(vec![LlmMessage::user("Hi")]);
 
         match self.complete(request).await {
             Ok(_) => Ok(true),

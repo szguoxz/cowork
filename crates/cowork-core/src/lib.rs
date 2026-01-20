@@ -15,6 +15,7 @@ pub mod error;
 pub mod mcp_manager;
 pub mod orchestration;
 pub mod provider;
+pub mod session;
 pub mod skills;
 pub mod task;
 pub mod tools;
@@ -39,4 +40,10 @@ pub use orchestration::{
     format_file_content, format_generic_json, format_glob_result, format_grep_result, format_size,
     format_status_result, format_tool_result, format_tool_result_for_llm, truncate_result,
     ChatMessage, ChatSession, SystemPrompt, ToolCallInfo, ToolCallStatus, ToolRegistryBuilder,
+};
+
+// Session exports (unified agent loop architecture)
+pub use session::{
+    AgentLoop, ConfigFactory, QuestionInfo, QuestionOption, SessionConfig, SessionId,
+    SessionInput, SessionManager, SessionOutput,
 };

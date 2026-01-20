@@ -2,38 +2,69 @@
 //!
 //! This crate provides the Tauri-based desktop application for Cowork.
 
-pub mod agentic_loop;
-pub mod chat;
 pub mod commands;
-pub mod loop_channel;
 pub mod session_storage;
 pub mod simple_commands;
-pub mod simple_loop;
 pub mod state;
 pub mod streaming;
 
 use std::sync::Arc;
 use tauri::Manager;
-use tokio::sync::{OnceCell, RwLock};
+use tokio::sync::RwLock;
 
-use cowork_core::{AgentRegistry, ConfigManager, Context, Workspace};
+use cowork_core::session::{SessionConfig, SessionManager};
+use cowork_core::{AgentRegistry, ApprovalLevel, ConfigManager, Context, Workspace};
 use state::AppState;
 
 /// Initialize the application state
-pub fn init_state(workspace_path: std::path::PathBuf) -> AppState {
+pub fn init_state(workspace_path: std::path::PathBuf, config_manager: ConfigManager) -> AppState {
     let workspace = Workspace::new(&workspace_path);
     let context = Context::new(workspace);
     let registry = AgentRegistry::new();
 
-    // Initialize config manager, falling back to default if it fails
-    let config_manager = ConfigManager::new().unwrap_or_default();
+    // Get provider config for session creation - clone everything we need
+    let default_provider = config_manager.config().get_default_provider().cloned();
+    let approval_level: ApprovalLevel = config_manager
+        .config()
+        .approval
+        .auto_approve_level
+        .parse()
+        .unwrap_or(ApprovalLevel::Low);
+
+    // Create session manager with config factory
+    let workspace_for_factory = workspace_path.clone();
+    let session_manager = SessionManager::new(move || {
+        let mut approval_config = cowork_core::ToolApprovalConfig::default();
+        approval_config.set_level(approval_level);
+
+        let mut config = SessionConfig::new(workspace_for_factory.clone())
+            .with_approval_config(approval_config);
+
+        // Use configured provider if available
+        if let Some(ref provider_config) = default_provider {
+            let provider_type = match provider_config.provider_type.as_str() {
+                "openai" => cowork_core::provider::ProviderType::OpenAI,
+                "anthropic" => cowork_core::provider::ProviderType::Anthropic,
+                "ollama" => cowork_core::provider::ProviderType::Ollama,
+                "gemini" => cowork_core::provider::ProviderType::Gemini,
+                _ => cowork_core::provider::ProviderType::Anthropic,
+            };
+            config = config.with_provider(provider_type);
+            config = config.with_model(&provider_config.model);
+            if let Some(api_key) = provider_config.get_api_key() {
+                config = config.with_api_key(api_key);
+            }
+        }
+
+        config
+    });
 
     AppState {
         context: Arc::new(RwLock::new(context)),
         registry: Arc::new(RwLock::new(registry)),
         workspace_path,
         config_manager: Arc::new(RwLock::new(config_manager)),
-        loop_input: OnceCell::new(),
+        session_manager: Arc::new(session_manager),
     }
 }
 
@@ -73,19 +104,25 @@ pub fn run() {
                 }
             }
 
-            let state = init_state(workspace_path);
+            // Initialize config manager, falling back to default if it fails
+            let config_manager = ConfigManager::new().unwrap_or_default();
+
+            let state = init_state(workspace_path, config_manager);
             app.manage(state);
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // Simple loop commands (new architecture)
+            // Session commands (unified architecture)
             simple_commands::start_loop,
             simple_commands::send_message,
             simple_commands::stop_loop,
             simple_commands::is_loop_running,
             simple_commands::approve_tool,
             simple_commands::reject_tool,
+            simple_commands::answer_question,
+            simple_commands::list_sessions,
+            simple_commands::create_session,
             // Settings commands
             commands::get_settings,
             commands::update_settings,

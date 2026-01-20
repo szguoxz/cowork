@@ -254,6 +254,8 @@ impl ChatSession {
             .map(|m| crate::provider::LlmMessage {
                 role: m.role.clone(),
                 content: m.content.clone(),
+                tool_calls: None,
+                tool_call_id: None,
             })
             .collect()
     }
