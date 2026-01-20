@@ -48,9 +48,9 @@ struct Cli {
     #[arg(short, long)]
     verbose: bool,
 
-    /// LLM Provider (anthropic, openai)
-    #[arg(short, long, default_value = "anthropic")]
-    provider: String,
+    /// LLM Provider (anthropic, openai, deepseek, etc.) - defaults to config setting
+    #[arg(short, long)]
+    provider: Option<String>,
 
     /// Model to use (defaults to provider's default)
     #[arg(short, long)]
@@ -132,11 +132,32 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Load config to get default provider
+    let config_manager = ConfigManager::new().ok();
+
+    // Determine provider: CLI arg > config default > fallback to Anthropic
+    let provider_str = cli.provider.clone().unwrap_or_else(|| {
+        config_manager
+            .as_ref()
+            .map(|cm| cm.default_provider().to_string())
+            .unwrap_or_else(|| "anthropic".to_string())
+    });
+
     // Parse provider type
-    let provider_type = match cli.provider.to_lowercase().as_str() {
+    let provider_type = match provider_str.to_lowercase().as_str() {
         "openai" => ProviderType::OpenAI,
         "gemini" => ProviderType::Gemini,
-        "anthropic" | _ => ProviderType::Anthropic,
+        "deepseek" => ProviderType::DeepSeek,
+        "groq" => ProviderType::Groq,
+        "xai" => ProviderType::XAI,
+        "together" => ProviderType::Together,
+        "fireworks" => ProviderType::Fireworks,
+        "ollama" => ProviderType::Ollama,
+        "anthropic" => ProviderType::Anthropic,
+        _ => {
+            eprintln!("Warning: Unknown provider '{}', defaulting to Anthropic", provider_str);
+            ProviderType::Anthropic
+        }
     };
 
     // Handle one-shot mode
