@@ -14,7 +14,7 @@ pub mod streaming;
 
 use std::sync::Arc;
 use tauri::Manager;
-use tokio::sync::RwLock;
+use tokio::sync::{OnceCell, RwLock};
 
 use cowork_core::{AgentRegistry, ConfigManager, Context, Workspace};
 use state::AppState;
@@ -33,7 +33,7 @@ pub fn init_state(workspace_path: std::path::PathBuf) -> AppState {
         registry: Arc::new(RwLock::new(registry)),
         workspace_path,
         config_manager: Arc::new(RwLock::new(config_manager)),
-        loop_input: Arc::new(RwLock::new(None)),
+        loop_input: OnceCell::new(),
     }
 }
 

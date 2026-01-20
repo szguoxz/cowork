@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{OnceCell, RwLock};
 
 use cowork_core::{AgentRegistry, Config, ConfigManager, Context};
 
@@ -18,8 +18,8 @@ pub struct AppState {
     pub workspace_path: PathBuf,
     /// Configuration manager
     pub config_manager: Arc<RwLock<ConfigManager>>,
-    /// Handle to send input to the loop (None if loop not started)
-    pub loop_input: Arc<RwLock<Option<LoopInputHandle>>>,
+    /// Handle to send input to the loop (set once, never changes)
+    pub loop_input: OnceCell<LoopInputHandle>,
 }
 
 impl AppState {

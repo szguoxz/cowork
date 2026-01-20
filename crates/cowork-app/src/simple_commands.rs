@@ -18,8 +18,8 @@ use crate::state::AppState;
 
 /// Start the agentic loop
 ///
-/// This should be called once when the app starts or when a new session begins.
-/// The loop will run continuously, waiting for input when idle.
+/// This should be called once when the app starts. Uses OnceCell to ensure
+/// the loop can only be started once - subsequent calls are no-ops.
 #[tauri::command]
 pub async fn start_loop(
     app: AppHandle,
@@ -27,13 +27,10 @@ pub async fn start_loop(
 ) -> Result<(), String> {
     tracing::info!("start_loop called");
 
-    // Check if loop is already running
-    {
-        let guard = state.loop_input.read().await;
-        if guard.is_some() {
-            tracing::warn!("Loop already running");
-            return Err("Loop already running".to_string());
-        }
+    // Check if loop is already initialized (OnceCell guarantees single init)
+    if state.loop_input.initialized() {
+        tracing::info!("Loop already started, ignoring duplicate call");
+        return Ok(()); // No-op for duplicate calls (e.g., React StrictMode)
     }
 
     // Get provider from config
@@ -63,11 +60,13 @@ pub async fn start_loop(
     // Create channels
     let (input_tx, input_rx) = mpsc::channel::<LoopInput>(32);
 
-    // Create and store the input handle
+    // Create the input handle
     let handle = LoopInputHandle::new(input_tx);
-    {
-        let mut guard = state.loop_input.write().await;
-        *guard = Some(handle);
+
+    // Try to set the handle - OnceCell ensures only first caller succeeds
+    if state.loop_input.set(handle).is_err() {
+        tracing::info!("Loop was initialized by another call, ignoring");
+        return Ok(()); // Another call won the race, that's fine
     }
 
     // Emit Ready and Idle BEFORE spawning (synchronously, so frontend listener catches them)
@@ -105,9 +104,8 @@ pub async fn send_message(
     content: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let guard = state.loop_input.read().await;
-    let handle = guard
-        .as_ref()
+    let handle = state.loop_input
+        .get()
         .ok_or_else(|| "Loop not started".to_string())?;
 
     handle.send_message(content).await
@@ -116,26 +114,19 @@ pub async fn send_message(
 /// Stop the loop
 #[tauri::command]
 pub async fn stop_loop(state: State<'_, AppState>) -> Result<(), String> {
-    let guard = state.loop_input.read().await;
-    let handle = guard
-        .as_ref()
+    let handle = state.loop_input
+        .get()
         .ok_or_else(|| "Loop not started".to_string())?;
 
-    handle.stop().await?;
-
-    // Clear the handle
-    drop(guard);
-    let mut guard = state.loop_input.write().await;
-    *guard = None;
-
-    Ok(())
+    handle.stop().await
+    // Note: OnceCell cannot be reset, but the loop will stop processing.
+    // For a full reset, the app would need to restart.
 }
 
 /// Check if loop is running
 #[tauri::command]
 pub async fn is_loop_running(state: State<'_, AppState>) -> Result<bool, String> {
-    let guard = state.loop_input.read().await;
-    Ok(guard.is_some())
+    Ok(state.loop_input.initialized())
 }
 
 /// Approve a pending tool
@@ -144,9 +135,8 @@ pub async fn approve_tool(
     tool_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let guard = state.loop_input.read().await;
-    let handle = guard
-        .as_ref()
+    let handle = state.loop_input
+        .get()
         .ok_or_else(|| "Loop not started".to_string())?;
 
     handle.send(LoopInput::ApproveTool(tool_id)).await
@@ -158,9 +148,8 @@ pub async fn reject_tool(
     tool_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let guard = state.loop_input.read().await;
-    let handle = guard
-        .as_ref()
+    let handle = state.loop_input
+        .get()
         .ok_or_else(|| "Loop not started".to_string())?;
 
     handle.send(LoopInput::RejectTool(tool_id)).await
