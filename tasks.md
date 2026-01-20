@@ -1,235 +1,216 @@
-# Cowork (Rust Claude Code Clone) - Feature Completion Tasks
+# CLI/UI Shared Logic Refactoring Tasks
 
-This file tracks all features that need to be implemented, fixed, or verified to achieve feature parity with Claude Code.
-
----
-
-## CRITICAL: Missing/Broken Features
-
-### 1. Document Processing ✅ COMPLETED
-- [x] **Implement PDF parsing** (`crates/cowork-core/src/tools/document/read_pdf.rs`)
-  - Implemented using `pdf-extract` crate
-  - Supports page range filtering (e.g., "1-5", "all")
-  - Proper error handling for missing files, wrong extensions
-  - Unit tests added
-
-- [x] **Implement Office document parsing** (`crates/cowork-core/src/tools/document/read_office.rs`)
-  - Word (.docx): Using `dotext` crate for text extraction
-  - Excel (.xlsx, .xls): Using `calamine` crate with full cell type support
-  - PowerPoint (.pptx): Custom XML parser using `quick-xml` and `zip`
-  - Document tools registered in CLI
-  - Unit tests added in `tests/document_tests.rs`
-
-### 2. Browser Tools ✅ REGISTERED
-- [x] **Register browser tools in CLI** (`crates/cowork-cli/src/main.rs`)
-  - BrowserController.create_tools() used to register all browser tools
-  - Registered: `browser_navigate`, `browser_click`, `browser_type`, `browser_screenshot`, `browser_get_page_content`
-  - Tools added to show_tools() display and system prompt
-  - Browser read-only tools (screenshot, get_page_content) auto-approved
-
-### 3. LSP Operations ✅ COMPLETED
-- [x] **Implement `prepareCallHierarchy`** (`crates/cowork-core/src/tools/lsp/client.rs`)
-- [x] **Implement `incomingCalls`** (`crates/cowork-core/src/tools/lsp/client.rs`)
-- [x] **Implement `outgoingCalls`** (`crates/cowork-core/src/tools/lsp/client.rs`)
-  - Added CallHierarchyPrepare, CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls support
-  - Full LSP protocol implementation with lsp-types crate
-  - Proper formatting of call hierarchy items with file locations
-
-### 4. Plan Mode ✅ INTEGRATED
-- [x] **Implement plan mode state tracking** in agentic loop
-  - `ExitPlanMode` tool with shared PlanModeState
-  - Added `EnterPlanMode` tool (`crates/cowork-core/src/tools/planning/enter_plan_mode.rs`)
-  - PlanModeState tracks: active, plan_file, allowed_prompts
-  - Both tools registered in CLI with shared state
-  - Tools documented in show_tools() and system prompt
-
-### 5. AskUserQuestion ✅ COMPLETED
-- [x] **Register AskUserQuestion tool in CLI** (`crates/cowork-cli/src/main.rs`)
-  - Tool registered in `create_tool_registry()` function
-  - Supports 1-4 questions with 2-4 options each
-  - Multi-select support, validation, async channels
-
-### 6. Context Management Not Used
-- [ ] **Inject CLAUDE.md context into system prompt**
-  - Context gathering implemented (`context/mod.rs`) but not used
-  - Modify CLI to load and inject 4-tier memory hierarchy
-  - Include: Enterprise, Project, Rules, User CLAUDE.md files
-  - Add context summarization when token limit approached
+## Overview
+Extract duplicated logic between CLI (`cowork-cli`) and UI (`cowork-app`) into shared modules in `cowork-core`.
 
 ---
 
-## HIGH PRIORITY: Robustness Issues
+## Phase 1: Provider Infrastructure (Critical)
 
-### 7. Error Handling Improvements
-- [ ] **Replace 75+ instances of `.unwrap()/.expect()` with proper error handling**
-  - `crates/cowork-core/src/config.rs` - config loading
-  - `crates/cowork-core/src/mcp_manager.rs` - MCP operations
-  - `crates/cowork-core/src/skills/` modules - skill loading
-  - Use `?` operator with proper error types
-  - Add context to errors with `anyhow` or custom error types
+### 1.1 Add `FromStr` for `ProviderType` ✅ COMPLETED
+- **File**: `crates/cowork-core/src/provider/genai_provider.rs`
+- **Status**: Already implemented in genai_provider.rs with full provider support including aliases (google→Gemini, grok→XAI, zhipu→Zai)
+- **Also Implemented**: `fn default_model(&self) -> &'static str` method
+- **Updated**: CLI main.rs now uses `provider_str.parse::<ProviderType>()` (simplified from 17 lines to 4 lines)
+- **Updated**: UI commands.rs now uses `.parse()` for ProviderType and `.default_model()` for default models
+- **Tests Added**: `test_provider_type_from_str()` and `test_provider_type_display_roundtrip()` in provider_tests.rs
 
-### 8. Web Search Configuration
-- [ ] **Add web search API configuration guidance**
-  - Currently returns placeholder when no endpoint configured
-  - Document how to set up search API
-  - Add example config in `config/default.toml`
-  - Show helpful error message with setup instructions
+### 1.2 Create Provider Factory Module ✅ COMPLETED
+- **File**: `crates/cowork-core/src/provider/factory.rs` (new)
+- **Status**: Implemented all provider factory functions
+- **Functions Added**:
+  - `create_provider_from_config(config_manager, provider_type, model_override) -> Result<GenAIProvider>`
+  - `create_provider_from_provider_config(config) -> Result<GenAIProvider>` (for UI use)
+  - `create_provider_with_settings(provider_type, api_key, model) -> GenAIProvider`
+  - `get_api_key(config_manager, provider_type) -> Option<String>`
+  - `get_model_tiers(config_manager, provider_type) -> ModelTiers`
+  - `has_api_key_configured(config_manager, provider_type) -> bool`
+- **Updated**: CLI main.rs now uses shared functions (removed ~80 lines of duplicate code)
+- **Updated**: UI chat.rs now uses `create_provider_from_provider_config()` and `create_provider_with_settings()`
+- **Tests Added**: 4 tests in factory.rs
 
-### 9. MCP Tool Integration
-- [ ] **Auto-register MCP tools with tool registry**
-  - MCP servers can be managed but their tools aren't auto-registered
-  - Add MCP tool discovery and registration on server start
-  - Integrate MCP tool calls into main agentic loop
-
----
-
-## MEDIUM PRIORITY: Feature Completeness
-
-### 10. Test Coverage
-- [ ] **Add tests for browser tools**
-- [ ] **Add tests for document tools** (once implemented)
-- [ ] **Add tests for planning mode flow**
-- [ ] **Add integration tests for tool approval flow**
-- [ ] **Add tests for multi-turn agentic loops** (with mock LLM)
-- [ ] **Add tests for MCP integration**
-- [ ] **Add tests for context management**
-
-### 11. Browser Tool Fallbacks
-- [ ] **Improve fallback messages when browser feature disabled**
-  - Currently some tools have simulation-only fallbacks
-  - Clearly inform user that browser feature is required
-  - Provide instructions to enable browser feature
-
-### 12. Skills/Tools Unification
-- [ ] **Document relationship between Skills and Tools**
-  - Skills = slash commands (user invoked)
-  - Tools = LLM callable functions
-  - Some overlap is confusing
-  - Either unify or document clearly
+### 1.3 Add `FromStr` for `ApprovalLevel` ✅ COMPLETED
+- **File**: `crates/cowork-core/src/approval/mod.rs`
+- **Status**: Implemented `FromStr` and `Display` traits for ApprovalLevel
+- **Updated**: UI commands.rs now uses `.parse::<ApprovalLevel>()` (simplified from 6 match arms to 3 lines)
+- **Tests Added**: `test_approval_level_from_str()` and `test_approval_level_display_roundtrip()` in agentic_loop_tests.rs
 
 ---
 
-## LOW PRIORITY: Polish
+## Phase 2: Tool Registry (Critical)
 
-### 13. Structured Tool Results
-- [ ] **Consider structured tool result passing** instead of string-based
-  - Current: Tool results passed as strings in agentic loop
-  - Could improve with typed result objects
+### 2.1 Create Shared Tool Registry Factory ✅ COMPLETED
+- **File**: `crates/cowork-core/src/orchestration/tool_registry.rs` (new)
+- **Status**: Implemented ToolRegistryBuilder with full customization support
+- **Features**:
+  - `ToolRegistryBuilder::new(workspace).with_provider().with_api_key().with_model_tiers().build()`
+  - Toggle tool categories: `with_filesystem()`, `with_shell()`, `with_web()`, `with_browser()`, etc.
+  - `create_standard_tool_registry(workspace, provider_type, api_key, model_tiers)` convenience function
+- **Updated**: CLI main.rs now uses `create_standard_tool_registry()` (removed ~65 lines of duplicate code)
+- **Tests Added**: 4 tests in tool_registry.rs
 
-### 14. Feature Flag Consistency
-- [ ] **Audit feature flags for completeness**
-  - `browser` feature enabled by default but tools not registered
-  - `lsp` feature enabled but some operations unimplemented
-  - Either disable incomplete features or finish implementations
-
-### 15. Documentation
-- [ ] **Add inline documentation for public APIs**
-- [ ] **Update PROJECT_STRUCTURE.md with current state**
-- [ ] **Add CONTRIBUTING.md with development setup**
-
----
-
-## Verification Checklist
-
-After implementing, verify each feature works end-to-end:
-
-### Filesystem Tools
-- [ ] `read_file` - Read file with offset/limit
-- [ ] `write_file` - Create and overwrite files
-- [ ] `edit` - Surgical string replacement
-- [ ] `glob` - Pattern matching
-- [ ] `grep` - Regex content search
-- [ ] `list_directory` - Directory listing
-- [ ] `search_files` - File search
-- [ ] `delete_file` - File deletion
-- [ ] `move_file` - File moving
-
-### Shell Tools
-- [ ] `execute_command` - Run shell commands
-- [ ] `kill_shell` - Kill background processes
-- [ ] Command blocklist works (blocks dangerous commands)
-
-### Web Tools
-- [ ] `web_fetch` - Fetch URL content
-- [ ] `web_search` - Search with configured API
-
-### Browser Tools ✅ REGISTERED
-- [x] `browser_navigate` - Navigate to URL
-- [x] `browser_click` - Click elements
-- [x] `browser_type` - Type text
-- [x] `browser_screenshot` - Take screenshots
-- [x] `browser_get_page_content` - Get page content
-
-### LSP Tools ✅ IMPLEMENTED
-- [x] `goToDefinition` - Find definition
-- [x] `findReferences` - Find all references
-- [x] `hover` - Get hover info
-- [x] `documentSymbol` - Get document symbols
-- [x] `workspaceSymbol` - Search workspace symbols
-- [x] `goToImplementation` - Find implementations
-- [x] `prepareCallHierarchy` - Get call hierarchy
-- [x] `incomingCalls` - Find callers
-- [x] `outgoingCalls` - Find callees
-
-### Document Tools ✅ IMPLEMENTED
-- [x] `read_pdf` - Extract PDF text (using pdf-extract)
-- [x] `read_office` - Extract Office doc text (docx, xlsx, pptx)
-
-### Task Tools
-- [ ] `todo_write` - Track todos
-- [ ] `task` - Launch subagents
-- [ ] `task_output` - Get agent output
-
-### Planning Tools ✅ INTEGRATED
-- [x] `enter_plan_mode` - Enter planning mode
-- [x] `exit_plan_mode` - Exit with approval
-
-### Interaction Tools ✅ REGISTERED
-- [x] `ask_user_question` - Interactive questions (registered in CLI)
-
-### Context Management
-- [ ] CLAUDE.md files loaded and injected
-- [ ] Context summarization works
-- [ ] Token counting accurate
-
-### MCP Integration
-- [ ] MCP server start/stop
-- [ ] MCP tool discovery
-- [ ] MCP tool execution in agentic loop
+### 2.2 Create Standard Tool Definitions Function ✅ COMPLETED
+- **File**: `crates/cowork-core/src/tools/mod.rs`
+- **Status**: Implemented `standard_tool_definitions(workspace)` function
+- **Updated**: UI chat.rs `default_tools()` now uses shared `standard_tool_definitions()`
+- **Benefit**: UI now gets all 25+ tools instead of just 5 hardcoded ones
 
 ---
 
-## Running Tests
+## Phase 3: Message & Context Handling (High)
 
-```bash
-# Run all tests
-cargo test
+### 3.1 Add Message Type Conversions ✅ COMPLETED
+- **File**: `crates/cowork-core/src/context/mod.rs`
+- **Status**: Implemented conversion methods on MessageRole and Message
+- **Functions Added**:
+  - `MessageRole::parse(s: &str) -> MessageRole` - Parse string role to enum
+  - `MessageRole::as_str(&self) -> &'static str` - Convert enum to string
+  - `MessageRole::Display` and `FromStr` traits
+  - `Message::new(role, content)` - Create message with current timestamp
+  - `Message::with_timestamp(role, content, timestamp)` - Create with specific timestamp
+  - `Message::from_str_role(role, content, timestamp)` - Create from string role
+  - `Message::role_str(&self) -> &'static str` - Get role as string
+  - `messages_from_ui(messages, accessor)` - Generic converter for UI messages
+- **Updated**: UI agentic_loop.rs uses `Message::from_str_role()` and `role.as_str()`
+- **Updated**: UI commands.rs uses `Message::from_str_role()` and `role.as_str()`
+- **Updated**: UI chat.rs uses `Message::from_str_role()`
+- **Exports Added**: `Message`, `MessageRole`, `messages_from_ui` exported from lib.rs
+- **Tests Added**: 10 tests in agentic_loop_tests.rs (message_conversion_tests module)
 
-# Run specific test file
-cargo test --test filesystem_tests
-cargo test --test shell_tests
-cargo test --test agentic_loop_tests
+### 3.2 Extract Question Parsing Logic ✅ COMPLETED
+- **File**: `crates/cowork-core/src/tools/interaction/ask_question.rs`
+- **Status**: Implemented shared question parsing functions
+- **Types Already Existed**: `Question`, `QuestionOption` (added serde camelCase rename)
+- **Functions Added**:
+  - `parse_questions(args) -> Result<Vec<Question>, String>` - Strict parser with validation
+  - `parse_questions_lenient(args) -> Result<Vec<Question>, String>` - Forgiving parser
+  - `validate_questions(questions) -> Result<(), String>` - Validation helper
+  - `format_answer_response(answers) -> Value` - Format answers JSON
+  - `format_answer_response_with_id(id, answers) -> Value` - Format with request ID
+- **Exports Added**: All types and functions exported from `tools::interaction` module
+- **Tests Added**: 10 tests in agentic_loop_tests.rs (question_parsing_tests module)
 
-# Run with all features
-cargo test --all-features
+---
 
-# Run with verbose output
-cargo test -- --nocapture
-```
+## Phase 4: Formatting Utilities (High)
 
-## Build Commands
+### 4.1 Create Shared Formatting Module ✅ COMPLETED
+- **File**: `crates/cowork-core/src/orchestration/formatting.rs` (new)
+- **Status**: Implemented all formatting functions with comprehensive tests
+- **Functions Implemented**:
+  - `format_tool_result()` - Routes to appropriate formatter
+  - `format_directory_result()` - Directory listing format
+  - `format_glob_result()` - File search results
+  - `format_grep_result()` - Code search matches
+  - `format_file_content()` - File content preview
+  - `format_command_result()` - Shell output format
+  - `format_status_result()` - Success/error messages
+  - `format_generic_json()` - Auto-detect and format
+  - `format_size()` - Bytes to human-readable
+  - `truncate_result()` - Safe string truncation
+- **Updated**: CLI main.rs now uses shared formatting functions (~213 lines removed)
+- **Exports Added**: All formatting functions exported from `orchestration` and `lib.rs`
+- **Tests Added**: 13 tests in formatting.rs
 
-```bash
-# Development build
-cargo build
+---
 
-# Release build
-cargo build --release
+## Phase 5: Configuration Helpers (Medium)
 
-# Build with all features
-cargo build --all-features
+### 5.1 Add API Key Validation to ConfigManager ✅ COMPLETED (Previously)
+- **File**: `crates/cowork-core/src/config.rs`
+- **Status**: Methods already exist in ConfigManager
+- **Existing Methods**:
+  - `has_api_key(&self) -> bool` - Check default provider
+  - `has_api_key_for(&self, provider_name: &str) -> bool` - Check specific provider
+  - `get_api_key(&self) -> Option<String>` - Get default provider key
+  - `get_api_key_for(&self, provider_name: &str) -> Option<String>` - Get specific provider key
 
-# Run CLI
-cargo run --bin cowork -- --help
-cargo run --bin cowork -- "your prompt here"
-```
+### 5.2 Centralize Default Constants ✅ COMPLETED
+- **File**: `crates/cowork-core/src/config.rs`
+- **Status**: Added `defaults` module with common constants
+- **Constants Added**:
+  - `COMMAND_TIMEOUT_SECS: u64 = 30`
+  - `MAX_AGENTIC_ITERATIONS: usize = 100`
+  - `DEFAULT_APPROVAL_LEVEL: &str = "low"`
+  - `HISTORY_FILE_NAME: &str = "history.txt"`
+  - `DEFAULT_MAX_TOKENS: u32 = 4096`
+  - `DEFAULT_TEMPERATURE: f32 = 0.7`
+  - `DEFAULT_PROVIDER: &str = "anthropic"`
+  - `SESSION_DIR_NAME: &str = ".cowork"`
+  - `MAX_CONTEXT_SIZE: usize = 100_000`
+  - `BROWSER_TIMEOUT_SECS: u64 = 30`
+  - `DEFAULT_SEARCH_RESULTS: usize = 50`
+- **Exports Added**: `defaults` module exported from lib.rs
+
+---
+
+## Phase 6: Cleanup (Low)
+
+### 6.1 Remove Duplicated Code from CLI ✅ COMPLETED
+Removed/updated from `crates/cowork-cli/src/main.rs`:
+- [x] `parse_provider_type()` - Now uses `ProviderType::from_str()` (Phase 1.1)
+- [x] `create_provider_from_config()` - Now uses shared factory (Phase 1.2)
+- [x] `get_api_key()` - Now uses shared function (Phase 1.2)
+- [x] `get_model_tiers()` - Now uses shared function (Phase 1.2)
+- [x] `has_api_key_configured()` - Now uses shared function (Phase 1.2)
+- [x] `create_tool_registry()` - Now uses `create_standard_tool_registry()` (Phase 2.1)
+- [x] Format functions - Now uses shared formatting module (Phase 4.1)
+
+### 6.2 Remove Duplicated Code from UI ✅ COMPLETED (Previously)
+Updated in `crates/cowork-app/src/`:
+- [x] `chat.rs`: Uses `create_provider_from_provider_config()` (Phase 1.2)
+- [x] `chat.rs`: Uses `create_provider_with_settings()` (Phase 1.2)
+- [x] `chat.rs`: Uses `standard_tool_definitions()` (Phase 2.2)
+- [x] `agentic_loop.rs`: Uses shared Message types (Phase 3.1)
+- [x] `agentic_loop.rs`: Uses shared question parsing (Phase 3.2)
+- [x] `commands.rs`: Uses `ApprovalLevel::from_str()` (Phase 1.3)
+- [x] `commands.rs`: Uses `ProviderType::from_str()` (Phase 1.1)
+
+### 6.3 Update Exports ✅ COMPLETED
+- **File**: `crates/cowork-core/src/lib.rs`
+- All shared modules exported:
+  - Provider factory functions
+  - Tool registry functions and builder
+  - Formatting functions
+  - Message types and conversions
+  - Question parsing utilities
+  - Default constants
+
+---
+
+## Testing Checklist
+
+After each phase:
+- [x] `cargo check --workspace` passes
+- [x] `cargo test -p cowork-core` passes (306 tests, 0 failures)
+- [x] `cargo run -p cowork-cli -- --help` works
+- [x] `cargo run -p cowork-cli -- tools` shows all 26 tools
+- [x] UI app builds and basic chat works
+
+---
+
+## Estimated Impact
+
+| Phase | Files Changed | Lines Removed | Lines Added | Priority | Status |
+|-------|---------------|---------------|-------------|----------|--------|
+| 1     | 5             | ~100          | ~150        | Critical | ✅ DONE |
+| 2     | 4             | ~150          | ~100        | Critical | ✅ DONE |
+| 3     | 4             | ~80           | ~60         | High     | ✅ DONE |
+| 4     | 2             | ~220          | ~250        | High     | ✅ DONE |
+| 5     | 3             | ~30           | ~40         | Medium   | ✅ DONE |
+| 6     | 3             | ~50           | ~10         | Low      | ✅ DONE |
+
+**Total**: ~630 lines of duplication removed, replaced with ~610 lines of shared code (net reduction + better maintainability)
+
+## Summary
+
+All phases have been completed! The refactoring has:
+1. Unified provider type handling with `FromStr` and `Display` traits
+2. Created a shared provider factory for consistent provider creation
+3. Added `FromStr` for `ApprovalLevel` to simplify parsing
+4. Created a `ToolRegistryBuilder` for flexible tool registry construction
+5. Added shared tool definitions via `standard_tool_definitions()`
+6. Added message type conversions and shared question parsing
+7. Created a comprehensive formatting module for tool result display
+8. Centralized default constants in a `defaults` module
+9. Updated all exports in lib.rs for easy access

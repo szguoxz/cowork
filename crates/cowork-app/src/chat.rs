@@ -6,12 +6,13 @@
 use std::sync::Arc;
 
 use cowork_core::context::{
-    ContextMonitor, ContextUsage, Message, MessageRole, MonitorConfig,
+    ContextMonitor, ContextUsage, Message, MonitorConfig,
 };
 use cowork_core::provider::{
-    create_provider, LlmMessage, LlmProvider, LlmRequest, ProviderType,
+    create_provider_from_provider_config, create_provider_with_settings, LlmMessage, LlmProvider,
+    LlmRequest, ProviderType,
 };
-use cowork_core::tools::ToolDefinition;
+use cowork_core::tools::{standard_tool_definitions, ToolDefinition};
 // Use shared types from cowork-core
 use cowork_core::orchestration::{format_tool_result_for_llm, SystemPrompt};
 
@@ -76,7 +77,7 @@ impl ChatSession {
 
     /// Create a new session with a specific provider type
     pub fn with_provider_type(provider: Arc<dyn LlmProvider>, provider_type: ProviderType) -> Self {
-        let context_monitor = Some(ContextMonitor::new(provider_type.clone()));
+        let context_monitor = Some(ContextMonitor::new(provider_type));
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             messages: Vec::new(),
@@ -96,16 +97,7 @@ impl ChatSession {
         let context_messages: Vec<Message> = self
             .messages
             .iter()
-            .map(|m| Message {
-                role: match m.role.as_str() {
-                    "user" => MessageRole::User,
-                    "assistant" => MessageRole::Assistant,
-                    "system" => MessageRole::System,
-                    _ => MessageRole::Tool,
-                },
-                content: m.content.clone(),
-                timestamp: m.timestamp,
-            })
+            .map(|m| Message::from_str_role(&m.role, m.content.clone(), m.timestamp))
             .collect();
 
         Some(monitor.calculate_usage(&context_messages, &self.system_prompt, None))
@@ -121,12 +113,12 @@ impl ChatSession {
     /// Enable context monitoring with optional custom config
     pub fn enable_context_monitoring(&mut self, config: Option<MonitorConfig>) {
         let cfg = config.unwrap_or_default();
-        self.context_monitor = Some(ContextMonitor::with_config(self.provider_type.clone(), cfg));
+        self.context_monitor = Some(ContextMonitor::with_config(self.provider_type, cfg));
     }
 
     /// Get the provider type
     pub fn provider_type(&self) -> ProviderType {
-        self.provider_type.clone()
+        self.provider_type
     }
 
     /// Add a user message and get an assistant response
@@ -274,42 +266,32 @@ impl ChatSession {
 }
 
 /// Create an LLM provider from core config
+///
+/// Wraps the shared factory function for Arc return type compatibility
 pub fn create_provider_from_config(
     config: &cowork_core::config::ProviderConfig,
 ) -> Result<Arc<dyn LlmProvider>, String> {
-    let provider_type: ProviderType = config
-        .provider_type
-        .parse()
-        .map_err(|e: String| e)?;
-
-    let api_key = config.get_api_key();
-
-    let provider = create_provider(
-        provider_type,
-        api_key.as_deref(),
-        Some(&config.model),
-        None, // Use default preamble
-    )
-    .map_err(|e| e.to_string())?;
-
+    let provider = create_provider_from_provider_config(config)
+        .map_err(|e| e.to_string())?;
     Ok(Arc::new(provider))
 }
 
 /// Create an LLM provider from settings (used by commands)
-pub fn create_provider_from_settings(settings: &ProviderSettings) -> Result<Arc<dyn LlmProvider>, String> {
+///
+/// Wraps the shared factory function for Arc return type compatibility
+pub fn create_provider_from_settings_arc(
+    settings: &ProviderSettings,
+) -> Result<Arc<dyn LlmProvider>, String> {
     let provider_type: ProviderType = settings
         .provider_type
         .parse()
         .map_err(|e: String| e)?;
 
-    let provider = create_provider(
-        provider_type,
-        settings.api_key.as_deref(),
-        Some(&settings.model),
-        None, // Use default preamble
-    )
-    .map_err(|e| e.to_string())?;
+    let api_key = settings.api_key.as_deref().ok_or_else(|| {
+        "No API key provided in settings".to_string()
+    })?;
 
+    let provider = create_provider_with_settings(provider_type, api_key, &settings.model);
     Ok(Arc::new(provider))
 }
 
@@ -319,88 +301,8 @@ fn default_system_prompt() -> String {
 }
 
 fn default_tools() -> Vec<ToolDefinition> {
-    vec![
-        ToolDefinition {
-            name: "read_file".to_string(),
-            description: "Read the contents of a file".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file to read"
-                    }
-                },
-                "required": ["path"]
-            }),
-        },
-        ToolDefinition {
-            name: "write_file".to_string(),
-            description: "Write content to a file".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file to write"
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Content to write to the file"
-                    }
-                },
-                "required": ["path", "content"]
-            }),
-        },
-        ToolDefinition {
-            name: "list_directory".to_string(),
-            description: "List files and directories in a given path".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the directory to list"
-                    }
-                },
-                "required": ["path"]
-            }),
-        },
-        ToolDefinition {
-            name: "execute_command".to_string(),
-            description: "Execute a shell command".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The command to execute"
-                    },
-                    "working_dir": {
-                        "type": "string",
-                        "description": "Working directory for the command"
-                    }
-                },
-                "required": ["command"]
-            }),
-        },
-        ToolDefinition {
-            name: "search_files".to_string(),
-            description: "Search for files matching a pattern".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "Glob pattern to search for (e.g., '*.rs', '**/*.ts')"
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Directory to search in"
-                    }
-                },
-                "required": ["pattern"]
-            }),
-        },
-    ]
+    // Use the shared tool definitions from cowork-core
+    // This ensures UI tools match CLI tools exactly
+    let workspace = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    standard_tool_definitions(&workspace)
 }

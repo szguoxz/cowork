@@ -1,13 +1,13 @@
 //! MCP (Model Context Protocol) server management skill
 //!
 //! Provides commands for managing MCP servers:
-//! - /mcp list - List configured MCP servers and their status
-//! - /mcp add <name> <command> [args...] - Add a new stdio MCP server
-//! - /mcp add <name> <url> - Add a new HTTP MCP server
-//! - /mcp remove <name> - Remove an MCP server
-//! - /mcp start <name> - Start a specific server
-//! - /mcp stop <name> - Stop a specific server
-//! - /mcp tools [server] - List tools from MCP servers
+//! - `/mcp list` - List configured MCP servers and their status
+//! - `/mcp add NAME COMMAND [ARGS...]` - Add a new stdio MCP server
+//! - `/mcp add NAME URL` - Add a new HTTP MCP server
+//! - `/mcp remove NAME` - Remove an MCP server
+//! - `/mcp start NAME` - Start a specific server
+//! - `/mcp stop NAME` - Stop a specific server
+//! - `/mcp tools [SERVER]` - List tools from MCP servers
 
 use std::sync::Arc;
 

@@ -257,4 +257,345 @@ mod approval_level_tests {
             "Write should require some approval"
         );
     }
+
+    #[test]
+    fn test_approval_level_from_str() {
+        // Test standard level names
+        assert_eq!("none".parse::<ApprovalLevel>().unwrap(), ApprovalLevel::None);
+        assert_eq!("low".parse::<ApprovalLevel>().unwrap(), ApprovalLevel::Low);
+        assert_eq!("medium".parse::<ApprovalLevel>().unwrap(), ApprovalLevel::Medium);
+        assert_eq!("high".parse::<ApprovalLevel>().unwrap(), ApprovalLevel::High);
+        assert_eq!("critical".parse::<ApprovalLevel>().unwrap(), ApprovalLevel::Critical);
+
+        // Test case insensitivity
+        assert_eq!("NONE".parse::<ApprovalLevel>().unwrap(), ApprovalLevel::None);
+        assert_eq!("Low".parse::<ApprovalLevel>().unwrap(), ApprovalLevel::Low);
+        assert_eq!("MEDIUM".parse::<ApprovalLevel>().unwrap(), ApprovalLevel::Medium);
+        assert_eq!("High".parse::<ApprovalLevel>().unwrap(), ApprovalLevel::High);
+        assert_eq!("CRITICAL".parse::<ApprovalLevel>().unwrap(), ApprovalLevel::Critical);
+
+        // Test unknown level
+        assert!("unknown".parse::<ApprovalLevel>().is_err());
+        assert!("".parse::<ApprovalLevel>().is_err());
+    }
+
+    #[test]
+    fn test_approval_level_display_roundtrip() {
+        let levels = [
+            ApprovalLevel::None,
+            ApprovalLevel::Low,
+            ApprovalLevel::Medium,
+            ApprovalLevel::High,
+            ApprovalLevel::Critical,
+        ];
+
+        for level in levels {
+            let s = level.to_string();
+            let parsed: ApprovalLevel = s.parse().unwrap();
+            assert_eq!(parsed, level, "Roundtrip failed for {:?}", level);
+        }
+    }
+}
+
+mod message_conversion_tests {
+    use cowork_core::context::{Message, MessageRole, messages_from_ui};
+    use chrono::Utc;
+
+    #[test]
+    fn test_message_role_parse() {
+        assert_eq!(MessageRole::parse("user"), MessageRole::User);
+        assert_eq!(MessageRole::parse("assistant"), MessageRole::Assistant);
+        assert_eq!(MessageRole::parse("system"), MessageRole::System);
+        assert_eq!(MessageRole::parse("tool"), MessageRole::Tool);
+        // Unknown should default to Tool
+        assert_eq!(MessageRole::parse("unknown"), MessageRole::Tool);
+        assert_eq!(MessageRole::parse(""), MessageRole::Tool);
+    }
+
+    #[test]
+    fn test_message_role_as_str() {
+        assert_eq!(MessageRole::User.as_str(), "user");
+        assert_eq!(MessageRole::Assistant.as_str(), "assistant");
+        assert_eq!(MessageRole::System.as_str(), "system");
+        assert_eq!(MessageRole::Tool.as_str(), "tool");
+    }
+
+    #[test]
+    fn test_message_role_display() {
+        assert_eq!(MessageRole::User.to_string(), "user");
+        assert_eq!(MessageRole::Assistant.to_string(), "assistant");
+        assert_eq!(MessageRole::System.to_string(), "system");
+        assert_eq!(MessageRole::Tool.to_string(), "tool");
+    }
+
+    #[test]
+    fn test_message_role_fromstr_trait() {
+        let user: MessageRole = "user".parse().unwrap();
+        assert_eq!(user, MessageRole::User);
+
+        let assistant: MessageRole = "assistant".parse().unwrap();
+        assert_eq!(assistant, MessageRole::Assistant);
+    }
+
+    #[test]
+    fn test_message_new() {
+        let msg = Message::new(MessageRole::User, "Hello");
+        assert_eq!(msg.role, MessageRole::User);
+        assert_eq!(msg.content, "Hello");
+        // Timestamp should be recent
+        assert!(msg.timestamp <= Utc::now());
+    }
+
+    #[test]
+    fn test_message_with_timestamp() {
+        let ts = Utc::now();
+        let msg = Message::with_timestamp(MessageRole::Assistant, "Response", ts);
+        assert_eq!(msg.role, MessageRole::Assistant);
+        assert_eq!(msg.content, "Response");
+        assert_eq!(msg.timestamp, ts);
+    }
+
+    #[test]
+    fn test_message_from_str_role() {
+        let ts = Utc::now();
+        let msg = Message::from_str_role("user", "Test message", ts);
+        assert_eq!(msg.role, MessageRole::User);
+        assert_eq!(msg.content, "Test message");
+        assert_eq!(msg.timestamp, ts);
+
+        // Unknown role should default to Tool
+        let msg2 = Message::from_str_role("unknown_role", "Unknown", ts);
+        assert_eq!(msg2.role, MessageRole::Tool);
+    }
+
+    #[test]
+    fn test_message_role_str() {
+        let msg = Message::new(MessageRole::User, "Test");
+        assert_eq!(msg.role_str(), "user");
+
+        let msg2 = Message::new(MessageRole::Assistant, "Test");
+        assert_eq!(msg2.role_str(), "assistant");
+    }
+
+    #[test]
+    fn test_messages_from_ui() {
+        // Simulate UI message structure
+        struct UiMessage {
+            role: String,
+            content: String,
+            timestamp: chrono::DateTime<Utc>,
+        }
+
+        let ts = Utc::now();
+        let ui_messages = vec![
+            UiMessage { role: "user".to_string(), content: "Hello".to_string(), timestamp: ts },
+            UiMessage { role: "assistant".to_string(), content: "Hi!".to_string(), timestamp: ts },
+            UiMessage { role: "system".to_string(), content: "Context".to_string(), timestamp: ts },
+        ];
+
+        let messages = messages_from_ui(&ui_messages, |m| {
+            (m.role.as_str(), m.content.as_str(), m.timestamp)
+        });
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].role, MessageRole::User);
+        assert_eq!(messages[0].content, "Hello");
+        assert_eq!(messages[1].role, MessageRole::Assistant);
+        assert_eq!(messages[1].content, "Hi!");
+        assert_eq!(messages[2].role, MessageRole::System);
+        assert_eq!(messages[2].content, "Context");
+    }
+
+    #[test]
+    fn test_message_role_roundtrip() {
+        let roles = [
+            MessageRole::User,
+            MessageRole::Assistant,
+            MessageRole::System,
+            MessageRole::Tool,
+        ];
+
+        for role in roles {
+            let s = role.as_str();
+            let parsed = MessageRole::parse(s);
+            assert_eq!(parsed, role, "Roundtrip failed for {:?}", role);
+        }
+    }
+}
+
+mod question_parsing_tests {
+    use cowork_core::tools::interaction::{
+        parse_questions, parse_questions_lenient, validate_questions,
+        format_answer_response, format_answer_response_with_id, Question, QuestionOption,
+    };
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn make_valid_question() -> serde_json::Value {
+        json!({
+            "questions": [{
+                "question": "What is your preferred language?",
+                "header": "Language",
+                "multiSelect": false,
+                "options": [
+                    { "label": "Rust", "description": "Systems language" },
+                    { "label": "Python", "description": "Scripting language" }
+                ]
+            }]
+        })
+    }
+
+    #[test]
+    fn test_parse_questions_valid() {
+        let args = make_valid_question();
+        let questions = parse_questions(&args).unwrap();
+
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].question, "What is your preferred language?");
+        assert_eq!(questions[0].header, "Language");
+        assert!(!questions[0].multi_select);
+        assert_eq!(questions[0].options.len(), 2);
+        assert_eq!(questions[0].options[0].label, "Rust");
+        assert_eq!(questions[0].options[0].description, "Systems language");
+    }
+
+    #[test]
+    fn test_parse_questions_missing_field() {
+        let args = json!({});
+        let result = parse_questions(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing questions field"));
+    }
+
+    #[test]
+    fn test_parse_questions_empty() {
+        let args = json!({ "questions": [] });
+        let result = parse_questions(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("at least 1 question"));
+    }
+
+    #[test]
+    fn test_parse_questions_too_many() {
+        let args = json!({
+            "questions": [
+                { "question": "Q1", "header": "H1", "multiSelect": false, "options": [
+                    { "label": "A", "description": "D" },
+                    { "label": "B", "description": "D" }
+                ]},
+                { "question": "Q2", "header": "H2", "multiSelect": false, "options": [
+                    { "label": "A", "description": "D" },
+                    { "label": "B", "description": "D" }
+                ]},
+                { "question": "Q3", "header": "H3", "multiSelect": false, "options": [
+                    { "label": "A", "description": "D" },
+                    { "label": "B", "description": "D" }
+                ]},
+                { "question": "Q4", "header": "H4", "multiSelect": false, "options": [
+                    { "label": "A", "description": "D" },
+                    { "label": "B", "description": "D" }
+                ]},
+                { "question": "Q5", "header": "H5", "multiSelect": false, "options": [
+                    { "label": "A", "description": "D" },
+                    { "label": "B", "description": "D" }
+                ]}
+            ]
+        });
+        let result = parse_questions(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("at most 4 questions"));
+    }
+
+    #[test]
+    fn test_parse_questions_too_few_options() {
+        let args = json!({
+            "questions": [{
+                "question": "Q1",
+                "header": "H1",
+                "multiSelect": false,
+                "options": [{ "label": "A", "description": "D" }]
+            }]
+        });
+        let result = parse_questions(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("at least 2 options"));
+    }
+
+    #[test]
+    fn test_parse_questions_header_too_long() {
+        let args = json!({
+            "questions": [{
+                "question": "Q1",
+                "header": "VeryLongHeader123", // > 12 chars
+                "multiSelect": false,
+                "options": [
+                    { "label": "A", "description": "D" },
+                    { "label": "B", "description": "D" }
+                ]
+            }]
+        });
+        let result = parse_questions(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("12 characters"));
+    }
+
+    #[test]
+    fn test_parse_questions_lenient() {
+        // Missing some fields, but lenient parser should handle it
+        let args = json!({
+            "questions": [{
+                "question": "What?",
+                "options": [
+                    { "label": "Yes" },
+                    { "label": "No", "description": "Nope" }
+                ]
+            }]
+        });
+
+        let questions = parse_questions_lenient(&args).unwrap();
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].question, "What?");
+        assert_eq!(questions[0].header, ""); // defaulted
+        assert!(!questions[0].multi_select); // defaulted
+        assert_eq!(questions[0].options[0].description, ""); // defaulted
+        assert_eq!(questions[0].options[1].description, "Nope");
+    }
+
+    #[test]
+    fn test_validate_questions() {
+        let valid = vec![Question {
+            question: "Test?".to_string(),
+            header: "Test".to_string(),
+            multi_select: false,
+            options: vec![
+                QuestionOption { label: "A".to_string(), description: "D".to_string() },
+                QuestionOption { label: "B".to_string(), description: "D".to_string() },
+            ],
+        }];
+        assert!(validate_questions(&valid).is_ok());
+
+        // Empty list
+        assert!(validate_questions(&[]).is_err());
+    }
+
+    #[test]
+    fn test_format_answer_response() {
+        let mut answers = HashMap::new();
+        answers.insert("0".to_string(), "Rust".to_string());
+
+        let response = format_answer_response(answers);
+        assert_eq!(response["answered"], true);
+        assert_eq!(response["answers"]["0"], "Rust");
+    }
+
+    #[test]
+    fn test_format_answer_response_with_id() {
+        let mut answers = HashMap::new();
+        answers.insert("0".to_string(), "Python".to_string());
+
+        let response = format_answer_response_with_id("req-123", answers);
+        assert_eq!(response["answered"], true);
+        assert_eq!(response["request_id"], "req-123");
+        assert_eq!(response["answers"]["0"], "Python");
+    }
 }

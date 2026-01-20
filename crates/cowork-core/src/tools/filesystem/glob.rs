@@ -98,7 +98,7 @@ impl Tool for GlobFiles {
                 .iter()
                 .map(|(path, _)| {
                     path.strip_prefix(&self.workspace)
-                        .map(|p| path_to_display(p))
+                        .map(path_to_display)
                         .unwrap_or_else(|_| path_to_display(path))
                 })
                 .collect();

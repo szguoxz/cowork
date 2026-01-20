@@ -93,7 +93,7 @@ mod token_counter_tests {
         let count = counter.count("Hello, world!");
         assert!(count > 0, "Should count tokens in simple text");
         // Roughly 3-4 tokens for "Hello, world!"
-        assert!(count >= 2 && count <= 10, "Token count should be reasonable: {}", count);
+        assert!((2..=10).contains(&count), "Token count should be reasonable: {}", count);
     }
 
     #[test]
@@ -115,7 +115,7 @@ fn main() {
         let long_text = "word ".repeat(1000);
         let count = counter.count(&long_text);
         // Each "word " should be roughly 1-2 tokens
-        assert!(count >= 500 && count <= 3000, "Unexpected count: {}", count);
+        assert!((500..=3000).contains(&count), "Unexpected count: {}", count);
     }
 
     #[test]
@@ -343,7 +343,7 @@ mod integration_tests {
         ];
 
         for provider in providers {
-            let counter = TokenCounter::new(provider.clone());
+            let counter = TokenCounter::new(provider);
             let text = "Hello, world! This is a test.";
             let count = counter.count(text);
             println!("{:?} token count: {}", provider, count);

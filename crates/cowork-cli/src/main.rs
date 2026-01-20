@@ -3,7 +3,7 @@
 mod onboarding;
 
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use console::style;
@@ -20,23 +20,16 @@ use onboarding::OnboardingWizard;
 
 use cowork_core::config::ConfigManager;
 use cowork_core::mcp_manager::McpServerManager;
-use cowork_core::provider::{CompletionResult, GenAIProvider, LlmMessage, ProviderType};
-use cowork_core::orchestration::SystemPrompt;
+use cowork_core::provider::{
+    create_provider_from_config, get_api_key, get_model_tiers, has_api_key_configured,
+    CompletionResult, GenAIProvider, LlmMessage, ProviderType,
+};
+use cowork_core::orchestration::{create_standard_tool_registry, format_size, format_tool_result, SystemPrompt};
 use cowork_core::ToolApprovalConfig;
 use cowork_core::skills::SkillRegistry;
-use cowork_core::tools::filesystem::{
-    DeleteFile, EditFile, GlobFiles, GrepFiles, ListDirectory, MoveFile, ReadFile, SearchFiles,
-    WriteFile,
-};
-use cowork_core::tools::lsp::LspTool;
-use cowork_core::tools::notebook::NotebookEdit;
+// Only import tools that are used directly (for quick commands like /ls, /read, /search)
+use cowork_core::tools::filesystem::{ListDirectory, ReadFile, SearchFiles};
 use cowork_core::tools::shell::ExecuteCommand;
-use cowork_core::tools::task::{AgentInstanceRegistry, TaskOutputTool, TaskTool, TodoWrite};
-use cowork_core::tools::web::{WebFetch, WebSearch};
-use cowork_core::tools::interaction::AskUserQuestion;
-use cowork_core::tools::document::{ReadOfficeDoc, ReadPdf};
-use cowork_core::tools::browser::BrowserController;
-use cowork_core::tools::planning::{EnterPlanMode, ExitPlanMode, PlanModeState};
 use cowork_core::tools::{Tool, ToolDefinition, ToolRegistry};
 
 /// Slash command completer for readline
@@ -204,21 +197,10 @@ enum Commands {
 
 /// Parse provider name string to ProviderType
 fn parse_provider_type(provider_str: &str) -> ProviderType {
-    match provider_str.to_lowercase().as_str() {
-        "openai" => ProviderType::OpenAI,
-        "gemini" => ProviderType::Gemini,
-        "deepseek" => ProviderType::DeepSeek,
-        "groq" => ProviderType::Groq,
-        "xai" => ProviderType::XAI,
-        "together" => ProviderType::Together,
-        "fireworks" => ProviderType::Fireworks,
-        "ollama" => ProviderType::Ollama,
-        "anthropic" => ProviderType::Anthropic,
-        _ => {
-            eprintln!("Warning: Unknown provider '{}', defaulting to Anthropic", provider_str);
-            ProviderType::Anthropic
-        }
-    }
+    provider_str.parse::<ProviderType>().unwrap_or_else(|_| {
+        eprintln!("Warning: Unknown provider '{}', defaulting to Anthropic", provider_str);
+        ProviderType::Anthropic
+    })
 }
 
 #[tokio::main]
@@ -284,7 +266,7 @@ async fn main() -> anyhow::Result<()> {
 
 /// Run a single prompt non-interactively (for scripting/testing)
 async fn run_one_shot(
-    workspace: &PathBuf,
+    workspace: &Path,
     provider_type: ProviderType,
     model: Option<&str>,
     prompt: &str,
@@ -335,7 +317,7 @@ async fn run_one_shot(
 }
 
 async fn run_chat(
-    workspace: &PathBuf,
+    workspace: &Path,
     cli_provider_type: ProviderType,
     model: Option<&str>,
     auto_approve: bool,
@@ -417,7 +399,7 @@ async fn run_chat(
     let tool_definitions = tool_registry.list();
 
     // Create skill registry for slash commands with MCP manager
-    let skill_registry = SkillRegistry::with_builtins_and_mcp(workspace.clone(), Some(mcp_manager));
+    let skill_registry = SkillRegistry::with_builtins_and_mcp(workspace.to_path_buf(), Some(mcp_manager));
 
     // Chat history
     let mut messages: Vec<LlmMessage> = Vec::new();
@@ -873,8 +855,8 @@ fn handle_ask_user_question(args: &serde_json::Value) -> Result<String, String> 
 }
 
 /// Handle slash commands
-async fn handle_slash_command(cmd: &str, workspace: &PathBuf, registry: &SkillRegistry) {
-    let result = registry.execute_command(cmd, workspace.clone()).await;
+async fn handle_slash_command(cmd: &str, workspace: &Path, registry: &SkillRegistry) {
+    let result = registry.execute_command(cmd, workspace.to_path_buf()).await;
     if result.success {
         println!("{}", result.response);
     } else {
@@ -886,155 +868,14 @@ async fn handle_slash_command(cmd: &str, workspace: &PathBuf, registry: &SkillRe
 }
 
 /// Create tool registry with all available tools
+/// Uses the shared tool registry factory from cowork-core
 fn create_tool_registry(
-    workspace: &PathBuf,
+    workspace: &Path,
     provider_type: ProviderType,
     api_key: Option<&str>,
     model_tiers: Option<cowork_core::config::ModelTiers>,
 ) -> ToolRegistry {
-    let mut registry = ToolRegistry::new();
-
-    // Filesystem tools
-    registry.register(std::sync::Arc::new(ReadFile::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(WriteFile::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(EditFile::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(GlobFiles::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(GrepFiles::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(ListDirectory::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(SearchFiles::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(DeleteFile::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(MoveFile::new(workspace.clone())));
-
-    // Shell tools
-    registry.register(std::sync::Arc::new(ExecuteCommand::new(workspace.clone())));
-
-    // Web tools
-    registry.register(std::sync::Arc::new(WebFetch::new()));
-    registry.register(std::sync::Arc::new(WebSearch::new()));
-
-    // Notebook tools
-    registry.register(std::sync::Arc::new(NotebookEdit::new(workspace.clone())));
-
-    // Task management tools
-    registry.register(std::sync::Arc::new(TodoWrite::new()));
-
-    // Code intelligence tools
-    registry.register(std::sync::Arc::new(LspTool::new(workspace.clone())));
-
-    // Interaction tools
-    registry.register(std::sync::Arc::new(AskUserQuestion::new()));
-
-    // Document tools
-    registry.register(std::sync::Arc::new(ReadPdf::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(ReadOfficeDoc::new(workspace.clone())));
-
-    // Browser tools (headless by default)
-    let browser_controller = BrowserController::default();
-    for tool in browser_controller.create_tools() {
-        registry.register(tool);
-    }
-
-    // Planning tools with shared state
-    let plan_mode_state = std::sync::Arc::new(tokio::sync::RwLock::new(PlanModeState::default()));
-    registry.register(std::sync::Arc::new(EnterPlanMode::new(plan_mode_state.clone())));
-    registry.register(std::sync::Arc::new(ExitPlanMode::new(plan_mode_state)));
-
-    // Agent/Task tools - pass API key and model tiers for subagent execution
-    let agent_registry = std::sync::Arc::new(AgentInstanceRegistry::new());
-    let mut task_tool = TaskTool::new(agent_registry.clone(), workspace.clone())
-        .with_provider(provider_type);
-    if let Some(key) = api_key {
-        task_tool = task_tool.with_api_key(key.to_string());
-    }
-    if let Some(tiers) = model_tiers {
-        task_tool = task_tool.with_model_tiers(tiers);
-    }
-    registry.register(std::sync::Arc::new(task_tool));
-    registry.register(std::sync::Arc::new(TaskOutputTool::new(agent_registry)));
-
-    registry
-}
-
-/// Get API key from config or environment
-fn get_api_key(config_manager: &ConfigManager, provider_type: ProviderType) -> Option<String> {
-    let provider_name = provider_type.to_string();
-
-    // Try config first
-    if let Some(provider_config) = config_manager.config().providers.get(&provider_name) {
-        if let Some(key) = provider_config.get_api_key() {
-            return Some(key);
-        }
-    }
-
-    // Fall back to environment variable
-    if let Some(env_var) = provider_type.api_key_env() {
-        if let Ok(key) = std::env::var(env_var) {
-            return Some(key);
-        }
-    }
-
-    None
-}
-
-/// Get model tiers from config or use provider defaults
-fn get_model_tiers(
-    config_manager: &ConfigManager,
-    provider_type: ProviderType,
-) -> cowork_core::config::ModelTiers {
-    let provider_name = provider_type.to_string();
-
-    // Check config for custom model_tiers
-    if let Some(provider_config) = config_manager.config().providers.get(&provider_name) {
-        return provider_config.get_model_tiers();
-    }
-
-    // Fall back to provider defaults
-    cowork_core::config::ModelTiers::for_provider(&provider_name)
-}
-
-/// Create a provider from config, falling back to environment variables
-fn create_provider_from_config(
-    config_manager: &ConfigManager,
-    provider_type: ProviderType,
-    model: Option<&str>,
-) -> anyhow::Result<GenAIProvider> {
-    let provider_name = provider_type.to_string();
-
-    // Try to get provider config from config file
-    if let Some(provider_config) = config_manager.config().providers.get(&provider_name) {
-        // Get API key from config or environment
-        let api_key = provider_config.get_api_key().ok_or_else(|| {
-            anyhow::anyhow!(
-                "No API key configured for {}. Set it in config or via {}",
-                provider_name,
-                provider_type.api_key_env().unwrap_or("environment variable")
-            )
-        })?;
-
-        // Use model from argument, or from config
-        let model = model.unwrap_or(&provider_config.model);
-
-        // Create provider with config (supports custom base_url)
-        Ok(GenAIProvider::with_config(
-            provider_type,
-            &api_key,
-            Some(model),
-            provider_config.base_url.as_deref(),
-        ))
-    } else {
-        // No config for this provider, try environment variable
-        if let Some(env_var) = provider_type.api_key_env() {
-            if let Ok(api_key) = std::env::var(env_var) {
-                return Ok(GenAIProvider::with_api_key(provider_type, &api_key, model));
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "No configuration found for provider '{}'. Add it to config file or set {}",
-            provider_name,
-            provider_type.api_key_env().unwrap_or("API key")
-        ))
-    }
+    create_standard_tool_registry(workspace, provider_type, api_key, model_tiers)
 }
 
 fn print_help() {
@@ -1078,222 +919,7 @@ fn print_help() {
     );
 }
 
-/// Format tool result for CLI display
-fn format_tool_result(tool_name: &str, result: &str) -> String {
-    // Try to parse as JSON and format nicely
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(result) {
-        match tool_name {
-            "list_directory" => format_directory_result(&json),
-            "glob" | "find_files" => format_glob_result(&json),
-            "grep" | "search_code" | "ripgrep" => format_grep_result(&json),
-            "read_file" | "read_pdf" | "read_office_doc" => format_file_content(&json, result),
-            "execute_command" | "shell" | "bash" => format_command_result(&json),
-            "write_file" | "edit_file" | "delete_file" | "move_file" => format_status_result(&json),
-            _ => format_generic_json(&json, result),
-        }
-    } else {
-        // Not JSON, return truncated text
-        truncate_result(result, 500)
-    }
-}
-
-fn format_directory_result(json: &serde_json::Value) -> String {
-    if let (Some(count), Some(entries)) = (json.get("count"), json.get("entries").and_then(|e| e.as_array())) {
-        let mut lines = vec![format!("{} items:", count)];
-
-        // Sort: directories first, then alphabetically
-        let mut sorted: Vec<_> = entries.iter().collect();
-        sorted.sort_by(|a, b| {
-            let a_dir = a.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
-            let b_dir = b.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
-            match (a_dir, b_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => {
-                    let a_name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    let b_name = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    a_name.cmp(b_name)
-                }
-            }
-        });
-
-        for entry in sorted.iter().take(30) {
-            let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-            let is_dir = entry.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
-            let size = entry.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-
-            if is_dir {
-                lines.push(format!("  📁 {}/", name));
-            } else {
-                lines.push(format!("  📄 {} ({})", name, format_size(size)));
-            }
-        }
-
-        if sorted.len() > 30 {
-            lines.push(format!("  ... and {} more", sorted.len() - 30));
-        }
-
-        lines.join("\n")
-    } else {
-        truncate_result(&json.to_string(), 500)
-    }
-}
-
-fn format_glob_result(json: &serde_json::Value) -> String {
-    if let (Some(count), Some(files)) = (json.get("count"), json.get("files").and_then(|f| f.as_array())) {
-        let mut lines = vec![format!("{} files found:", count)];
-
-        for file in files.iter().take(20) {
-            if let Some(path) = file.as_str() {
-                lines.push(format!("  📄 {}", path));
-            }
-        }
-
-        if files.len() > 20 {
-            lines.push(format!("  ... and {} more", files.len() - 20));
-        }
-
-        lines.join("\n")
-    } else {
-        truncate_result(&json.to_string(), 500)
-    }
-}
-
-fn format_grep_result(json: &serde_json::Value) -> String {
-    if let Some(matches) = json.get("matches").and_then(|m| m.as_array()) {
-        let total = json.get("total_matches").and_then(|t| t.as_u64()).unwrap_or(matches.len() as u64);
-        let mut lines = vec![format!("{} matches in {} files:", total, matches.len())];
-
-        for m in matches.iter().take(15) {
-            let path = m.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-            let line_num = m.get("line_number").and_then(|v| v.as_u64());
-            let count = m.get("count").and_then(|v| v.as_u64());
-
-            if let Some(n) = line_num {
-                lines.push(format!("  🔍 {}:{}", path, n));
-            } else if let Some(c) = count {
-                lines.push(format!("  🔍 {} ({} matches)", path, c));
-            } else {
-                lines.push(format!("  🔍 {}", path));
-            }
-        }
-
-        if matches.len() > 15 {
-            lines.push(format!("  ... and {} more files", matches.len() - 15));
-        }
-
-        lines.join("\n")
-    } else {
-        truncate_result(&json.to_string(), 500)
-    }
-}
-
-fn format_file_content(json: &serde_json::Value, raw: &str) -> String {
-    // Check if it's JSON with content field
-    if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
-        let lines: Vec<&str> = content.lines().take(20).collect();
-        let mut result = lines.join("\n");
-        if content.lines().count() > 20 {
-            result.push_str(&format!("\n  ... ({} more lines)", content.lines().count() - 20));
-        }
-        result
-    } else {
-        // Might be raw file content
-        truncate_result(raw, 1000)
-    }
-}
-
-fn format_command_result(json: &serde_json::Value) -> String {
-    let mut lines = Vec::new();
-
-    if let Some(exit_code) = json.get("exit_code").and_then(|c| c.as_i64()) {
-        let status = if exit_code == 0 { "✓" } else { "✗" };
-        lines.push(format!("{} Exit code: {}", status, exit_code));
-    }
-
-    if let Some(stdout) = json.get("stdout").and_then(|s| s.as_str()) {
-        if !stdout.is_empty() {
-            lines.push(truncate_result(stdout, 400));
-        }
-    }
-
-    if let Some(stderr) = json.get("stderr").and_then(|s| s.as_str()) {
-        if !stderr.is_empty() {
-            lines.push(format!("stderr: {}", truncate_result(stderr, 200)));
-        }
-    }
-
-    if lines.is_empty() {
-        "Command executed".to_string()
-    } else {
-        lines.join("\n")
-    }
-}
-
-fn format_status_result(json: &serde_json::Value) -> String {
-    if let Some(success) = json.get("success").and_then(|s| s.as_bool()) {
-        let msg = json.get("message").and_then(|m| m.as_str()).unwrap_or("");
-        if success {
-            format!("✓ {}", if msg.is_empty() { "Success" } else { msg })
-        } else {
-            let err = json.get("error").and_then(|e| e.as_str()).unwrap_or(msg);
-            format!("✗ {}", if err.is_empty() { "Failed" } else { err })
-        }
-    } else if let Some(msg) = json.get("message").and_then(|m| m.as_str()) {
-        msg.to_string()
-    } else {
-        truncate_result(&json.to_string(), 200)
-    }
-}
-
-fn format_generic_json(json: &serde_json::Value, raw: &str) -> String {
-    // Try to detect common patterns
-    if json.get("entries").is_some() {
-        return format_directory_result(json);
-    }
-    if json.get("matches").is_some() {
-        return format_grep_result(json);
-    }
-    if json.get("files").is_some() {
-        return format_glob_result(json);
-    }
-    if json.get("success").is_some() || json.get("error").is_some() {
-        return format_status_result(json);
-    }
-    if json.get("stdout").is_some() || json.get("stderr").is_some() {
-        return format_command_result(json);
-    }
-
-    truncate_result(raw, 500)
-}
-
-fn format_size(bytes: u64) -> String {
-    if bytes == 0 {
-        return "-".to_string();
-    }
-    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
-    let mut size = bytes as f64;
-    let mut unit_idx = 0;
-    while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit_idx += 1;
-    }
-    if unit_idx == 0 {
-        format!("{} {}", bytes, UNITS[unit_idx])
-    } else {
-        format!("{:.1} {}", size, UNITS[unit_idx])
-    }
-}
-
-fn truncate_result(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}... (truncated)", &s[..max_len])
-    }
-}
-
-async fn run_command(workspace: &PathBuf, command: &str) -> anyhow::Result<()> {
+async fn run_command(workspace: &Path, command: &str) -> anyhow::Result<()> {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::default_spinner()
@@ -1303,7 +929,7 @@ async fn run_command(workspace: &PathBuf, command: &str) -> anyhow::Result<()> {
     spinner.set_message(format!("Running: {}", command));
     spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
-    let tool = ExecuteCommand::new(workspace.clone());
+    let tool = ExecuteCommand::new(workspace.to_path_buf());
     let params = serde_json::json!({
         "command": command,
         "timeout": 30
@@ -1344,8 +970,8 @@ async fn run_command(workspace: &PathBuf, command: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn list_files(workspace: &PathBuf, path: &str) -> anyhow::Result<()> {
-    let tool = ListDirectory::new(workspace.clone());
+async fn list_files(workspace: &Path, path: &str) -> anyhow::Result<()> {
+    let tool = ListDirectory::new(workspace.to_path_buf());
     let params = serde_json::json!({
         "path": path,
         "include_hidden": false
@@ -1366,7 +992,7 @@ async fn list_files(workspace: &PathBuf, path: &str) -> anyhow::Result<()> {
                             println!("{}/", style(name).blue().bold());
                         } else {
                             let size_str = size
-                                .map(|s| format_size(s))
+                                .map(format_size)
                                 .unwrap_or_else(|| "-".to_string());
                             println!("{:<40} {}", name, style(size_str).dim());
                         }
@@ -1382,8 +1008,8 @@ async fn list_files(workspace: &PathBuf, path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn read_file(workspace: &PathBuf, path: &str) -> anyhow::Result<()> {
-    let tool = ReadFile::new(workspace.clone());
+async fn read_file(workspace: &Path, path: &str) -> anyhow::Result<()> {
+    let tool = ReadFile::new(workspace.to_path_buf());
     let params = serde_json::json!({
         "path": path
     });
@@ -1406,7 +1032,7 @@ async fn read_file(workspace: &PathBuf, path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn search_files(workspace: &PathBuf, pattern: &str, in_content: bool) -> anyhow::Result<()> {
+async fn search_files(workspace: &Path, pattern: &str, in_content: bool) -> anyhow::Result<()> {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::default_spinner()
@@ -1415,7 +1041,7 @@ async fn search_files(workspace: &PathBuf, pattern: &str, in_content: bool) -> a
     );
     spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
-    let tool = SearchFiles::new(workspace.clone());
+    let tool = SearchFiles::new(workspace.to_path_buf());
     let params = if in_content {
         serde_json::json!({
             "content": pattern,
@@ -1517,7 +1143,7 @@ fn show_tools() {
     }
 }
 
-fn show_config(workspace: &PathBuf) {
+fn show_config(workspace: &Path) {
     println!("{}", style("Configuration:").bold());
     println!();
     println!("  Workspace: {}", style(workspace.display()).green());
@@ -1530,27 +1156,6 @@ fn show_config(workspace: &PathBuf) {
         )
         .dim()
     );
-}
-
-/// Check if an API key is configured for the given provider
-fn has_api_key_configured(config_manager: &ConfigManager, provider_type: ProviderType) -> bool {
-    let provider_name = provider_type.to_string();
-
-    // Check config first
-    if let Some(provider_config) = config_manager.config().providers.get(&provider_name) {
-        if provider_config.get_api_key().is_some() {
-            return true;
-        }
-    }
-
-    // Check environment variable
-    if let Some(env_var) = provider_type.api_key_env() {
-        if std::env::var(env_var).is_ok() {
-            return true;
-        }
-    }
-
-    false
 }
 
 /// Show setup instructions when no API key is configured

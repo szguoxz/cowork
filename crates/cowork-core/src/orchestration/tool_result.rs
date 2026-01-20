@@ -15,6 +15,7 @@ pub fn format_tool_result_for_llm(tool_call_id: &str, result: &str) -> String {
 }
 
 /// Format multiple tool results for sending back to the LLM
+#[allow(dead_code)]
 pub fn format_tool_results_for_llm(results: &[(String, String, bool)]) -> String {
     let formatted: Vec<String> = results
         .iter()

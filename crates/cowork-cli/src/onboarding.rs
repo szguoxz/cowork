@@ -322,7 +322,7 @@ impl OnboardingWizard {
         println!();
 
         let api_key: String = Password::with_theme(&ColorfulTheme::default())
-            .with_prompt(format!("{}", provider_info.env_var))
+            .with_prompt(provider_info.env_var.to_string())
             .interact()?;
 
         println!();

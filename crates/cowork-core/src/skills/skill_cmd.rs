@@ -1,10 +1,10 @@
 //! Skill management command
 //!
 //! Provides commands for managing skills:
-//! - /skill list - List installed skills
-//! - /skill add <url> [--global|--local] - Install a skill from a URL
-//! - /skill remove <name> - Remove an installed skill
-//! - /skill info <name> - Show details about a skill
+//! - `/skill list` - List installed skills
+//! - `/skill add URL [--global|--local]` - Install a skill from a URL
+//! - `/skill remove NAME` - Remove an installed skill
+//! - `/skill info NAME` - Show details about a skill
 
 use super::installer::{InstallLocation, SkillInstaller};
 use super::{BoxFuture, Skill, SkillContext, SkillInfo, SkillResult};

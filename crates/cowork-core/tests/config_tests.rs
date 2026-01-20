@@ -472,9 +472,11 @@ mod api_key_resolution_tests {
 
     #[test]
     fn test_api_key_from_direct_config() {
-        let mut provider = ProviderConfig::default();
-        provider.api_key = Some("direct-key".to_string());
-        provider.api_key_env = Some("NONEXISTENT_VAR_12345".to_string());
+        let provider = ProviderConfig {
+            api_key: Some("direct-key".to_string()),
+            api_key_env: Some("NONEXISTENT_VAR_12345".to_string()),
+            ..Default::default()
+        };
 
         let key = provider.get_api_key();
         assert_eq!(key, Some("direct-key".to_string()));
@@ -482,9 +484,11 @@ mod api_key_resolution_tests {
 
     #[test]
     fn test_api_key_from_env_var() {
-        let mut provider = ProviderConfig::default();
-        provider.api_key = None;
-        provider.api_key_env = Some("TEST_COWORK_API_KEY_12345".to_string());
+        let provider = ProviderConfig {
+            api_key: None,
+            api_key_env: Some("TEST_COWORK_API_KEY_12345".to_string()),
+            ..Default::default()
+        };
 
         // Set env var
         std::env::set_var("TEST_COWORK_API_KEY_12345", "env-key");
@@ -498,10 +502,12 @@ mod api_key_resolution_tests {
 
     #[test]
     fn test_api_key_fallback_to_default_env() {
-        let mut provider = ProviderConfig::default();
-        provider.provider_type = "openai".to_string();
-        provider.api_key = None;
-        provider.api_key_env = None;
+        let provider = ProviderConfig {
+            provider_type: "openai".to_string(),
+            api_key: None,
+            api_key_env: None,
+            ..Default::default()
+        };
 
         // This test depends on whether OPENAI_API_KEY is set in the environment
         let key = provider.get_api_key();
@@ -511,8 +517,10 @@ mod api_key_resolution_tests {
 
     #[test]
     fn test_empty_api_key_treated_as_none() {
-        let mut provider = ProviderConfig::default();
-        provider.api_key = Some("".to_string()); // Empty string
+        let provider = ProviderConfig {
+            api_key: Some("".to_string()), // Empty string
+            ..Default::default()
+        };
 
         let key = provider.get_api_key();
         // Empty string should be treated as no key

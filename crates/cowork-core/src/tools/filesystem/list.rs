@@ -77,7 +77,7 @@ impl Tool for ListDirectory {
                     entries.push(json!({
                         "name": name,
                         "path": entry.path().strip_prefix(&self.workspace)
-                            .map(|p| path_to_display(p))
+                            .map(path_to_display)
                             .unwrap_or_else(|_| path_to_display(entry.path())),
                         "is_dir": entry.file_type().is_dir(),
                         "size": metadata.as_ref().map(|m| m.len()),
@@ -98,7 +98,7 @@ impl Tool for ListDirectory {
                     entries.push(json!({
                         "name": name,
                         "path": entry.path().strip_prefix(&self.workspace)
-                            .map(|p| path_to_display(p))
+                            .map(path_to_display)
                             .unwrap_or_else(|_| path_to_display(&entry.path())),
                         "is_dir": file_type.map(|t| t.is_dir()).unwrap_or(false),
                         "size": metadata.as_ref().map(|m| m.len()),

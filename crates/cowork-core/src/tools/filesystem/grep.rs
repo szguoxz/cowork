@@ -342,7 +342,7 @@ impl Tool for GrepFiles {
 impl GrepFiles {
     fn relative_path(&self, path: &Path) -> String {
         path.strip_prefix(&self.workspace)
-            .map(|p| path_to_display(p))
+            .map(path_to_display)
             .unwrap_or_else(|_| path_to_display(path))
     }
 

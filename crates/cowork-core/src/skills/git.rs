@@ -558,7 +558,7 @@ Skip minor style preferences."#,
 /// Clean up local branches that have been deleted from remote
 ///
 /// Mirrors Claude Code's /clean_gone command:
-/// - Lists branches to identify [gone] status
+/// - Lists branches to identify `[gone]` status
 /// - Removes worktrees associated with gone branches
 /// - Deletes stale local branches
 pub struct CleanGoneSkill {

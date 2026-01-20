@@ -11,9 +11,14 @@
 //! - xAI
 //! - Ollama (local)
 
+pub mod factory;
 mod genai_provider;
 mod model_listing;
 
+pub use factory::{
+    create_provider_from_config, create_provider_from_provider_config, create_provider_with_settings,
+    get_api_key, get_model_tiers, has_api_key_configured,
+};
 pub use genai_provider::{
     create_provider, models, CompletionResult, GenAIProvider, PendingToolCall, ProviderType,
     StreamChunk,

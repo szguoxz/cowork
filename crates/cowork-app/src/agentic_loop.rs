@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, RwLock};
 
 use cowork_core::context::{
     CompactConfig, CompactResult, ContextMonitor, ContextUsage, ConversationSummarizer,
-    Message, MessageRole, MonitorConfig, SummarizerConfig,
+    Message, MonitorConfig, SummarizerConfig,
 };
 use cowork_core::provider::{LlmMessage, LlmRequest, ProviderType};
 // Use shared approval config from cowork-core
@@ -313,16 +313,7 @@ impl AgenticLoop {
         let context_messages: Vec<Message> = session
             .messages
             .iter()
-            .map(|m| Message {
-                role: match m.role.as_str() {
-                    "user" => MessageRole::User,
-                    "assistant" => MessageRole::Assistant,
-                    "system" => MessageRole::System,
-                    _ => MessageRole::Tool,
-                },
-                content: m.content.clone(),
-                timestamp: m.timestamp,
-            })
+            .map(|m| Message::from_str_role(&m.role, m.content.clone(), m.timestamp))
             .collect();
 
         // Calculate current usage (immutable borrow is fine here)
@@ -403,13 +394,7 @@ impl AgenticLoop {
             .iter()
             .map(|m| ChatMessage {
                 id: uuid::Uuid::new_v4().to_string(),
-                role: match m.role {
-                    MessageRole::User => "user",
-                    MessageRole::Assistant => "assistant",
-                    MessageRole::System => "system",
-                    MessageRole::Tool => "tool",
-                }
-                .to_string(),
+                role: m.role.as_str().to_string(),
                 content: m.content.clone(),
                 tool_calls: Vec::new(),
                 timestamp: m.timestamp,

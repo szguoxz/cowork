@@ -90,6 +90,135 @@ pub enum MessageRole {
     Tool,
 }
 
+// ============================================================================
+// Message Conversion Utilities
+// ============================================================================
+// These functions provide standardized conversion between the core Message type
+// and UI-specific string-based role representations, eliminating duplicate
+// conversion code across CLI and UI modules.
+
+impl MessageRole {
+    /// Parse a role string into MessageRole
+    ///
+    /// # Examples
+    /// ```
+    /// use cowork_core::context::MessageRole;
+    /// assert_eq!(MessageRole::parse("user"), MessageRole::User);
+    /// assert_eq!(MessageRole::parse("assistant"), MessageRole::Assistant);
+    /// assert_eq!(MessageRole::parse("system"), MessageRole::System);
+    /// assert_eq!(MessageRole::parse("tool"), MessageRole::Tool);
+    /// assert_eq!(MessageRole::parse("unknown"), MessageRole::Tool); // default
+    /// ```
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "user" => MessageRole::User,
+            "assistant" => MessageRole::Assistant,
+            "system" => MessageRole::System,
+            "tool" => MessageRole::Tool,
+            _ => MessageRole::Tool, // Default for unknown roles
+        }
+    }
+
+    /// Convert MessageRole to a string
+    ///
+    /// # Examples
+    /// ```
+    /// use cowork_core::context::MessageRole;
+    /// assert_eq!(MessageRole::User.as_str(), "user");
+    /// assert_eq!(MessageRole::Assistant.as_str(), "assistant");
+    /// ```
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::System => "system",
+            MessageRole::Tool => "tool",
+        }
+    }
+}
+
+impl std::fmt::Display for MessageRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl std::str::FromStr for MessageRole {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(MessageRole::parse(s))
+    }
+}
+
+impl Message {
+    /// Create a new message with the current timestamp
+    pub fn new(role: MessageRole, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    /// Create a new message with a specific timestamp
+    pub fn with_timestamp(
+        role: MessageRole,
+        content: impl Into<String>,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            timestamp,
+        }
+    }
+
+    /// Create a message from string-based role (used by UI)
+    ///
+    /// This is a convenience constructor for converting from UI representations
+    /// where roles are stored as strings.
+    pub fn from_str_role(
+        role: &str,
+        content: impl Into<String>,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> Self {
+        Self {
+            role: MessageRole::parse(role),
+            content: content.into(),
+            timestamp,
+        }
+    }
+
+    /// Get the role as a string (for UI serialization)
+    pub fn role_str(&self) -> &'static str {
+        self.role.as_str()
+    }
+}
+
+/// Convert a collection of UI-style messages to context Messages
+///
+/// This function is designed to work with UI message types that have:
+/// - A `role` field as a string
+/// - A `content` field as a string
+/// - A `timestamp` field as `DateTime<Utc>`
+///
+/// # Type Parameters
+/// - `T`: Any type that can provide role, content, and timestamp via the accessor function
+/// - `F`: Function to extract (role, content, timestamp) from T
+pub fn messages_from_ui<T, F>(messages: &[T], accessor: F) -> Vec<Message>
+where
+    F: Fn(&T) -> (&str, &str, chrono::DateTime<chrono::Utc>),
+{
+    messages
+        .iter()
+        .map(|m| {
+            let (role, content, timestamp) = accessor(m);
+            Message::from_str_role(role, content, timestamp)
+        })
+        .collect()
+}
+
 /// Runtime context for task execution
 #[derive(Debug, Clone)]
 pub struct Context {

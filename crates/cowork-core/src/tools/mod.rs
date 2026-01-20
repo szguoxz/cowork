@@ -137,6 +137,29 @@ impl ToolRegistry {
     }
 }
 
+/// Get standard tool definitions
+///
+/// Returns tool definitions for all standard tools available in the system.
+/// This creates a temporary registry to extract the definitions from actual
+/// tool implementations, ensuring consistency between definitions and behavior.
+///
+/// # Arguments
+/// * `workspace` - The workspace path (used by filesystem and other tools)
+///
+/// # Returns
+/// A vector of tool definitions that can be sent to the LLM
+pub fn standard_tool_definitions(workspace: &std::path::Path) -> Vec<ToolDefinition> {
+    use crate::orchestration::ToolRegistryBuilder;
+
+    // Create a registry without provider-specific tools (like task/agent)
+    // since those require API key and won't work without configuration
+    let registry = ToolRegistryBuilder::new(workspace.to_path_buf())
+        .with_task(false) // Skip task tools as they need provider config
+        .build();
+
+    registry.list()
+}
+
 /// Helper macro for creating tool parameter schemas
 #[macro_export]
 macro_rules! tool_params {

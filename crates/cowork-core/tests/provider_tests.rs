@@ -82,6 +82,53 @@ mod provider_type_tests {
         assert!(ProviderType::OpenAI.default_model().contains("gpt"));
         assert!(ProviderType::Gemini.default_model().contains("gemini"));
     }
+
+    #[test]
+    fn test_provider_type_from_str() {
+        // Test standard provider names
+        assert_eq!("anthropic".parse::<ProviderType>().unwrap(), ProviderType::Anthropic);
+        assert_eq!("openai".parse::<ProviderType>().unwrap(), ProviderType::OpenAI);
+        assert_eq!("gemini".parse::<ProviderType>().unwrap(), ProviderType::Gemini);
+        assert_eq!("groq".parse::<ProviderType>().unwrap(), ProviderType::Groq);
+        assert_eq!("deepseek".parse::<ProviderType>().unwrap(), ProviderType::DeepSeek);
+        assert_eq!("xai".parse::<ProviderType>().unwrap(), ProviderType::XAI);
+        assert_eq!("together".parse::<ProviderType>().unwrap(), ProviderType::Together);
+        assert_eq!("fireworks".parse::<ProviderType>().unwrap(), ProviderType::Fireworks);
+        assert_eq!("ollama".parse::<ProviderType>().unwrap(), ProviderType::Ollama);
+
+        // Test case insensitivity
+        assert_eq!("ANTHROPIC".parse::<ProviderType>().unwrap(), ProviderType::Anthropic);
+        assert_eq!("OpenAI".parse::<ProviderType>().unwrap(), ProviderType::OpenAI);
+
+        // Test aliases
+        assert_eq!("google".parse::<ProviderType>().unwrap(), ProviderType::Gemini);
+        assert_eq!("grok".parse::<ProviderType>().unwrap(), ProviderType::XAI);
+        assert_eq!("zhipu".parse::<ProviderType>().unwrap(), ProviderType::Zai);
+
+        // Test unknown provider
+        assert!("unknown_provider".parse::<ProviderType>().is_err());
+    }
+
+    #[test]
+    fn test_provider_type_display_roundtrip() {
+        let providers = [
+            ProviderType::Anthropic,
+            ProviderType::OpenAI,
+            ProviderType::Gemini,
+            ProviderType::Groq,
+            ProviderType::DeepSeek,
+            ProviderType::XAI,
+            ProviderType::Together,
+            ProviderType::Fireworks,
+            ProviderType::Ollama,
+        ];
+
+        for provider in providers {
+            let s = provider.to_string();
+            let parsed: ProviderType = s.parse().unwrap();
+            assert_eq!(parsed, provider, "Roundtrip failed for {:?}", provider);
+        }
+    }
 }
 
 mod provider_creation_tests {

@@ -4,6 +4,7 @@
 //! are automatically approved vs require explicit confirmation.
 
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 /// Level of approval required for an operation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
@@ -19,6 +20,33 @@ pub enum ApprovalLevel {
     High,
     /// Critical operations (always require approval)
     Critical,
+}
+
+impl std::fmt::Display for ApprovalLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ApprovalLevel::None => write!(f, "none"),
+            ApprovalLevel::Low => write!(f, "low"),
+            ApprovalLevel::Medium => write!(f, "medium"),
+            ApprovalLevel::High => write!(f, "high"),
+            ApprovalLevel::Critical => write!(f, "critical"),
+        }
+    }
+}
+
+impl FromStr for ApprovalLevel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "none" => Ok(ApprovalLevel::None),
+            "low" => Ok(ApprovalLevel::Low),
+            "medium" => Ok(ApprovalLevel::Medium),
+            "high" => Ok(ApprovalLevel::High),
+            "critical" => Ok(ApprovalLevel::Critical),
+            _ => Err(format!("Unknown approval level: {}. Valid values: none, low, medium, high, critical", s)),
+        }
+    }
 }
 
 /// A request for user approval

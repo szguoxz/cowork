@@ -1,10 +1,10 @@
 //! Memory file management skill
 //!
 //! Provides /memory command for managing CLAUDE.md memory files:
-//! - /memory list - List all memory files in the hierarchy
-//! - /memory show [file] - Show content of a memory file
-//! - /memory edit - Instructions on editing memory files
-//! - /memory add <text> - Add content to project CLAUDE.md
+//! - `/memory list` - List all memory files in the hierarchy
+//! - `/memory show [FILE]` - Show content of a memory file
+//! - `/memory edit` - Instructions on editing memory files
+//! - `/memory add TEXT` - Add content to project CLAUDE.md
 
 use std::path::PathBuf;
 

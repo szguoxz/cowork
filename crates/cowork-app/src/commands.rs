@@ -371,41 +371,11 @@ pub async fn test_api_connection(
 ) -> Result<ApiTestResult, String> {
     use cowork_core::provider::{GenAIProvider, LlmMessage, ProviderType};
 
-    // Parse provider type
-    let pt = match provider_type.to_lowercase().as_str() {
-        "anthropic" => ProviderType::Anthropic,
-        "openai" => ProviderType::OpenAI,
-        "gemini" => ProviderType::Gemini,
-        "groq" => ProviderType::Groq,
-        "deepseek" => ProviderType::DeepSeek,
-        "xai" => ProviderType::XAI,
-        "together" => ProviderType::Together,
-        "fireworks" => ProviderType::Fireworks,
-        "zai" => ProviderType::Zai,
-        "nebius" => ProviderType::Nebius,
-        "mimo" => ProviderType::MIMO,
-        "bigmodel" => ProviderType::BigModel,
-        "ollama" => ProviderType::Ollama,
-        _ => return Err(format!("Unknown provider type: {}", provider_type)),
-    };
+    // Parse provider type using FromStr
+    let pt: ProviderType = provider_type.parse().map_err(|e: String| e)?;
 
-    // Get default model if not provided
-    let model_str = model.unwrap_or_else(|| match pt {
-        ProviderType::Anthropic => "claude-sonnet-4-20250514".to_string(),
-        ProviderType::OpenAI => "gpt-4o".to_string(),
-        ProviderType::Gemini => "gemini-2.0-flash".to_string(),
-        ProviderType::Groq => "llama-3.3-70b-versatile".to_string(),
-        ProviderType::DeepSeek => "deepseek-chat".to_string(),
-        ProviderType::XAI => "grok-2".to_string(),
-        ProviderType::Together => "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo".to_string(),
-        ProviderType::Fireworks => "accounts/fireworks/models/llama-v3p1-70b-instruct".to_string(),
-        ProviderType::Zai => "glm-4-plus".to_string(),
-        ProviderType::Nebius => "meta-llama/Meta-Llama-3.1-70B-Instruct".to_string(),
-        ProviderType::MIMO => "mimo-v2-flash".to_string(),
-        ProviderType::BigModel => "glm-4-plus".to_string(),
-        ProviderType::Ollama => "llama3.2".to_string(),
-        _ => "".to_string(),
-    });
+    // Get default model if not provided, using ProviderType::default_model()
+    let model_str = model.unwrap_or_else(|| pt.default_model().to_string());
 
     // Create provider and test
     let provider = GenAIProvider::with_api_key(pt, &api_key, Some(&model_str));
@@ -796,13 +766,10 @@ pub async fn start_loop(
     let approval_config = {
         let cm = state.config_manager.read().await;
         let config = cm.config();
-        let level = match config.approval.auto_approve_level.as_str() {
-            "none" => ApprovalLevel::None,
-            "low" => ApprovalLevel::Low,
-            "medium" => ApprovalLevel::Medium,
-            "high" => ApprovalLevel::High,
-            _ => ApprovalLevel::Low,
-        };
+        // Use FromStr for ApprovalLevel, defaulting to Low if parsing fails
+        let level: ApprovalLevel = config.approval.auto_approve_level
+            .parse()
+            .unwrap_or(ApprovalLevel::Low);
         let mut ac = ApprovalConfig::default();
         ac.set_level(level);
         ac
@@ -1204,7 +1171,7 @@ pub async fn get_context_usage(
     session_id: String,
     state: State<'_, AppState>,
 ) -> Result<ContextUsageInfo, String> {
-    use cowork_core::context::{ContextMonitor, Message, MessageRole};
+    use cowork_core::context::{ContextMonitor, Message};
     use cowork_core::provider::ProviderType;
 
     let sessions = state.sessions.read().await;
@@ -1219,16 +1186,7 @@ pub async fn get_context_usage(
     let context_messages: Vec<Message> = session
         .messages
         .iter()
-        .map(|m| Message {
-            role: match m.role.as_str() {
-                "user" => MessageRole::User,
-                "assistant" => MessageRole::Assistant,
-                "system" => MessageRole::System,
-                _ => MessageRole::Tool,
-            },
-            content: m.content.clone(),
-            timestamp: m.timestamp,
-        })
+        .map(|m| Message::from_str_role(&m.role, m.content.clone(), m.timestamp))
         .collect();
 
     let usage = monitor.calculate_usage(&context_messages, &session.system_prompt, None);
@@ -1263,7 +1221,7 @@ pub async fn compact_session(
     state: State<'_, AppState>,
 ) -> Result<CompactResultInfo, String> {
     use cowork_core::context::{
-        CompactConfig, ContextMonitor, ConversationSummarizer, Message, MessageRole, SummarizerConfig,
+        CompactConfig, ContextMonitor, ConversationSummarizer, Message, SummarizerConfig,
     };
     use cowork_core::provider::ProviderType;
 
@@ -1280,16 +1238,7 @@ pub async fn compact_session(
     let context_messages: Vec<Message> = session
         .messages
         .iter()
-        .map(|m| Message {
-            role: match m.role.as_str() {
-                "user" => MessageRole::User,
-                "assistant" => MessageRole::Assistant,
-                "system" => MessageRole::System,
-                _ => MessageRole::Tool,
-            },
-            content: m.content.clone(),
-            timestamp: m.timestamp,
-        })
+        .map(|m| Message::from_str_role(&m.role, m.content.clone(), m.timestamp))
         .collect();
 
     // Create compact config
@@ -1315,13 +1264,7 @@ pub async fn compact_session(
         .iter()
         .map(|m| ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
-            role: match m.role {
-                MessageRole::User => "user",
-                MessageRole::Assistant => "assistant",
-                MessageRole::System => "system",
-                MessageRole::Tool => "tool",
-            }
-            .to_string(),
+            role: m.role.as_str().to_string(),
             content: m.content.clone(),
             tool_calls: Vec::new(),
             timestamp: m.timestamp,

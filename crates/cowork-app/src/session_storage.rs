@@ -194,10 +194,10 @@ impl SessionStorage {
 
         let sessions = self.list()?;
         for session in sessions {
-            if session.updated_at < cutoff {
-                if self.delete_by_path(&session.file_path).is_ok() {
-                    deleted.push(session.id);
-                }
+            if session.updated_at < cutoff
+                && self.delete_by_path(&session.file_path).is_ok()
+            {
+                deleted.push(session.id);
             }
         }
 

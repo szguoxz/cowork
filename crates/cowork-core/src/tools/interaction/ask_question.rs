@@ -23,14 +23,18 @@ pub struct QuestionOption {
 
 /// A question to ask the user
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Question {
     /// The full question text
     pub question: String,
     /// Short header/tag for the question (max 12 chars)
+    #[serde(default)]
     pub header: String,
     /// Available options (2-4 choices)
+    #[serde(default)]
     pub options: Vec<QuestionOption>,
     /// Allow multiple selections
+    #[serde(default)]
     pub multi_select: bool,
 }
 
@@ -282,4 +286,153 @@ impl Tool for AskUserQuestion {
     fn approval_level(&self) -> ApprovalLevel {
         ApprovalLevel::None
     }
+}
+
+// ============================================================================
+// Shared Question Parsing Utilities
+// ============================================================================
+// These functions provide standardized parsing and formatting for questions,
+// eliminating duplicate code across CLI and UI modules.
+
+/// Parse questions from a JSON Value (tool arguments)
+///
+/// This parses the "questions" array from the tool call arguments and returns
+/// validated Question structs that both CLI and UI can use.
+///
+/// # Errors
+/// Returns an error if:
+/// - The "questions" field is missing
+/// - The questions array is empty or has more than 4 questions
+/// - Any question has fewer than 2 or more than 4 options
+/// - Any question header exceeds 12 characters
+pub fn parse_questions(args: &Value) -> Result<Vec<Question>, String> {
+    let questions_value = args
+        .get("questions")
+        .ok_or_else(|| "Missing questions field".to_string())?;
+
+    // Try to parse as strongly-typed Vec<Question>
+    let questions: Vec<Question> = serde_json::from_value(questions_value.clone())
+        .map_err(|e| format!("Invalid questions format: {}", e))?;
+
+    // Validate
+    validate_questions(&questions)?;
+
+    Ok(questions)
+}
+
+/// Parse questions from a JSON Value using a lenient approach
+///
+/// This is more forgiving about malformed data and will extract what it can.
+/// Useful for cases where the LLM might not follow the schema exactly.
+pub fn parse_questions_lenient(args: &Value) -> Result<Vec<Question>, String> {
+    let questions_value = args
+        .get("questions")
+        .and_then(|q| q.as_array())
+        .ok_or_else(|| "Missing or invalid questions array".to_string())?;
+
+    let mut questions = Vec::new();
+
+    for q in questions_value {
+        let question = q
+            .get("question")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Question")
+            .to_string();
+
+        let header = q
+            .get("header")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let multi_select = q
+            .get("multiSelect")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let options = q
+            .get("options")
+            .and_then(|o| o.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|opt| QuestionOption {
+                        label: opt
+                            .get("label")
+                            .and_then(|l| l.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        description: opt
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        questions.push(Question {
+            question,
+            header,
+            options,
+            multi_select,
+        });
+    }
+
+    if questions.is_empty() {
+        return Err("No valid questions found".to_string());
+    }
+
+    Ok(questions)
+}
+
+/// Validate a list of questions
+pub fn validate_questions(questions: &[Question]) -> Result<(), String> {
+    if questions.is_empty() {
+        return Err("Must have at least 1 question".to_string());
+    }
+    if questions.len() > 4 {
+        return Err("Must have at most 4 questions".to_string());
+    }
+
+    for (i, q) in questions.iter().enumerate() {
+        if q.options.len() < 2 {
+            return Err(format!("Question {} must have at least 2 options", i + 1));
+        }
+        if q.options.len() > 4 {
+            return Err(format!("Question {} must have at most 4 options", i + 1));
+        }
+        if q.header.len() > 12 {
+            return Err(format!(
+                "Question {} header must be at most 12 characters",
+                i + 1
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Format user answers into a JSON response
+///
+/// Takes a map of question index to answer string and formats it for the tool response.
+pub fn format_answer_response(
+    answers: std::collections::HashMap<String, String>,
+) -> Value {
+    json!({
+        "answered": true,
+        "answers": answers
+    })
+}
+
+/// Format user answers with request ID
+pub fn format_answer_response_with_id(
+    request_id: &str,
+    answers: std::collections::HashMap<String, String>,
+) -> Value {
+    json!({
+        "answered": true,
+        "request_id": request_id,
+        "answers": answers
+    })
 }

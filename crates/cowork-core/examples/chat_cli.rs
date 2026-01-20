@@ -7,7 +7,7 @@
 //! OPENAI_API_KEY="your-key" cargo run -p cowork-core --example chat_cli -- --provider openai
 
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::Path;
 
 use cowork_core::provider::{GenAIProvider, LlmMessage, ProviderType};
 use cowork_core::tools::ToolRegistry;
@@ -161,24 +161,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn create_tool_registry(workspace: &PathBuf) -> ToolRegistry {
+fn create_tool_registry(workspace: &Path) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
 
-    registry.register(std::sync::Arc::new(ReadFile::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(WriteFile::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(GlobFiles::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(GrepFiles::new(workspace.clone())));
-    registry.register(std::sync::Arc::new(ExecuteCommand::new(workspace.clone())));
+    registry.register(std::sync::Arc::new(ReadFile::new(workspace.to_path_buf())));
+    registry.register(std::sync::Arc::new(WriteFile::new(workspace.to_path_buf())));
+    registry.register(std::sync::Arc::new(GlobFiles::new(workspace.to_path_buf())));
+    registry.register(std::sync::Arc::new(GrepFiles::new(workspace.to_path_buf())));
+    registry.register(std::sync::Arc::new(ExecuteCommand::new(workspace.to_path_buf())));
 
     registry
 }
 
-async fn handle_slash_command(cmd: &str, workspace: &PathBuf) {
+async fn handle_slash_command(cmd: &str, workspace: &Path) {
     let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
     let command = parts[0];
     let args = parts.get(1).unwrap_or(&"").to_string();
 
-    let registry = cowork_core::skills::SkillRegistry::with_builtins(workspace.clone());
+    let registry = cowork_core::skills::SkillRegistry::with_builtins(workspace.to_path_buf());
 
     match command {
         "/help" => {
@@ -194,7 +194,7 @@ async fn handle_slash_command(cmd: &str, workspace: &PathBuf) {
         "/commit" | "/push" | "/pr" | "/review" | "/clean-gone" => {
             let skill_name = &command[1..]; // Remove leading /
             let ctx = cowork_core::skills::SkillContext {
-                workspace: workspace.clone(),
+                workspace: workspace.to_path_buf(),
                 args,
                 data: std::collections::HashMap::new(),
             };

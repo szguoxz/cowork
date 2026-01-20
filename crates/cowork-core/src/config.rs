@@ -9,6 +9,42 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
+/// Default constants used throughout the application
+pub mod defaults {
+    /// Default command execution timeout in seconds
+    pub const COMMAND_TIMEOUT_SECS: u64 = 30;
+
+    /// Maximum number of iterations for the agentic loop
+    pub const MAX_AGENTIC_ITERATIONS: usize = 100;
+
+    /// Default approval level for tool execution
+    pub const DEFAULT_APPROVAL_LEVEL: &str = "low";
+
+    /// Default history file name
+    pub const HISTORY_FILE_NAME: &str = "history.txt";
+
+    /// Default max tokens for LLM requests
+    pub const DEFAULT_MAX_TOKENS: u32 = 4096;
+
+    /// Default temperature for LLM requests
+    pub const DEFAULT_TEMPERATURE: f32 = 0.7;
+
+    /// Default provider name
+    pub const DEFAULT_PROVIDER: &str = "anthropic";
+
+    /// Session directory name (relative to workspace)
+    pub const SESSION_DIR_NAME: &str = ".cowork";
+
+    /// Maximum context size in characters before truncation
+    pub const MAX_CONTEXT_SIZE: usize = 100_000;
+
+    /// Default browser timeout in seconds
+    pub const BROWSER_TIMEOUT_SECS: u64 = 30;
+
+    /// Default number of search results to return
+    pub const DEFAULT_SEARCH_RESULTS: usize = 50;
+}
+
 /// MCP transport type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
