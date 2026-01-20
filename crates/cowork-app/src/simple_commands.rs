@@ -15,60 +15,20 @@ use cowork_core::session::{SessionInput, SessionOutput};
 
 use crate::state::AppState;
 
-/// Start the session manager output handler
+/// Signal that the frontend is ready to receive events
 ///
-/// This initializes the event emitter that forwards session outputs to the frontend.
-/// Called once at app startup. The actual loop is created per-session on first message.
+/// The output handler is automatically started during app setup.
+/// This command just emits initial ready/idle events for the default session.
 #[tauri::command]
-pub async fn start_loop(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    tracing::info!("start_loop called - initializing output handler");
-
-    // Take the output receiver (can only be done once)
-    let output_rx = {
-        let mut rx_guard = state.output_rx.lock().await;
-        rx_guard.take()
-    };
-
-    let output_rx = match output_rx {
-        Some(rx) => rx,
-        None => {
-            tracing::info!("Output handler already initialized");
-            // Already initialized - emit ready/idle for the frontend
-            emit_output(&app, "default", SessionOutput::ready());
-            emit_output(&app, "default", SessionOutput::idle());
-            return Ok(());
-        }
-    };
-
-    // Emit initial ready/idle for the default session
-    emit_output(&app, "default", SessionOutput::ready());
-    emit_output(&app, "default", SessionOutput::idle());
-
-    // Spawn the output handler
-    tokio::spawn(async move {
-        let mut rx = output_rx;
-        tracing::info!("Session output handler started");
-
-        while let Some((session_id, output)) = rx.recv().await {
-            tracing::debug!("Received output for session {}: {:?}", session_id, std::mem::discriminant(&output));
-            emit_output(&app, &session_id, output);
-        }
-
-        tracing::info!("Session output handler ended");
-    });
-
-    tracing::info!("start_loop completed");
-    Ok(())
-}
-
-/// Emit a session output to the frontend
-fn emit_output(app: &tauri::AppHandle, session_id: &str, output: SessionOutput) {
+pub async fn start_loop(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Emitter;
 
-    // Emit as a tagged event with session ID
+    tracing::info!("start_loop called - emitting initial ready/idle");
+
+    // Emit initial ready/idle for the default session
+    let ready = SessionOutput::ready();
+    let idle = SessionOutput::idle();
+
     #[derive(serde::Serialize)]
     struct SessionEvent {
         session_id: String,
@@ -76,21 +36,17 @@ fn emit_output(app: &tauri::AppHandle, session_id: &str, output: SessionOutput) 
         output: SessionOutput,
     }
 
-    let event = SessionEvent {
-        session_id: session_id.to_string(),
-        output: output.clone(),
-    };
-
-    // Emit to the general channel (for backwards compatibility)
-    if let Err(e) = app.emit("loop_output", &event) {
-        tracing::error!("Failed to emit loop_output: {}", e);
+    for output in [ready, idle] {
+        let event = SessionEvent {
+            session_id: "default".to_string(),
+            output,
+        };
+        if let Err(e) = app.emit("loop_output", &event) {
+            tracing::error!("Failed to emit loop_output: {}", e);
+        }
     }
 
-    // Also emit to session-specific channel
-    let channel = format!("session_output:{}", session_id);
-    if let Err(e) = app.emit(&channel, &output) {
-        tracing::error!("Failed to emit to {}: {}", channel, e);
-    }
+    Ok(())
 }
 
 /// Send a message to a session

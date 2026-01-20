@@ -10,14 +10,19 @@ pub mod streaming;
 
 use std::sync::Arc;
 use tauri::Manager;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
-use cowork_core::session::{SessionConfig, SessionManager};
+use cowork_core::session::{OutputReceiver, SessionConfig, SessionManager, SessionOutput};
 use cowork_core::{AgentRegistry, ApprovalLevel, ConfigManager, Context, Workspace};
 use state::AppState;
 
 /// Initialize the application state
-pub fn init_state(workspace_path: std::path::PathBuf, config_manager: ConfigManager) -> AppState {
+///
+/// Returns the state and the output receiver (to be consumed by the output handler).
+pub fn init_state(
+    workspace_path: std::path::PathBuf,
+    config_manager: ConfigManager,
+) -> (AppState, OutputReceiver) {
     let workspace = Workspace::new(&workspace_path);
     let context = Context::new(workspace);
     let registry = AgentRegistry::new();
@@ -59,14 +64,58 @@ pub fn init_state(workspace_path: std::path::PathBuf, config_manager: ConfigMana
         config
     });
 
-    AppState {
+    let state = AppState {
         context: Arc::new(RwLock::new(context)),
         registry: Arc::new(RwLock::new(registry)),
         workspace_path,
         config_manager: Arc::new(RwLock::new(config_manager)),
         session_manager: Arc::new(session_manager),
-        output_rx: Mutex::new(Some(output_rx)),
-    }
+    };
+
+    (state, output_rx)
+}
+
+/// Spawn the output handler that forwards session outputs to the frontend
+fn spawn_output_handler(app_handle: tauri::AppHandle, mut output_rx: OutputReceiver) {
+    use tauri::Emitter;
+
+    tokio::spawn(async move {
+        tracing::info!("Session output handler started");
+
+        while let Some((session_id, output)) = output_rx.recv().await {
+            tracing::debug!(
+                "Received output for session {}: {:?}",
+                session_id,
+                std::mem::discriminant(&output)
+            );
+
+            // Emit as a tagged event with session ID
+            #[derive(serde::Serialize)]
+            struct SessionEvent {
+                session_id: String,
+                #[serde(flatten)]
+                output: SessionOutput,
+            }
+
+            let event = SessionEvent {
+                session_id: session_id.clone(),
+                output: output.clone(),
+            };
+
+            // Emit to the general channel
+            if let Err(e) = app_handle.emit("loop_output", &event) {
+                tracing::error!("Failed to emit loop_output: {}", e);
+            }
+
+            // Also emit to session-specific channel
+            let channel = format!("session_output:{}", session_id);
+            if let Err(e) = app_handle.emit(&channel, &output) {
+                tracing::error!("Failed to emit to {}: {}", channel, e);
+            }
+        }
+
+        tracing::info!("Session output handler ended");
+    });
 }
 
 /// Run the Tauri application
@@ -108,8 +157,11 @@ pub fn run() {
             // Initialize config manager, falling back to default if it fails
             let config_manager = ConfigManager::new().unwrap_or_default();
 
-            let state = init_state(workspace_path, config_manager);
+            let (state, output_rx) = init_state(workspace_path, config_manager);
             app.manage(state);
+
+            // Spawn output handler to forward session outputs to frontend
+            spawn_output_handler(app.handle().clone(), output_rx);
 
             Ok(())
         })

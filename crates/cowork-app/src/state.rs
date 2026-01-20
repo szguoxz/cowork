@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
-use cowork_core::session::{OutputReceiver, SessionManager};
+use cowork_core::session::SessionManager;
 use cowork_core::{AgentRegistry, Config, ConfigManager, Context};
 
 /// Global application state
@@ -19,8 +19,6 @@ pub struct AppState {
     pub config_manager: Arc<RwLock<ConfigManager>>,
     /// Session manager for the unified agent loop
     pub session_manager: Arc<SessionManager>,
-    /// Output receiver (taken once by start_loop)
-    pub output_rx: Mutex<Option<OutputReceiver>>,
 }
 
 impl AppState {
