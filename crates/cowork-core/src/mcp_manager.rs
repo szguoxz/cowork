@@ -510,13 +510,13 @@ impl McpServerManager {
 
         // Parse tools from response
         if let Some(result) = response_result {
-            if let Some(tools) = result.get("tools").and_then(|t| t.as_array()) {
+            if let Some(tools) = result.get("tools").and_then(|t: &Value| t.as_array()) {
                 instance.tools = tools.iter()
-                    .filter_map(|t| {
+                    .filter_map(|t: &Value| {
                         Some(McpToolInfo {
                             name: t.get("name")?.as_str()?.to_string(),
                             description: t.get("description")
-                                .and_then(|d| d.as_str())
+                                .and_then(|d: &Value| d.as_str())
                                 .unwrap_or("")
                                 .to_string(),
                             input_schema: t.get("inputSchema")

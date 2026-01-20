@@ -227,12 +227,9 @@ fn extract_text_from_pptx_xml(xml: &str) -> Result<String, ToolError> {
             }
             Ok(Event::Text(e)) => {
                 if in_text_element {
-                    let text = e
-                        .unescape()
-                        .map_err(|err| {
-                            ToolError::ExecutionFailed(format!("XML unescape error: {}", err))
-                        })?
-                        .to_string();
+                    // quick-xml 0.38+ replaced unescape() with decode()
+                    // Entity references are now reported as Event::GeneralRef
+                    let text = String::from_utf8_lossy(e.as_ref()).to_string();
                     if !text.trim().is_empty() {
                         output.push_str(&text);
                         output.push(' ');

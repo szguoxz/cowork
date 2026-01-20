@@ -171,7 +171,7 @@ impl DynamicSkill {
         let (frontmatter_str, body) = Self::split_frontmatter(content)?;
 
         // Parse YAML frontmatter
-        let frontmatter: SkillFrontmatter = serde_yaml::from_str(&frontmatter_str)
+        let frontmatter: SkillFrontmatter = serde_yml::from_str(&frontmatter_str)
             .map_err(|e| SkillLoadError::ParseError(path.clone(), e.to_string()))?;
 
         // Validate name
