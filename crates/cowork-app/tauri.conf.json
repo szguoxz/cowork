@@ -4,9 +4,11 @@
   "version": "0.1.0",
   "identifier": "com.cowork.desktop",
   "build": {
-    "frontendDist": "../../frontend/dist"
+    "frontendDist": "../../frontend/dist",
+    "devUrl": "http://localhost:1420"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Cowork",
@@ -15,7 +17,8 @@
         "minWidth": 800,
         "minHeight": 600,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "devtools": true
       }
     ],
     "security": {
