@@ -118,7 +118,10 @@ impl Tool for LspTool {
          hover (get documentation and type info), \
          documentSymbol (get all symbols in a file), \
          workspaceSymbol (search for symbols across the workspace), \
-         goToImplementation (find implementations of an interface). \
+         goToImplementation (find implementations of an interface), \
+         prepareCallHierarchy (get call hierarchy item at position), \
+         incomingCalls (find all callers of a function), \
+         outgoingCalls (find all functions called by a function). \
          Requires a language server to be installed (rust-analyzer, typescript-language-server, etc.)."
     }
 
@@ -225,17 +228,18 @@ impl Tool for LspTool {
                     LspOperation::GoToImplementation => {
                         client.go_to_implementation(&full_path, line_0, char_0).await
                     }
-                    _ => {
-                        return Ok(ToolOutput::success(json!({
-                            "message": format!("Operation {} not yet implemented", operation_str),
-                            "file": file_path,
-                            "line": line,
-                            "character": character
-                        })));
+                    LspOperation::PrepareCallHierarchy => {
+                        client.prepare_call_hierarchy(&full_path, line_0, char_0).await
+                    }
+                    LspOperation::IncomingCalls => {
+                        client.incoming_calls(&full_path, line_0, char_0).await
+                    }
+                    LspOperation::OutgoingCalls => {
+                        client.outgoing_calls(&full_path, line_0, char_0).await
                     }
                 };
 
-                result.map_err(|e| ToolError::ExecutionFailed(e))
+                result.map_err(ToolError::ExecutionFailed)
                     .map(ToolOutput::success)
             }
 

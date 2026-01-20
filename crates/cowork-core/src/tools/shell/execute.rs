@@ -8,6 +8,7 @@ use tokio::process::Command;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
+use crate::tools::filesystem::shell_escape_str;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 use super::{BackgroundShell, ShellConfig, ShellProcessRegistry, ShellStatus};
@@ -131,9 +132,10 @@ impl Tool for ExecuteCommand {
                         .to_string();
 
                     // Spawn the command in background (platform-specific)
+                    // Use shell_escape_str to properly handle paths with spaces/special chars
                     #[cfg(windows)]
                     let child = Command::new("cmd")
-                        .args(["/C", &format!("{} > \"{}\" 2>&1", command, output_file)])
+                        .args(["/C", &format!("{} > {} 2>&1", command, shell_escape_str(&output_file))])
                         .current_dir(&working_dir)
                         .spawn()
                         .map_err(|e| ToolError::ExecutionFailed(format!("Failed to spawn: {}", e)))?;
@@ -141,7 +143,7 @@ impl Tool for ExecuteCommand {
                     #[cfg(not(windows))]
                     let child = Command::new("sh")
                         .arg("-c")
-                        .arg(format!("{} > {} 2>&1", command, output_file))
+                        .arg(format!("{} > {} 2>&1", command, shell_escape_str(&output_file)))
                         .current_dir(&working_dir)
                         .spawn()
                         .map_err(|e| ToolError::ExecutionFailed(format!("Failed to spawn: {}", e)))?;

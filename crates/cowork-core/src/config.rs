@@ -10,19 +10,14 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 
 /// MCP transport type
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum McpTransport {
     /// Standard I/O transport (local process)
+    #[default]
     Stdio,
     /// HTTP/SSE transport (remote server)
     Http,
-}
-
-impl Default for McpTransport {
-    fn default() -> Self {
-        McpTransport::Stdio
-    }
 }
 
 /// MCP (Model Context Protocol) server configuration
@@ -882,8 +877,10 @@ mod tests {
 
     #[test]
     fn test_api_key_from_env() {
-        let mut config = ProviderConfig::default();
-        config.api_key_env = Some("TEST_API_KEY_12345".to_string());
+        let config = ProviderConfig {
+            api_key_env: Some("TEST_API_KEY_12345".to_string()),
+            ..Default::default()
+        };
 
         // Set env var
         std::env::set_var("TEST_API_KEY_12345", "test-key");

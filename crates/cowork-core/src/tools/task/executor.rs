@@ -3,7 +3,7 @@
 //! This module provides the core agentic loop that powers subagent execution.
 //! Each agent type gets a specific set of tools and a tailored system prompt.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio::fs::OpenOptions;
@@ -187,8 +187,9 @@ pub fn get_model_for_tier(tier: &ModelTier, model_tiers: &ModelTiers) -> String 
 }
 
 /// Create a tool registry for a specific agent type
-pub fn create_agent_tool_registry(agent_type: &AgentType, workspace: &PathBuf) -> ToolRegistry {
+pub fn create_agent_tool_registry(agent_type: &AgentType, workspace: &Path) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
+    let workspace = workspace.to_path_buf();
 
     match agent_type {
         AgentType::Bash => {

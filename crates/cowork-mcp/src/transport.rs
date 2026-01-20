@@ -31,7 +31,7 @@ impl StdioTransport {
             .spawn()?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "Failed to capture stdout")
+            io::Error::other("Failed to capture stdout")
         })?;
 
         Ok(Self {
@@ -45,7 +45,7 @@ impl StdioTransport {
 impl Transport for StdioTransport {
     async fn send(&mut self, message: Value) -> io::Result<()> {
         let stdin = self.child.stdin.as_mut().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "Stdin not available")
+            io::Error::other("Stdin not available")
         })?;
 
         let json = serde_json::to_string(&message)?;
@@ -58,7 +58,7 @@ impl Transport for StdioTransport {
 
     async fn receive(&mut self) -> io::Result<Option<Value>> {
         let reader = self.reader.as_mut().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "Reader not available")
+            io::Error::other("Reader not available")
         })?;
 
         let mut line = String::new();
@@ -101,7 +101,7 @@ impl Transport for SseTransport {
             .json(&message)
             .send()
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         Ok(())
     }

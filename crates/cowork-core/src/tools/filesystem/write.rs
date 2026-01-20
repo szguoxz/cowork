@@ -7,7 +7,7 @@ use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
-use super::{normalize_path, validate_path};
+use super::{normalize_path, path_to_display, validate_path};
 
 /// Tool for writing file contents
 pub struct WriteFile {
@@ -93,7 +93,7 @@ impl Tool for WriteFile {
             tokio::fs::write(&path, content).await.map_err(ToolError::Io)?;
 
             Ok(ToolOutput::success(json!({
-                "path": path.display().to_string(),
+                "path": path_to_display(&path),
                 "bytes_written": content.len()
             })))
         })

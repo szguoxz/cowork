@@ -7,7 +7,7 @@ use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
-use super::validate_path;
+use super::{path_to_display, validate_path};
 
 /// Tool for reading file contents
 pub struct ReadFile {
@@ -62,7 +62,7 @@ impl Tool for ReadFile {
 
             Ok(ToolOutput::success(json!({
                 "content": content,
-                "path": validated.display().to_string(),
+                "path": path_to_display(&validated),
                 "size": content.len()
             })))
         })

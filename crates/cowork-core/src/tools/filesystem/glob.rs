@@ -7,6 +7,8 @@ use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
+use super::{path_to_display, path_to_glob_pattern};
+
 /// Tool for fast file pattern matching using glob patterns
 pub struct GlobFiles {
     workspace: PathBuf,
@@ -65,24 +67,23 @@ impl Tool for GlobFiles {
 
             let limit = params["limit"].as_u64().unwrap_or(100) as usize;
 
-            // Construct full glob pattern
-            let full_pattern = base_path.join(pattern).to_string_lossy().to_string();
+            // Construct full glob pattern with forward slashes (required by glob crate)
+            let full_pattern = path_to_glob_pattern(&base_path.join(pattern));
 
             // Collect matching files with metadata
             let mut entries: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
 
-            for entry in glob::glob(&full_pattern).map_err(|e| {
-                ToolError::InvalidParams(format!("Invalid glob pattern: {}", e))
-            })? {
-                if let Ok(path) = entry {
-                    if path.is_file() {
-                        let mtime = tokio::fs::metadata(&path)
-                            .await
-                            .ok()
-                            .and_then(|m| m.modified().ok())
-                            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                        entries.push((path, mtime));
-                    }
+            for path in glob::glob(&full_pattern)
+                .map_err(|e| ToolError::InvalidParams(format!("Invalid glob pattern: {}", e)))?
+                .flatten()
+            {
+                if path.is_file() {
+                    let mtime = tokio::fs::metadata(&path)
+                        .await
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    entries.push((path, mtime));
                 }
             }
 
@@ -92,13 +93,13 @@ impl Tool for GlobFiles {
             // Limit results
             let entries: Vec<_> = entries.into_iter().take(limit).collect();
 
-            // Convert to relative paths
+            // Convert to relative paths with consistent forward slash separators
             let files: Vec<String> = entries
                 .iter()
                 .map(|(path, _)| {
                     path.strip_prefix(&self.workspace)
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| path.to_string_lossy().to_string())
+                        .map(|p| path_to_display(p))
+                        .unwrap_or_else(|_| path_to_display(path))
                 })
                 .collect();
 

@@ -249,8 +249,7 @@ impl Tool for AskUserQuestion {
         let request_id = uuid::Uuid::new_v4().to_string();
         let metadata = params
             .get("metadata")
-            .map(|m| serde_json::from_value::<QuestionMetadata>(m.clone()).ok())
-            .flatten();
+            .and_then(|m| serde_json::from_value::<QuestionMetadata>(m.clone()).ok());
 
         let request = QuestionRequest {
             id: request_id.clone(),

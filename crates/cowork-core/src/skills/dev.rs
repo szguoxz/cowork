@@ -6,7 +6,7 @@
 //! - /lint - Run linter
 //! - /format - Format code
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 use super::{BoxFuture, Skill, SkillContext, SkillInfo, SkillResult};
@@ -22,7 +22,7 @@ enum ProjectType {
 }
 
 /// Detect the project type based on common files
-fn detect_project_type(workspace: &PathBuf) -> ProjectType {
+fn detect_project_type(workspace: &Path) -> ProjectType {
     if workspace.join("Cargo.toml").exists() {
         ProjectType::Rust
     } else if workspace.join("package.json").exists() {
@@ -115,11 +115,11 @@ impl Skill for TestSkill {
                     // Try pytest first, then python -m unittest
                     if command_exists("pytest").await {
                         let mut args = vec![];
-                        args.extend(extra_args.iter().map(|s| *s));
+                        args.extend(extra_args.iter().copied());
                         run_cmd(&self.workspace, "pytest", &args).await
                     } else {
                         let mut args = vec!["-m", "unittest", "discover"];
-                        args.extend(extra_args.iter().map(|s| *s));
+                        args.extend(extra_args.iter().copied());
                         run_cmd(&self.workspace, "python", &args).await
                     }
                 }
@@ -196,7 +196,7 @@ impl Skill for BuildSkill {
                         run_cmd(&self.workspace, "python", &["setup.py", "build"]).await
                     } else if self.workspace.join("pyproject.toml").exists() {
                         let mut args = vec!["-m", "build"];
-                        args.extend(extra_args.iter().map(|s| *s));
+                        args.extend(extra_args.iter().copied());
                         run_cmd(&self.workspace, "python", &args).await
                     } else {
                         return SkillResult::success("No build configuration found for Python project.");
@@ -287,15 +287,15 @@ impl Skill for LintSkill {
                     // Try ruff, then flake8, then pylint
                     if command_exists("ruff").await {
                         let mut args = vec!["check", "."];
-                        args.extend(extra_args.iter().map(|s| *s));
+                        args.extend(extra_args.iter().copied());
                         run_cmd(&self.workspace, "ruff", &args).await
                     } else if command_exists("flake8").await {
                         let mut args = vec!["."];
-                        args.extend(extra_args.iter().map(|s| *s));
+                        args.extend(extra_args.iter().copied());
                         run_cmd(&self.workspace, "flake8", &args).await
                     } else if command_exists("pylint").await {
                         let mut args = vec!["."];
-                        args.extend(extra_args.iter().map(|s| *s));
+                        args.extend(extra_args.iter().copied());
                         run_cmd(&self.workspace, "pylint", &args).await
                     } else {
                         return SkillResult::error(
@@ -307,7 +307,7 @@ impl Skill for LintSkill {
                     // Use golangci-lint if available, otherwise go vet
                     if command_exists("golangci-lint").await {
                         let mut args = vec!["run"];
-                        args.extend(extra_args.iter().map(|s| *s));
+                        args.extend(extra_args.iter().copied());
                         run_cmd(&self.workspace, "golangci-lint", &args).await
                     } else {
                         let mut args = vec!["vet", "./..."];
@@ -382,7 +382,7 @@ impl Skill for FormatSkill {
                     // Try prettier or npm format script
                     if command_exists("prettier").await {
                         let mut args = vec!["--write", "."];
-                        args.extend(extra_args.iter().map(|s| *s));
+                        args.extend(extra_args.iter().copied());
                         run_cmd(&self.workspace, "prettier", &args).await
                     } else {
                         let mut args = vec!["run", "format"];
@@ -394,11 +394,11 @@ impl Skill for FormatSkill {
                     // Try ruff format, then black
                     if command_exists("ruff").await {
                         let mut args = vec!["format", "."];
-                        args.extend(extra_args.iter().map(|s| *s));
+                        args.extend(extra_args.iter().copied());
                         run_cmd(&self.workspace, "ruff", &args).await
                     } else if command_exists("black").await {
                         let mut args = vec!["."];
-                        args.extend(extra_args.iter().map(|s| *s));
+                        args.extend(extra_args.iter().copied());
                         run_cmd(&self.workspace, "black", &args).await
                     } else {
                         return SkillResult::error(

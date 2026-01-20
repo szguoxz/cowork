@@ -5,12 +5,14 @@
 use regex::{Regex, RegexBuilder};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
+
+use super::{path_to_display, path_to_glob_pattern};
 
 /// File type mappings (similar to ripgrep --type)
 fn get_type_extensions(type_name: &str) -> Option<Vec<&'static str>> {
@@ -258,7 +260,7 @@ impl Tool for GrepFiles {
                         "pattern": pattern_str
                     })))
                 }
-                "content" | _ => {
+                _ => {
                     let mut matches: Vec<GrepMatch> = Vec::new();
 
                     for file_path in files {
@@ -338,27 +340,27 @@ impl Tool for GrepFiles {
 }
 
 impl GrepFiles {
-    fn relative_path(&self, path: &PathBuf) -> String {
+    fn relative_path(&self, path: &Path) -> String {
         path.strip_prefix(&self.workspace)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| path.to_string_lossy().to_string())
+            .map(|p| path_to_display(p))
+            .unwrap_or_else(|_| path_to_display(path))
     }
 
     async fn get_files_to_search(
         &self,
-        base_path: &PathBuf,
+        base_path: &Path,
         params: &Value,
     ) -> Result<Vec<PathBuf>, ToolError> {
         if base_path.is_file() {
-            return Ok(vec![base_path.clone()]);
+            return Ok(vec![base_path.to_path_buf()]);
         }
 
         let file_glob = params["glob"].as_str();
         let file_type = params["type"].as_str();
 
-        // Build glob pattern
+        // Build glob pattern (use forward slashes for glob crate compatibility)
         let glob_pattern = if let Some(glob) = file_glob {
-            base_path.join(glob).to_string_lossy().to_string()
+            path_to_glob_pattern(&base_path.join(glob))
         } else if let Some(type_name) = file_type {
             if let Some(extensions) = get_type_extensions(type_name) {
                 let ext_pattern = if extensions.len() == 1 {
@@ -366,16 +368,13 @@ impl GrepFiles {
                 } else {
                     format!("{{{}}}", extensions.join(","))
                 };
-                base_path
-                    .join(format!("**/*.{}", ext_pattern))
-                    .to_string_lossy()
-                    .to_string()
+                path_to_glob_pattern(&base_path.join(format!("**/*.{}", ext_pattern)))
             } else {
                 // Unknown type, search all files
-                base_path.join("**/*").to_string_lossy().to_string()
+                path_to_glob_pattern(&base_path.join("**/*"))
             }
         } else {
-            base_path.join("**/*").to_string_lossy().to_string()
+            path_to_glob_pattern(&base_path.join("**/*"))
         };
 
         let files: Vec<PathBuf> = glob::glob(&glob_pattern)
@@ -413,16 +412,14 @@ impl GrepFiles {
             if let Ok(content) = tokio::fs::read_to_string(path).await {
                 return regex.find_iter(&content).count();
             }
-        } else {
-            if let Ok(file) = tokio::fs::File::open(path).await {
-                let reader = BufReader::new(file);
-                let mut lines = reader.lines();
-                let mut count = 0;
-                while let Ok(Some(line)) = lines.next_line().await {
-                    count += regex.find_iter(&line).count();
-                }
-                return count;
+        } else if let Ok(file) = tokio::fs::File::open(path).await {
+            let reader = BufReader::new(file);
+            let mut lines = reader.lines();
+            let mut count = 0;
+            while let Ok(Some(line)) = lines.next_line().await {
+                count += regex.find_iter(&line).count();
             }
+            return count;
         }
         0
     }

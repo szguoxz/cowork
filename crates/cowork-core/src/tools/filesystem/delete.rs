@@ -7,7 +7,7 @@ use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
-use super::validate_path;
+use super::{path_to_display, validate_path};
 
 /// Tool for deleting files and directories
 pub struct DeleteFile {
@@ -71,7 +71,7 @@ impl Tool for DeleteFile {
             }
 
             Ok(ToolOutput::success(json!({
-                "deleted": validated.display().to_string(),
+                "deleted": path_to_display(&validated),
                 "was_directory": metadata.is_dir()
             })))
         })

@@ -7,7 +7,7 @@ use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
-use super::{normalize_path, validate_path};
+use super::{normalize_path, path_to_display, validate_path};
 
 /// Tool for moving or renaming files
 pub struct MoveFile {
@@ -99,8 +99,8 @@ impl Tool for MoveFile {
                 .map_err(ToolError::Io)?;
 
             Ok(ToolOutput::success(json!({
-                "source": validated_source.display().to_string(),
-                "destination": dest.display().to_string()
+                "source": path_to_display(&validated_source),
+                "destination": path_to_display(&dest)
             })))
         })
     }

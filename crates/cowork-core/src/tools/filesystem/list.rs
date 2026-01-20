@@ -7,7 +7,7 @@ use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
-use super::validate_path;
+use super::{path_to_display, validate_path};
 
 /// Tool for listing directory contents
 pub struct ListDirectory {
@@ -77,9 +77,8 @@ impl Tool for ListDirectory {
                     entries.push(json!({
                         "name": name,
                         "path": entry.path().strip_prefix(&self.workspace)
-                            .unwrap_or(entry.path())
-                            .display()
-                            .to_string(),
+                            .map(|p| path_to_display(p))
+                            .unwrap_or_else(|_| path_to_display(entry.path())),
                         "is_dir": entry.file_type().is_dir(),
                         "size": metadata.as_ref().map(|m| m.len()),
                     }));
@@ -99,9 +98,8 @@ impl Tool for ListDirectory {
                     entries.push(json!({
                         "name": name,
                         "path": entry.path().strip_prefix(&self.workspace)
-                            .unwrap_or(&entry.path())
-                            .display()
-                            .to_string(),
+                            .map(|p| path_to_display(p))
+                            .unwrap_or_else(|_| path_to_display(&entry.path())),
                         "is_dir": file_type.map(|t| t.is_dir()).unwrap_or(false),
                         "size": metadata.as_ref().map(|m| m.len()),
                     }));

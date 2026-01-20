@@ -6,9 +6,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Level of approval required for an operation
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum ApprovalLevel {
     /// No approval needed (read-only operations)
+    #[default]
     None,
     /// Low risk (creating files, minor changes)
     Low,
@@ -18,12 +19,6 @@ pub enum ApprovalLevel {
     High,
     /// Critical operations (always require approval)
     Critical,
-}
-
-impl Default for ApprovalLevel {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// A request for user approval

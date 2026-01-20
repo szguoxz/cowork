@@ -163,7 +163,7 @@ impl ContextMonitor {
     /// Check if we should evaluate context usage based on iteration count
     pub fn should_check(&mut self) -> bool {
         self.iteration_count += 1;
-        self.iteration_count % self.config.check_interval == 0
+        self.iteration_count.is_multiple_of(self.config.check_interval)
     }
 
     /// Reset the iteration counter

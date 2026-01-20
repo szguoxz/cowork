@@ -227,19 +227,17 @@ impl ConversationSummarizer {
         for msg in to_summarize {
             // Look for file paths
             for word in msg.content.split_whitespace() {
-                if word.contains('/') || word.contains('.') {
-                    if word.ends_with(".rs")
+                if (word.contains('/') || word.contains('.'))
+                    && (word.ends_with(".rs")
                         || word.ends_with(".ts")
                         || word.ends_with(".js")
                         || word.ends_with(".py")
                         || word.ends_with(".json")
                         || word.ends_with(".toml")
-                        || word.ends_with(".md")
-                    {
-                        if !files_mentioned.contains(&word.to_string()) {
-                            files_mentioned.push(word.to_string());
-                        }
-                    }
+                        || word.ends_with(".md"))
+                    && !files_mentioned.contains(&word.to_string())
+                {
+                    files_mentioned.push(word.to_string());
                 }
             }
 
@@ -333,10 +331,11 @@ impl ConversationSummarizer {
         let to_keep = &messages[split_point..];
 
         // Generate summary
-        let summary = if config.use_llm && provider.is_some() {
-            self.generate_llm_compact_summary(to_summarize, provider.unwrap(), &config).await?
-        } else {
-            self.generate_simple_compact_summary(to_summarize, &config)
+        let summary = match provider {
+            Some(p) if config.use_llm => {
+                self.generate_llm_compact_summary(to_summarize, p, &config).await?
+            }
+            _ => self.generate_simple_compact_summary(to_summarize, &config),
         };
 
         let tokens_after = counter.count(&summary.content) + counter.count_messages(to_keep);
@@ -392,11 +391,10 @@ impl ConversationSummarizer {
     ) -> Result<Message> {
         let conversation_text = format_for_summarization(messages);
 
-        let mut prompt = format!(
-            "Please provide a concise summary of the following conversation. \
+        let mut prompt = "Please provide a concise summary of the following conversation. \
              Focus on: key decisions made, files modified, code changes, commands executed, \
              and important context that should be remembered for continuing the work.\n\n"
-        );
+            .to_string();
 
         // Add custom preservation instructions if provided
         if let Some(ref instructions) = config.preserve_instructions {

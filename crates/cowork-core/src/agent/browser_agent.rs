@@ -81,7 +81,7 @@ impl Agent for BrowserAgent {
         let output = tool
             .execute(step.parameters.clone())
             .await
-            .map_err(|e| crate::error::Error::Tool(e))?;
+            .map_err(crate::error::Error::Tool)?;
 
         Ok(StepResult {
             step_id: step.id.clone(),

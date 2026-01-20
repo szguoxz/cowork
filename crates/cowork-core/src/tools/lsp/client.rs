@@ -4,13 +4,15 @@
 
 use lsp_types::{
     request::{
+        CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
         DocumentSymbolRequest, GotoDefinition, GotoImplementation, HoverRequest, References,
         WorkspaceSymbolRequest,
     },
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    Hover, HoverParams, InitializeParams, InitializeResult, Location, Position,
-    ReferenceContext, ReferenceParams, TextDocumentIdentifier, TextDocumentPositionParams,
-    WorkspaceSymbolParams,
+    CallHierarchyIncomingCallsParams, CallHierarchyItem, CallHierarchyOutgoingCallsParams,
+    CallHierarchyPrepareParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverParams, InitializeParams, InitializeResult, Location,
+    Position, ReferenceContext, ReferenceParams, TextDocumentIdentifier,
+    TextDocumentPositionParams, WorkspaceSymbolParams,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -33,7 +35,9 @@ pub struct LspClient {
     pending_responses: Mutex<HashMap<u64, Value>>,
 }
 
-/// Convert a file path to a file:// URI string
+/// Convert a file path to a file:// URI string with proper percent encoding.
+///
+/// Handles special characters in paths (spaces, #, %, etc.) by encoding them.
 fn path_to_uri(path: &Path) -> Result<String, String> {
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
@@ -43,22 +47,91 @@ fn path_to_uri(path: &Path) -> Result<String, String> {
             .join(path)
     };
 
+    // Convert to forward slashes and encode special characters
+    let path_str = abs_path.to_string_lossy().replace('\\', "/");
+    let encoded = percent_encode_uri_path(&path_str);
+
     // Convert to file:// URI
     #[cfg(windows)]
     {
-        Ok(format!("file:///{}", abs_path.display().to_string().replace('\\', "/")))
+        // Windows: file:///C:/path (three slashes, then drive letter)
+        Ok(format!("file:///{}", encoded))
     }
     #[cfg(not(windows))]
     {
-        Ok(format!("file://{}", abs_path.display()))
+        // Unix: file:///path (path already starts with /)
+        Ok(format!("file://{}", encoded))
     }
 }
 
-/// Extract the file path from a URI
+/// Extract the file path from a URI, decoding percent-encoded characters.
 fn uri_to_path(uri: &str) -> String {
-    uri.strip_prefix("file://")
-        .unwrap_or(uri)
-        .to_string()
+    let path_part = uri.strip_prefix("file://").unwrap_or(uri);
+
+    // On Windows, skip the leading / before drive letter (file:///C:/...)
+    #[cfg(windows)]
+    let path_part = path_part.strip_prefix('/').unwrap_or(path_part);
+
+    percent_decode_uri_path(path_part)
+}
+
+/// Percent-encode special characters in a path for URI use.
+fn percent_encode_uri_path(path: &str) -> String {
+    let mut result = String::with_capacity(path.len() * 2);
+
+    for c in path.chars() {
+        match c {
+            // Characters that must be encoded in URIs
+            ' ' => result.push_str("%20"),
+            '#' => result.push_str("%23"),
+            '%' => result.push_str("%25"),
+            '?' => result.push_str("%3F"),
+            '[' => result.push_str("%5B"),
+            ']' => result.push_str("%5D"),
+            // Keep these as-is (valid in file URIs)
+            '/' | ':' | '@' | '!' | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' => {
+                result.push(c)
+            }
+            // Alphanumeric and safe characters
+            c if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' => {
+                result.push(c)
+            }
+            // Encode everything else
+            c => {
+                for byte in c.to_string().bytes() {
+                    result.push_str(&format!("%{:02X}", byte));
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Percent-decode a path from a URI.
+fn percent_decode_uri_path(encoded: &str) -> String {
+    let mut result = String::with_capacity(encoded.len());
+    let mut chars = encoded.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            // Try to decode %XX
+            let hex: String = chars.by_ref().take(2).collect();
+            if hex.len() == 2 {
+                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                    result.push(byte as char);
+                    continue;
+                }
+            }
+            // Invalid encoding, keep as-is
+            result.push('%');
+            result.push_str(&hex);
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
 }
 
 impl LspClient {
@@ -379,6 +452,143 @@ impl LspClient {
         Ok(self.format_definition_response(result))
     }
 
+    /// Prepare call hierarchy - returns CallHierarchyItem(s) for the symbol at the position
+    pub async fn prepare_call_hierarchy(
+        &self,
+        file_path: &Path,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, String> {
+        let uri = path_to_uri(file_path)?;
+
+        let params = CallHierarchyPrepareParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier::new(uri.parse().map_err(|e| format!("{}", e))?),
+                position: Position::new(line, character),
+            },
+            work_done_progress_params: Default::default(),
+        };
+
+        let result: Option<Vec<CallHierarchyItem>> =
+            self.send_request::<CallHierarchyPrepare>(params).await?;
+
+        Ok(json!({
+            "items": result.map(|items| {
+                items.into_iter().map(|item| self.format_call_hierarchy_item(&item)).collect::<Vec<_>>()
+            }).unwrap_or_default()
+        }))
+    }
+
+    /// Get incoming calls - find all callers of the given call hierarchy item
+    pub async fn incoming_calls(
+        &self,
+        file_path: &Path,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, String> {
+        // First, prepare the call hierarchy to get the item
+        let uri = path_to_uri(file_path)?;
+
+        let prepare_params = CallHierarchyPrepareParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier::new(uri.parse().map_err(|e| format!("{}", e))?),
+                position: Position::new(line, character),
+            },
+            work_done_progress_params: Default::default(),
+        };
+
+        let items: Option<Vec<CallHierarchyItem>> =
+            self.send_request::<CallHierarchyPrepare>(prepare_params).await?;
+
+        let items = items.ok_or_else(|| "No call hierarchy item found at position".to_string())?;
+        if items.is_empty() {
+            return Ok(json!({
+                "incoming_calls": [],
+                "message": "No call hierarchy item found at the specified position"
+            }));
+        }
+
+        // Get incoming calls for the first item
+        let item = items.into_iter().next().unwrap();
+        let params = CallHierarchyIncomingCallsParams {
+            item,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result: Option<Vec<lsp_types::CallHierarchyIncomingCall>> =
+            self.send_request::<CallHierarchyIncomingCalls>(params).await?;
+
+        Ok(json!({
+            "incoming_calls": result.map(|calls| {
+                calls.into_iter().map(|call| json!({
+                    "from": self.format_call_hierarchy_item(&call.from),
+                    "from_ranges": call.from_ranges.into_iter().map(|r| json!({
+                        "start_line": r.start.line + 1,
+                        "start_character": r.start.character + 1,
+                        "end_line": r.end.line + 1,
+                        "end_character": r.end.character + 1,
+                    })).collect::<Vec<_>>()
+                })).collect::<Vec<_>>()
+            }).unwrap_or_default()
+        }))
+    }
+
+    /// Get outgoing calls - find all calls made by the given call hierarchy item
+    pub async fn outgoing_calls(
+        &self,
+        file_path: &Path,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, String> {
+        // First, prepare the call hierarchy to get the item
+        let uri = path_to_uri(file_path)?;
+
+        let prepare_params = CallHierarchyPrepareParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier::new(uri.parse().map_err(|e| format!("{}", e))?),
+                position: Position::new(line, character),
+            },
+            work_done_progress_params: Default::default(),
+        };
+
+        let items: Option<Vec<CallHierarchyItem>> =
+            self.send_request::<CallHierarchyPrepare>(prepare_params).await?;
+
+        let items = items.ok_or_else(|| "No call hierarchy item found at position".to_string())?;
+        if items.is_empty() {
+            return Ok(json!({
+                "outgoing_calls": [],
+                "message": "No call hierarchy item found at the specified position"
+            }));
+        }
+
+        // Get outgoing calls for the first item
+        let item = items.into_iter().next().unwrap();
+        let params = CallHierarchyOutgoingCallsParams {
+            item,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result: Option<Vec<lsp_types::CallHierarchyOutgoingCall>> =
+            self.send_request::<CallHierarchyOutgoingCalls>(params).await?;
+
+        Ok(json!({
+            "outgoing_calls": result.map(|calls| {
+                calls.into_iter().map(|call| json!({
+                    "to": self.format_call_hierarchy_item(&call.to),
+                    "from_ranges": call.from_ranges.into_iter().map(|r| json!({
+                        "start_line": r.start.line + 1,
+                        "start_character": r.start.character + 1,
+                        "end_line": r.end.line + 1,
+                        "end_character": r.end.character + 1,
+                    })).collect::<Vec<_>>()
+                })).collect::<Vec<_>>()
+            }).unwrap_or_default()
+        }))
+    }
+
     // Formatting helpers
 
     fn format_definition_response(&self, result: Option<GotoDefinitionResponse>) -> Value {
@@ -485,6 +695,19 @@ impl LspClient {
                 obj
             })
             .collect()
+    }
+
+    fn format_call_hierarchy_item(&self, item: &CallHierarchyItem) -> Value {
+        json!({
+            "name": item.name,
+            "kind": format!("{:?}", item.kind),
+            "file": uri_to_path(item.uri.as_str()),
+            "line": item.range.start.line + 1,
+            "character": item.range.start.character + 1,
+            "end_line": item.range.end.line + 1,
+            "end_character": item.range.end.character + 1,
+            "detail": item.detail,
+        })
     }
 }
 

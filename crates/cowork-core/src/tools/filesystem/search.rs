@@ -8,7 +8,7 @@ use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
-use super::validate_path;
+use super::{path_to_display, validate_path};
 
 /// Tool for searching files by name or content
 pub struct SearchFiles {
@@ -105,7 +105,7 @@ impl Tool for SearchFiles {
                     .unwrap_or(entry.path());
 
                 results.push(json!({
-                    "path": rel_path.display().to_string(),
+                    "path": path_to_display(rel_path),
                     "name": file_name,
                 }));
             }

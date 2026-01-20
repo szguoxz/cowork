@@ -401,10 +401,9 @@ impl Skill for PullRequestSkill {
 
             let title = if ctx.args.is_empty() {
                 branch.trim()
-                    .replace('-', " ")
-                    .replace('_', " ")
+                    .replace(['-', '_'], " ")
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap_or(branch.trim())
                     .to_string()
             } else {

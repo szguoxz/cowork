@@ -37,6 +37,7 @@ impl Default for SandboxConfig {
 
 /// Network access policy
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct NetworkPolicy {
     /// Allow network access
     pub enabled: bool,
@@ -44,16 +45,6 @@ pub struct NetworkPolicy {
     pub allowed_hosts: HashSet<String>,
     /// Blocked hosts
     pub blocked_hosts: HashSet<String>,
-}
-
-impl Default for NetworkPolicy {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            allowed_hosts: HashSet::new(),
-            blocked_hosts: HashSet::new(),
-        }
-    }
 }
 
 impl NetworkPolicy {

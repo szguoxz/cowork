@@ -58,21 +58,16 @@ impl std::str::FromStr for AgentType {
 }
 
 /// Model tier selection for subagents (provider-agnostic)
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelTier {
     /// Fast model for quick tasks (e.g., Haiku, gpt-4o-mini)
     Fast,
     /// Balanced model for general tasks (e.g., Sonnet, gpt-4o)
+    #[default]
     Balanced,
     /// Powerful model for complex reasoning (e.g., Opus, o1)
     Powerful,
-}
-
-impl Default for ModelTier {
-    fn default() -> Self {
-        ModelTier::Balanced
-    }
 }
 
 impl std::str::FromStr for ModelTier {
