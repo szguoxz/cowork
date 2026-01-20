@@ -250,8 +250,7 @@ impl ToolApprovalConfig {
 
         // Check based on approval level
         match self.level {
-            ApprovalLevel::None => false,
-            ApprovalLevel::Low => self.auto_approve.contains(tool_name),
+            ApprovalLevel::None | ApprovalLevel::Low => self.auto_approve.contains(tool_name),
             ApprovalLevel::Medium => {
                 self.auto_approve.contains(tool_name)
                     && !self.always_require_approval.contains(tool_name)
