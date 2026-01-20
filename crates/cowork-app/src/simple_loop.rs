@@ -81,6 +81,7 @@ impl SimpleLoop {
     /// Run without emitting initial Ready/Idle (used when caller emits them synchronously)
     pub async fn run_without_initial_events(mut self) {
         tracing::info!("SimpleLoop starting (initial events already emitted)...");
+        tracing::info!("Workspace path: {:?}", self.workspace_path);
         self.run_loop().await;
     }
 
@@ -255,7 +256,7 @@ impl SimpleLoop {
                 let full_path = self.workspace_path.join(path);
                 tokio::fs::read_to_string(&full_path)
                     .await
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| format!("{} (tried: {:?})", e, full_path))
             }
             "write_file" => {
                 let path = args["path"].as_str().ok_or("Missing path")?;
@@ -316,7 +317,28 @@ impl SimpleLoop {
                     if stderr.is_empty() { String::new() } else { format!("\nStderr: {}", stderr) }
                 ))
             }
-            _ => Err(format!("Unknown tool: {}", name)),
+            "glob" | "search_files" => {
+                let pattern = args["pattern"].as_str().ok_or("Missing pattern")?;
+                let path = args["path"].as_str().unwrap_or(".");
+                let full_path = self.workspace_path.join(path);
+                let glob_pattern = full_path.join(pattern).to_string_lossy().to_string();
+
+                let matches: Vec<String> = glob::glob(&glob_pattern)
+                    .map_err(|e| e.to_string())?
+                    .filter_map(|entry| entry.ok())
+                    .map(|p| p.strip_prefix(&self.workspace_path)
+                        .unwrap_or(&p)
+                        .to_string_lossy()
+                        .to_string())
+                    .collect();
+
+                if matches.is_empty() {
+                    Ok(format!("No files found matching '{}' in {:?}", pattern, full_path))
+                } else {
+                    Ok(matches.join("\n"))
+                }
+            }
+            _ => Err(format!("Unknown tool: {}. Workspace is: {:?}", name, self.workspace_path)),
         }
     }
 
