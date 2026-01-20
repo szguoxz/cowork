@@ -112,9 +112,6 @@ impl AgentLoop {
     pub async fn run(mut self) {
         info!("Agent loop starting for session: {}", self.session_id);
 
-        // Emit idle state
-        self.emit(SessionOutput::idle()).await;
-
         loop {
             // Wait for input
             let input = match self.input_rx.recv().await {

@@ -79,7 +79,7 @@ pub fn init_state(
 fn spawn_output_handler(app_handle: tauri::AppHandle, mut output_rx: OutputReceiver) {
     use tauri::Emitter;
 
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         tracing::info!("Session output handler started");
 
         while let Some((session_id, output)) = output_rx.recv().await {
