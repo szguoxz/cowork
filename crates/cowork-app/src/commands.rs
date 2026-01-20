@@ -17,13 +17,10 @@ async fn auto_save_session(
     state: &AppState,
 ) -> Result<(), String> {
     let sessions = state.sessions.read().await;
-    let session_lock = match sessions.get(session_id) {
-        Some(s) => s.clone(),
+    let session = match sessions.get(session_id) {
+        Some(s) => s,
         None => return Ok(()), // Session not found, skip save
     };
-    drop(sessions);
-
-    let session = session_lock.read().await;
 
     // Skip saving empty sessions
     if session.messages.is_empty() {
@@ -57,7 +54,7 @@ async fn auto_save_session(
     };
 
     drop(cm);
-    drop(session);
+    drop(sessions);
 
     let storage = SessionStorage::new();
     storage.save(&session_data).map_err(|e| e.to_string())?;
@@ -482,7 +479,7 @@ pub async fn create_session(state: State<'_, AppState>) -> Result<SessionInfo, S
     drop(cm); // Release read lock before acquiring write lock
 
     let mut sessions = state.sessions.write().await;
-    sessions.insert(session.id.clone(), std::sync::Arc::new(tokio::sync::RwLock::new(session)));
+    sessions.insert(session.id.clone(), session);
 
     Ok(info)
 }
@@ -491,10 +488,9 @@ pub async fn create_session(state: State<'_, AppState>) -> Result<SessionInfo, S
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
     let sessions = state.sessions.read().await;
-    let mut infos = Vec::new();
-    for session_lock in sessions.values() {
-        let s = session_lock.read().await;
-        infos.push(SessionInfo {
+    let infos: Vec<SessionInfo> = sessions
+        .values()
+        .map(|s| SessionInfo {
             id: s.id.clone(),
             message_count: s.messages.len(),
             created_at: s
@@ -502,8 +498,8 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo
                 .first()
                 .map(|m| m.timestamp)
                 .unwrap_or_else(chrono::Utc::now),
-        });
-    }
+        })
+        .collect();
     Ok(infos)
 }
 
@@ -514,13 +510,9 @@ pub async fn get_session_messages(
     state: State<'_, AppState>,
 ) -> Result<Vec<ChatMessage>, String> {
     let sessions = state.sessions.read().await;
-    let session_lock = sessions
+    let session = sessions
         .get(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?
-        .clone();
-    drop(sessions);
-
-    let session = session_lock.read().await;
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
     Ok(session.messages.clone())
 }
 
@@ -532,14 +524,10 @@ pub async fn send_message(
     state: State<'_, AppState>,
 ) -> Result<ChatMessage, String> {
     let result = {
-        let sessions = state.sessions.read().await;
-        let session_lock = sessions
-            .get(&session_id)
-            .ok_or_else(|| format!("Session {} not found", session_id))?
-            .clone();
-        drop(sessions);
-
-        let mut session = session_lock.write().await;
+        let mut sessions = state.sessions.write().await;
+        let session = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| format!("Session {} not found", session_id))?;
         session.send_message(content).await
     };
 
@@ -558,31 +546,30 @@ pub async fn execute_tool(
     tool_call_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<ChatMessage>, String> {
-    // First, get the tool call details and session lock
-    let (tool_call, session_lock) = {
+    // First, get the tool call details
+    let tool_call = {
         let sessions = state.sessions.read().await;
-        let session_lock = sessions
+        let session = sessions
             .get(&session_id)
-            .ok_or_else(|| format!("Session {} not found", session_id))?
-            .clone();
-        drop(sessions);
+            .ok_or_else(|| format!("Session {} not found", session_id))?;
 
-        let session = session_lock.read().await;
-        let tool_call = session
+        session
             .messages
             .iter()
             .flat_map(|m| m.tool_calls.iter())
             .find(|tc| tc.id == tool_call_id)
             .cloned()
-            .ok_or_else(|| format!("Tool call {} not found", tool_call_id))?;
-        (tool_call, session_lock.clone())
+            .ok_or_else(|| format!("Tool call {} not found", tool_call_id))?
     };
 
-    // Execute the tool (without holding the session lock)
+    // Execute the tool
     let result = execute_tool_impl(&tool_call, &state).await?;
 
     // Update session with result
-    let mut session = session_lock.write().await;
+    let mut sessions = state.sessions.write().await;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
     session.execute_tool_call(&tool_call_id, result).await
 }
 
@@ -703,14 +690,11 @@ pub async fn approve_tool_call(
     tool_call_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let sessions = state.sessions.read().await;
-    let session_lock = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?
-        .clone();
-    drop(sessions);
+    let mut sessions = state.sessions.write().await;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
 
-    let mut session = session_lock.write().await;
     for msg in &mut session.messages {
         for tc in &mut msg.tool_calls {
             if tc.id == tool_call_id {
@@ -729,14 +713,11 @@ pub async fn reject_tool_call(
     tool_call_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let sessions = state.sessions.read().await;
-    let session_lock = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?
-        .clone();
-    drop(sessions);
+    let mut sessions = state.sessions.write().await;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
 
-    let mut session = session_lock.write().await;
     for msg in &mut session.messages {
         for tc in &mut msg.tool_calls {
             if tc.id == tool_call_id {
@@ -802,32 +783,37 @@ pub async fn start_loop(
         handles.insert(session_id.clone(), handle);
     }
 
-    // Get session lock for running the loop
-    // With per-session locks, we can hold the session write lock during the loop
-    // while other operations can still read other sessions
-    let session_lock = {
-        let sessions = state.sessions.read().await;
-        sessions
-            .get(&session_id)
-            .ok_or_else(|| format!("Session {} not found", session_id))?
-            .clone()
-    };
-
+    // Take session out of map during loop execution
+    // Frontend uses events to track state, not polling, so this is safe
+    let sessions = state.sessions.clone();
     let workspace_path = state.workspace_path.clone();
     let loop_handles = state.loop_handles.clone();
     let session_id_clone = session_id.clone();
 
     tokio::spawn(async move {
-        // Acquire write lock on the specific session (not all sessions)
-        // This allows get_session_messages to read this session via read lock
-        let mut session = session_lock.write().await;
+        // Remove session from map while loop runs
+        let mut session = {
+            let mut sessions_guard = sessions.write().await;
+            match sessions_guard.remove(&session_id_clone) {
+                Some(s) => s,
+                None => {
+                    tracing::error!("Session not found: {}", session_id_clone);
+                    let mut handles = loop_handles.write().await;
+                    handles.remove(&session_id_clone);
+                    return;
+                }
+            }
+        };
 
         // Run the loop
         let executor = DefaultToolExecutor::new(workspace_path);
         let result = agentic_loop.run(&mut session, prompt, executor).await;
 
-        // Release session lock (implicit on drop)
-        drop(session);
+        // Put session back in map
+        {
+            let mut sessions_guard = sessions.write().await;
+            sessions_guard.insert(session_id_clone.clone(), session);
+        }
 
         // Remove the handle when done
         {
@@ -990,18 +976,13 @@ pub async fn send_message_stream(
 
     let message_id = uuid::Uuid::new_v4().to_string();
 
-    // Get session lock
-    let session_lock = {
-        let sessions = state.sessions.read().await;
-        sessions
-            .get(&session_id)
-            .ok_or_else(|| format!("Session {} not found", session_id))?
-            .clone()
-    };
+    // Add user message to session and get data for LLM request
+    let (llm_messages, system_prompt, tools, provider_type, api_key) = {
+        let mut sessions = state.sessions.write().await;
+        let session = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| format!("Session {} not found", session_id))?;
 
-    // Add user message to session
-    {
-        let mut session = session_lock.write().await;
         let user_msg = ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             role: "user".to_string(),
@@ -1010,15 +991,6 @@ pub async fn send_message_stream(
             timestamp: chrono::Utc::now(),
         };
         session.messages.push(user_msg);
-    }
-
-    // Create streaming message handler
-    let mut streaming_msg = StreamingMessage::new(session_id.clone(), message_id.clone(), app.clone());
-    streaming_msg.start();
-
-    // Build LLM messages from session
-    let (llm_messages, system_prompt, tools, provider_type, api_key) = {
-        let session = session_lock.read().await;
 
         let llm_messages: Vec<cowork_core::provider::LlmMessage> = session
             .messages
@@ -1035,7 +1007,6 @@ pub async fn send_message_stream(
         } else {
             Some(session.available_tools.clone())
         };
-        drop(session);
 
         // Get provider info from config
         let cm = state.config_manager.read().await;
@@ -1047,6 +1018,10 @@ pub async fn send_message_stream(
 
         (llm_messages, system_prompt, tools, provider_type, api_key)
     };
+
+    // Create streaming message handler
+    let mut streaming_msg = StreamingMessage::new(session_id.clone(), message_id.clone(), app.clone());
+    streaming_msg.start();
 
     // Create provider for streaming
     let provider = if let Some(ref key) = api_key {
@@ -1161,8 +1136,10 @@ pub async fn send_message_stream(
     };
 
     {
-        let mut session = session_lock.write().await;
-        session.messages.push(assistant_msg);
+        let mut sessions = state.sessions.write().await;
+        if let Some(session) = sessions.get_mut(&session_id) {
+            session.messages.push(assistant_msg);
+        }
     }
 
     // Ensure stream is properly ended
@@ -1202,13 +1179,9 @@ pub async fn get_context_usage(
     use cowork_core::provider::ProviderType;
 
     let sessions = state.sessions.read().await;
-    let session_lock = sessions
+    let session = sessions
         .get(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?
-        .clone();
-    drop(sessions);
-
-    let session = session_lock.read().await;
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
 
     // Create a monitor (default to Anthropic for now)
     let monitor = ContextMonitor::new(ProviderType::Anthropic);
@@ -1256,14 +1229,10 @@ pub async fn compact_session(
     };
     use cowork_core::provider::ProviderType;
 
-    let sessions = state.sessions.read().await;
-    let session_lock = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?
-        .clone();
-    drop(sessions);
-
-    let mut session = session_lock.write().await;
+    let mut sessions = state.sessions.write().await;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
 
     // Create monitor and summarizer
     let monitor = ContextMonitor::new(ProviderType::Anthropic);
@@ -1324,14 +1293,10 @@ pub async fn clear_session(
     session_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let sessions = state.sessions.read().await;
-    let session_lock = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?
-        .clone();
-    drop(sessions);
-
-    let mut session = session_lock.write().await;
+    let mut sessions = state.sessions.write().await;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
 
     // Clear all messages
     session.messages.clear();
@@ -1792,13 +1757,9 @@ pub async fn save_session(
     use crate::session_storage::{generate_title, SessionData, SessionStorage};
 
     let sessions = state.sessions.read().await;
-    let session_lock = sessions
+    let session = sessions
         .get(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?
-        .clone();
-    drop(sessions);
-
-    let session = session_lock.read().await;
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
 
     // Get provider info from config
     let cm = state.config_manager.read().await;
@@ -1888,7 +1849,7 @@ pub async fn load_saved_session(
     drop(cm);
 
     let mut sessions = state.sessions.write().await;
-    sessions.insert(session.id.clone(), std::sync::Arc::new(tokio::sync::RwLock::new(session)));
+    sessions.insert(session.id.clone(), session);
 
     Ok(info)
 }

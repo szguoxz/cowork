@@ -110,9 +110,11 @@ export default function Chat() {
       state?: string
       request_id?: string
       tool_call_id?: string
+      tool_name?: string
       questions?: UserQuestion[]
       result?: string
       success?: boolean
+      message?: Message
     }>(
       `loop:${sessionId}`,
       (event) => {
@@ -120,14 +122,49 @@ export default function Chat() {
           const state = event.payload.state || ''
           setIsLoopActive(!['idle', 'completed', 'cancelled', 'error'].includes(state))
         }
-        // Refresh messages when tools complete to show results
-        if (event.payload.type === 'tool_execution_completed') {
-          refreshMessages()
+        // Add new messages directly to state
+        if (event.payload.type === 'message_added' && event.payload.message) {
+          setMessages((prev) => {
+            // Avoid duplicates
+            if (prev.some((m) => m.id === event.payload.message!.id)) {
+              return prev
+            }
+            return [...prev, event.payload.message!]
+          })
+        }
+        // Update tool status to Executing
+        if (event.payload.type === 'tool_execution_started' && event.payload.tool_call_id) {
+          setMessages((prev) =>
+            prev.map((msg) => ({
+              ...msg,
+              tool_calls: msg.tool_calls.map((tc) =>
+                tc.id === event.payload.tool_call_id
+                  ? { ...tc, status: 'Executing' as const }
+                  : tc
+              ),
+            }))
+          )
+        }
+        // Update tool status and result on completion
+        if (event.payload.type === 'tool_execution_completed' && event.payload.tool_call_id) {
+          setMessages((prev) =>
+            prev.map((msg) => ({
+              ...msg,
+              tool_calls: msg.tool_calls.map((tc) =>
+                tc.id === event.payload.tool_call_id
+                  ? {
+                      ...tc,
+                      status: event.payload.success ? ('Completed' as const) : ('Failed' as const),
+                      result: event.payload.result,
+                    }
+                  : tc
+              ),
+            }))
+          )
         }
         if (event.payload.type === 'loop_completed' || event.payload.type === 'loop_error') {
           setIsLoopActive(false)
           setPendingQuestion(null)
-          refreshMessages()
         }
         // Handle question requests from the AI
         if (event.payload.type === 'question_requested' && event.payload.questions) {
@@ -257,6 +294,16 @@ export default function Chat() {
     if (!sessionId) return
 
     try {
+      // Update local state to Executing immediately for responsiveness
+      setMessages((prev) =>
+        prev.map((msg) => ({
+          ...msg,
+          tool_calls: msg.tool_calls.map((tc) =>
+            tc.id === toolCallId ? { ...tc, status: 'Executing' as const } : tc
+          ),
+        }))
+      )
+
       await invoke('approve_tool_call', { sessionId, toolCallId })
 
       // Execute the tool
@@ -265,14 +312,13 @@ export default function Chat() {
         toolCallId,
       })
 
-      // Refresh messages
-      const allMessages = await invoke<Message[]>('get_session_messages', {
-        sessionId,
-      })
-      setMessages(allMessages)
+      // Refresh messages to get the complete state
+      // (Manual approval doesn't have lock contention like the agentic loop)
+      await refreshMessages()
     } catch (err) {
       console.error('Approve error:', err)
       setError(String(err))
+      await refreshMessages()
     }
   }
 
@@ -280,13 +326,17 @@ export default function Chat() {
     if (!sessionId) return
 
     try {
-      await invoke('reject_tool_call', { sessionId, toolCallId })
+      // Update local state to Rejected immediately
+      setMessages((prev) =>
+        prev.map((msg) => ({
+          ...msg,
+          tool_calls: msg.tool_calls.map((tc) =>
+            tc.id === toolCallId ? { ...tc, status: 'Rejected' as const } : tc
+          ),
+        }))
+      )
 
-      // Refresh messages
-      const allMessages = await invoke<Message[]>('get_session_messages', {
-        sessionId,
-      })
-      setMessages(allMessages)
+      await invoke('reject_tool_call', { sessionId, toolCallId })
     } catch (err) {
       console.error('Reject error:', err)
       setError(String(err))
