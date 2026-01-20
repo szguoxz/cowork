@@ -11,15 +11,12 @@ use crate::chat::{create_provider_from_config, ChatMessage, ChatSession, ToolCal
 use crate::session_storage::{generate_title, SessionData, SessionStorage};
 use crate::state::{AppState, Settings, TaskState, TaskStatus};
 
-/// Helper function to auto-save a session
-async fn auto_save_session(
-    session_id: &str,
-    state: &AppState,
-) -> Result<(), String> {
-    let sessions = state.sessions.read().await;
-    let session = match sessions.get(session_id) {
+/// Helper function to auto-save the current session
+async fn auto_save_session(state: &AppState) -> Result<(), String> {
+    let session_guard = state.session.read().await;
+    let session = match session_guard.as_ref() {
         Some(s) => s,
-        None => return Ok(()), // Session not found, skip save
+        None => return Ok(()), // No session, skip save
     };
 
     // Skip saving empty sessions
@@ -54,7 +51,7 @@ async fn auto_save_session(
     };
 
     drop(cm);
-    drop(sessions);
+    drop(session_guard);
 
     let storage = SessionStorage::new();
     storage.save(&session_data).map_err(|e| e.to_string())?;
@@ -459,9 +456,25 @@ pub struct SessionInfo {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Create a new chat session
+/// Create a new chat session (or return existing one)
 #[tauri::command]
 pub async fn create_session(state: State<'_, AppState>) -> Result<SessionInfo, String> {
+    // Check if we already have a session
+    {
+        let session_guard = state.session.read().await;
+        if let Some(session) = session_guard.as_ref() {
+            return Ok(SessionInfo {
+                id: session.id.clone(),
+                message_count: session.messages.len(),
+                created_at: session
+                    .messages
+                    .first()
+                    .map(|m| m.timestamp)
+                    .unwrap_or_else(chrono::Utc::now),
+            });
+        }
+    }
+
     let cm = state.config_manager.read().await;
     let provider_config = cm
         .config()
@@ -476,21 +489,21 @@ pub async fn create_session(state: State<'_, AppState>) -> Result<SessionInfo, S
         created_at: chrono::Utc::now(),
     };
 
-    drop(cm); // Release read lock before acquiring write lock
+    drop(cm);
 
-    let mut sessions = state.sessions.write().await;
-    sessions.insert(session.id.clone(), session);
+    let mut session_guard = state.session.write().await;
+    *session_guard = Some(session);
 
     Ok(info)
 }
 
-/// Get all active sessions
+/// Get all active sessions (returns single session for compatibility)
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
-    let sessions = state.sessions.read().await;
-    let infos: Vec<SessionInfo> = sessions
-        .values()
-        .map(|s| SessionInfo {
+    let session_guard = state.session.read().await;
+    let infos: Vec<SessionInfo> = session_guard
+        .as_ref()
+        .map(|s| vec![SessionInfo {
             id: s.id.clone(),
             message_count: s.messages.len(),
             created_at: s
@@ -498,42 +511,42 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo
                 .first()
                 .map(|m| m.timestamp)
                 .unwrap_or_else(chrono::Utc::now),
-        })
-        .collect();
+        }])
+        .unwrap_or_default();
     Ok(infos)
 }
 
-/// Get messages from a session
+/// Get messages from the current session
 #[tauri::command]
 pub async fn get_session_messages(
-    session_id: String,
+    _session_id: String, // Kept for API compatibility
     state: State<'_, AppState>,
 ) -> Result<Vec<ChatMessage>, String> {
-    let sessions = state.sessions.read().await;
-    let session = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    let session_guard = state.session.read().await;
+    let session = session_guard
+        .as_ref()
+        .ok_or_else(|| "No active session".to_string())?;
     Ok(session.messages.clone())
 }
 
-/// Send a message to a chat session
+/// Send a message to the current session
 #[tauri::command]
 pub async fn send_message(
-    session_id: String,
+    _session_id: String, // Kept for API compatibility
     content: String,
     state: State<'_, AppState>,
 ) -> Result<ChatMessage, String> {
     let result = {
-        let mut sessions = state.sessions.write().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or_else(|| format!("Session {} not found", session_id))?;
+        let mut session_guard = state.session.write().await;
+        let session = session_guard
+            .as_mut()
+            .ok_or_else(|| "No active session".to_string())?;
         session.send_message(content).await
     };
 
     // Auto-save after message exchange
     if result.is_ok() {
-        let _ = auto_save_session(&session_id, &state).await;
+        let _ = auto_save_session(&state).await;
     }
 
     result
@@ -542,16 +555,16 @@ pub async fn send_message(
 /// Execute a pending tool call
 #[tauri::command]
 pub async fn execute_tool(
-    session_id: String,
+    _session_id: String, // Kept for API compatibility
     tool_call_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<ChatMessage>, String> {
     // First, get the tool call details
     let tool_call = {
-        let sessions = state.sessions.read().await;
-        let session = sessions
-            .get(&session_id)
-            .ok_or_else(|| format!("Session {} not found", session_id))?;
+        let session_guard = state.session.read().await;
+        let session = session_guard
+            .as_ref()
+            .ok_or_else(|| "No active session".to_string())?;
 
         session
             .messages
@@ -566,10 +579,10 @@ pub async fn execute_tool(
     let result = execute_tool_impl(&tool_call, &state).await?;
 
     // Update session with result
-    let mut sessions = state.sessions.write().await;
-    let session = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    let mut session_guard = state.session.write().await;
+    let session = session_guard
+        .as_mut()
+        .ok_or_else(|| "No active session".to_string())?;
     session.execute_tool_call(&tool_call_id, result).await
 }
 
@@ -686,14 +699,14 @@ async fn execute_tool_impl(
 /// Approve a pending tool call
 #[tauri::command]
 pub async fn approve_tool_call(
-    session_id: String,
+    _session_id: String, // Kept for API compatibility
     tool_call_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut sessions = state.sessions.write().await;
-    let session = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    let mut session_guard = state.session.write().await;
+    let session = session_guard
+        .as_mut()
+        .ok_or_else(|| "No active session".to_string())?;
 
     for msg in &mut session.messages {
         for tc in &mut msg.tool_calls {
@@ -709,14 +722,14 @@ pub async fn approve_tool_call(
 /// Reject a pending tool call
 #[tauri::command]
 pub async fn reject_tool_call(
-    session_id: String,
+    _session_id: String, // Kept for API compatibility
     tool_call_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut sessions = state.sessions.write().await;
-    let session = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    let mut session_guard = state.session.write().await;
+    let session = session_guard
+        .as_mut()
+        .ok_or_else(|| "No active session".to_string())?;
 
     for msg in &mut session.messages {
         for tc in &mut msg.tool_calls {
@@ -729,14 +742,14 @@ pub async fn reject_tool_call(
     Err(format!("Tool call {} not found", tool_call_id))
 }
 
-/// Delete a chat session
+/// Delete the current session (creates a new one)
 #[tauri::command]
 pub async fn delete_session(
-    session_id: String,
+    _session_id: String, // Kept for API compatibility
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut sessions = state.sessions.write().await;
-    sessions.remove(&session_id);
+    let mut session_guard = state.session.write().await;
+    *session_guard = None;
     Ok(())
 }
 
@@ -744,27 +757,38 @@ pub async fn delete_session(
 // Agentic Loop Commands
 // ============================================================================
 
-/// Start an agentic loop for a session
+/// Start the agentic loop
 #[tauri::command]
 pub async fn start_loop(
-    session_id: String,
+    _session_id: String, // Kept for API compatibility
     prompt: String,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    // Check if loop already running for this session
+    use crate::agentic_loop::LoopEvent;
+    use tauri::Emitter;
+
+    // Check if loop already running
     {
-        let handles = state.loop_handles.read().await;
-        if handles.contains_key(&session_id) {
-            return Err("Loop already running for this session".to_string());
+        let handle_guard = state.loop_handle.read().await;
+        if handle_guard.is_some() {
+            return Err("Loop already running".to_string());
         }
     }
+
+    // Get session ID for events
+    let session_id = {
+        let session_guard = state.session.read().await;
+        session_guard
+            .as_ref()
+            .map(|s| s.id.clone())
+            .ok_or_else(|| "No active session".to_string())?
+    };
 
     // Get approval config from settings
     let approval_config = {
         let cm = state.config_manager.read().await;
         let config = cm.config();
-        // Use FromStr for ApprovalLevel, defaulting to Low if parsing fails
         let level: ApprovalLevel = config.approval.auto_approve_level
             .parse()
             .unwrap_or(ApprovalLevel::Low);
@@ -779,27 +803,31 @@ pub async fn start_loop(
 
     // Store the handle
     {
-        let mut handles = state.loop_handles.write().await;
-        handles.insert(session_id.clone(), handle);
+        let mut handle_guard = state.loop_handle.write().await;
+        *handle_guard = Some(handle);
     }
 
-    // Take session out of map during loop execution
-    // Frontend uses events to track state, not polling, so this is safe
-    let sessions = state.sessions.clone();
+    // Take session during loop execution
+    let session_arc = state.session.clone();
+    let loop_handle_arc = state.loop_handle.clone();
     let workspace_path = state.workspace_path.clone();
-    let loop_handles = state.loop_handles.clone();
-    let session_id_clone = session_id.clone();
+    let app_clone = app.clone();
 
     tokio::spawn(async move {
-        // Remove session from map while loop runs
+        // Take session from state
         let mut session = {
-            let mut sessions_guard = sessions.write().await;
-            match sessions_guard.remove(&session_id_clone) {
+            let mut session_guard = session_arc.write().await;
+            match session_guard.take() {
                 Some(s) => s,
                 None => {
-                    tracing::error!("Session not found: {}", session_id_clone);
-                    let mut handles = loop_handles.write().await;
-                    handles.remove(&session_id_clone);
+                    tracing::error!("Session not found");
+                    let mut handle_guard = loop_handle_arc.write().await;
+                    *handle_guard = None;
+                    // Emit error event
+                    let _ = app_clone.emit(&format!("loop:{}", session_id), LoopEvent::LoopError {
+                        session_id: session_id.clone(),
+                        error: "Session not found".to_string(),
+                    });
                     return;
                 }
             }
@@ -809,112 +837,117 @@ pub async fn start_loop(
         let executor = DefaultToolExecutor::new(workspace_path);
         let result = agentic_loop.run(&mut session, prompt, executor).await;
 
-        // Put session back in map
+        // Put session back
         {
-            let mut sessions_guard = sessions.write().await;
-            sessions_guard.insert(session_id_clone.clone(), session);
+            let mut session_guard = session_arc.write().await;
+            *session_guard = Some(session);
         }
 
-        // Remove the handle when done
+        // Clear the handle
         {
-            let mut handles = loop_handles.write().await;
-            handles.remove(&session_id_clone);
+            let mut handle_guard = loop_handle_arc.write().await;
+            *handle_guard = None;
         }
 
+        // Emit error event if failed
         if let Err(e) = result {
             tracing::error!("Agentic loop error: {}", e);
+            let _ = app_clone.emit(&format!("loop:{}", session_id), LoopEvent::LoopError {
+                session_id: session_id.clone(),
+                error: e,
+            });
         }
     });
 
     Ok(())
 }
 
-/// Stop an agentic loop
+/// Stop the agentic loop
 #[tauri::command]
-pub async fn stop_loop(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let handles = state.loop_handles.read().await;
-    if let Some(handle) = handles.get(&session_id) {
+pub async fn stop_loop(_session_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let handle_guard = state.loop_handle.read().await;
+    if let Some(handle) = handle_guard.as_ref() {
         handle.cancel().await
     } else {
-        Err("No active loop for this session".to_string())
+        Err("No active loop".to_string())
     }
 }
 
-/// Approve pending tools in an agentic loop
+/// Approve pending tools in the agentic loop
 #[tauri::command]
 pub async fn approve_loop_tools(
-    session_id: String,
+    _session_id: String,
     tool_ids: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let handles = state.loop_handles.read().await;
-    if let Some(handle) = handles.get(&session_id) {
+    let handle_guard = state.loop_handle.read().await;
+    if let Some(handle) = handle_guard.as_ref() {
         match tool_ids {
             Some(ids) if !ids.is_empty() => handle.approve_selected(ids).await,
             _ => handle.approve_all().await,
         }
     } else {
-        Err("No active loop for this session".to_string())
+        Err("No active loop".to_string())
     }
 }
 
-/// Reject pending tools in an agentic loop
+/// Reject pending tools in the agentic loop
 #[tauri::command]
 pub async fn reject_loop_tools(
-    session_id: String,
+    _session_id: String,
     tool_ids: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let handles = state.loop_handles.read().await;
-    if let Some(handle) = handles.get(&session_id) {
+    let handle_guard = state.loop_handle.read().await;
+    if let Some(handle) = handle_guard.as_ref() {
         match tool_ids {
             Some(ids) if !ids.is_empty() => handle.reject_selected(ids).await,
             _ => handle.reject_all().await,
         }
     } else {
-        Err("No active loop for this session".to_string())
+        Err("No active loop".to_string())
     }
 }
 
-/// Answer a question from the AI during an agentic loop
+/// Answer a question from the AI during the agentic loop
 #[tauri::command]
 pub async fn answer_loop_question(
-    session_id: String,
+    _session_id: String,
     request_id: String,
     answers: std::collections::HashMap<String, String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let handles = state.loop_handles.read().await;
-    if let Some(handle) = handles.get(&session_id) {
+    let handle_guard = state.loop_handle.read().await;
+    if let Some(handle) = handle_guard.as_ref() {
         let answer = crate::agentic_loop::QuestionAnswer {
             request_id,
             answers,
         };
         handle.answer_question(answer).await
     } else {
-        Err("No active loop for this session".to_string())
+        Err("No active loop".to_string())
     }
 }
 
-/// Get the current loop state for a session
+/// Get the current loop state
 #[tauri::command]
 pub async fn get_loop_state(
-    session_id: String,
+    _session_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<LoopState>, String> {
-    let handles = state.loop_handles.read().await;
-    Ok(if handles.contains_key(&session_id) {
-        Some(LoopState::WaitingForLlm) // Simplified - would need to track actual state
+    let handle_guard = state.loop_handle.read().await;
+    Ok(if handle_guard.is_some() {
+        Some(LoopState::WaitingForLlm) // Simplified
     } else {
         None
     })
 }
 
-/// Check if a loop is active for a session
+/// Check if a loop is active
 #[tauri::command]
-pub async fn is_loop_active(session_id: String, state: State<'_, AppState>) -> Result<bool, String> {
-    let handles = state.loop_handles.read().await;
-    Ok(handles.contains_key(&session_id))
+pub async fn is_loop_active(_session_id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    let handle_guard = state.loop_handle.read().await;
+    Ok(handle_guard.is_some())
 }
 
 // ============================================================================
@@ -965,7 +998,7 @@ pub async fn execute_command_string(
 /// Send a message with streaming response
 #[tauri::command]
 pub async fn send_message_stream(
-    session_id: String,
+    _session_id: String, // Kept for API compatibility
     content: String,
     app: AppHandle,
     state: State<'_, AppState>,
@@ -977,11 +1010,11 @@ pub async fn send_message_stream(
     let message_id = uuid::Uuid::new_v4().to_string();
 
     // Add user message to session and get data for LLM request
-    let (llm_messages, system_prompt, tools, provider_type, api_key) = {
-        let mut sessions = state.sessions.write().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or_else(|| format!("Session {} not found", session_id))?;
+    let (session_id, llm_messages, system_prompt, tools, provider_type, api_key) = {
+        let mut session_guard = state.session.write().await;
+        let session = session_guard
+            .as_mut()
+            .ok_or_else(|| "No active session".to_string())?;
 
         let user_msg = ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
@@ -1016,7 +1049,7 @@ pub async fn send_message_stream(
             .map_err(|e| format!("Invalid provider type: {}", e))?;
         let api_key = provider_config.get_api_key();
 
-        (llm_messages, system_prompt, tools, provider_type, api_key)
+        (session.id.clone(), llm_messages, system_prompt, tools, provider_type, api_key)
     };
 
     // Create streaming message handler
@@ -1024,8 +1057,8 @@ pub async fn send_message_stream(
     streaming_msg.start();
 
     // Create provider for streaming
-    let provider = if let Some(ref key) = api_key {
-        cowork_core::provider::GenAIProvider::with_api_key(provider_type, key, None)
+    let provider = if let Some(key) = api_key {
+        cowork_core::provider::GenAIProvider::with_api_key(provider_type, &key, None)
             .with_system_prompt(&system_prompt)
     } else {
         cowork_core::provider::GenAIProvider::new(provider_type, None)
@@ -1136,8 +1169,8 @@ pub async fn send_message_stream(
     };
 
     {
-        let mut sessions = state.sessions.write().await;
-        if let Some(session) = sessions.get_mut(&session_id) {
+        let mut session_guard = state.session.write().await;
+        if let Some(session) = session_guard.as_mut() {
             session.messages.push(assistant_msg);
         }
     }
@@ -1146,7 +1179,7 @@ pub async fn send_message_stream(
     streaming_msg.end(finish_reason);
 
     // Auto-save after message exchange
-    let _ = auto_save_session(&session_id, &state).await;
+    let _ = auto_save_session(&state).await;
 
     Ok(message_id)
 }
@@ -1169,19 +1202,19 @@ pub struct ContextUsageInfo {
     pub memory_tokens: usize,
 }
 
-/// Get context usage for a session
+/// Get context usage for the current session
 #[tauri::command]
 pub async fn get_context_usage(
-    session_id: String,
+    _session_id: String, // Kept for API compatibility
     state: State<'_, AppState>,
 ) -> Result<ContextUsageInfo, String> {
     use cowork_core::context::{ContextMonitor, Message};
     use cowork_core::provider::ProviderType;
 
-    let sessions = state.sessions.read().await;
-    let session = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    let session_guard = state.session.read().await;
+    let session = session_guard
+        .as_ref()
+        .ok_or_else(|| "No active session".to_string())?;
 
     // Create a monitor (default to Anthropic for now)
     let monitor = ContextMonitor::new(ProviderType::Anthropic);
@@ -1229,10 +1262,15 @@ pub async fn compact_session(
     };
     use cowork_core::provider::ProviderType;
 
-    let mut sessions = state.sessions.write().await;
-    let session = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    let mut session_guard = state.session.write().await;
+    let session = session_guard
+        .as_mut()
+        .ok_or_else(|| "No active session".to_string())?;
+
+    // Verify session ID matches
+    if session.id != session_id {
+        return Err(format!("Session {} not found", session_id));
+    }
 
     // Create monitor and summarizer
     let monitor = ContextMonitor::new(ProviderType::Anthropic);
@@ -1293,10 +1331,15 @@ pub async fn clear_session(
     session_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut sessions = state.sessions.write().await;
-    let session = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    let mut session_guard = state.session.write().await;
+    let session = session_guard
+        .as_mut()
+        .ok_or_else(|| "No active session".to_string())?;
+
+    // Verify session ID matches
+    if session.id != session_id {
+        return Err(format!("Session {} not found", session_id));
+    }
 
     // Clear all messages
     session.messages.clear();
@@ -1756,10 +1799,15 @@ pub async fn save_session(
 ) -> Result<String, String> {
     use crate::session_storage::{generate_title, SessionData, SessionStorage};
 
-    let sessions = state.sessions.read().await;
-    let session = sessions
-        .get(&session_id)
-        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    let session_guard = state.session.read().await;
+    let session = session_guard
+        .as_ref()
+        .ok_or_else(|| "No active session".to_string())?;
+
+    // Verify session ID matches
+    if session.id != session_id {
+        return Err(format!("Session {} not found", session_id));
+    }
 
     // Get provider info from config
     let cm = state.config_manager.read().await;
@@ -1848,8 +1896,8 @@ pub async fn load_saved_session(
 
     drop(cm);
 
-    let mut sessions = state.sessions.write().await;
-    sessions.insert(session.id.clone(), session);
+    let mut session_guard = state.session.write().await;
+    *session_guard = Some(session);
 
     Ok(info)
 }

@@ -1,6 +1,5 @@
 //! Application state management
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -18,12 +17,12 @@ pub struct AppState {
     pub registry: Arc<RwLock<AgentRegistry>>,
     /// Workspace root path
     pub workspace_path: PathBuf,
-    /// Active chat sessions
-    pub sessions: Arc<RwLock<HashMap<String, ChatSession>>>,
+    /// Active chat session (single session)
+    pub session: Arc<RwLock<Option<ChatSession>>>,
     /// Configuration manager
     pub config_manager: Arc<RwLock<ConfigManager>>,
-    /// Active agentic loop handles
-    pub loop_handles: Arc<RwLock<HashMap<String, LoopHandle>>>,
+    /// Active agentic loop handle (single loop for single session)
+    pub loop_handle: Arc<RwLock<Option<LoopHandle>>>,
 }
 
 impl AppState {

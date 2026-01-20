@@ -9,7 +9,6 @@ pub mod session_storage;
 pub mod state;
 pub mod streaming;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
@@ -30,9 +29,9 @@ pub fn init_state(workspace_path: std::path::PathBuf) -> AppState {
         context: Arc::new(RwLock::new(context)),
         registry: Arc::new(RwLock::new(registry)),
         workspace_path,
-        sessions: Arc::new(RwLock::new(HashMap::new())),
+        session: Arc::new(RwLock::new(None)),
         config_manager: Arc::new(RwLock::new(config_manager)),
-        loop_handles: Arc::new(RwLock::new(HashMap::new())),
+        loop_handle: Arc::new(RwLock::new(None)),
     }
 }
 
