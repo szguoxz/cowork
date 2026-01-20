@@ -5,7 +5,10 @@
 pub mod agentic_loop;
 pub mod chat;
 pub mod commands;
+pub mod loop_channel;
 pub mod session_storage;
+pub mod simple_commands;
+pub mod simple_loop;
 pub mod state;
 pub mod streaming;
 
@@ -29,9 +32,8 @@ pub fn init_state(workspace_path: std::path::PathBuf) -> AppState {
         context: Arc::new(RwLock::new(context)),
         registry: Arc::new(RwLock::new(registry)),
         workspace_path,
-        session: Arc::new(RwLock::new(None)),
         config_manager: Arc::new(RwLock::new(config_manager)),
-        loop_handle: Arc::new(RwLock::new(None)),
+        loop_input: Arc::new(RwLock::new(None)),
     }
 }
 
@@ -82,14 +84,14 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::get_agents,
-            commands::execute_task,
-            commands::get_task_status,
-            commands::cancel_task,
-            commands::list_files,
-            commands::read_file,
-            commands::write_file,
-            commands::execute_command,
+            // Simple loop commands (new architecture)
+            simple_commands::start_loop,
+            simple_commands::send_message,
+            simple_commands::stop_loop,
+            simple_commands::is_loop_running,
+            simple_commands::approve_tool,
+            simple_commands::reject_tool,
+            // Settings commands
             commands::get_settings,
             commands::update_settings,
             commands::save_settings,
@@ -97,56 +99,6 @@ pub fn run() {
             commands::test_api_connection,
             commands::is_setup_complete,
             commands::fetch_provider_models,
-            // Chat commands
-            commands::create_session,
-            commands::list_sessions,
-            commands::get_session_messages,
-            commands::send_message,
-            commands::execute_tool,
-            commands::approve_tool_call,
-            commands::reject_tool_call,
-            commands::delete_session,
-            // Agentic loop commands
-            commands::start_loop,
-            commands::stop_loop,
-            commands::approve_loop_tools,
-            commands::reject_loop_tools,
-            commands::answer_loop_question,
-            commands::get_loop_state,
-            commands::is_loop_active,
-            // Streaming commands
-            commands::send_message_stream,
-            // Skill commands
-            commands::execute_skill,
-            commands::list_skills,
-            commands::execute_command_string,
-            // Context management commands
-            commands::get_context_usage,
-            commands::compact_session,
-            commands::clear_session,
-            commands::get_memory_hierarchy,
-            // Help commands
-            commands::get_quick_start,
-            // MCP server management
-            commands::list_mcp_servers,
-            commands::list_mcp_tools,
-            commands::add_mcp_server,
-            commands::start_mcp_server,
-            commands::stop_mcp_server,
-            commands::remove_mcp_server,
-            // Skill installation
-            commands::list_installed_skills,
-            commands::install_skill,
-            commands::remove_skill,
-            // Session persistence
-            commands::save_session,
-            commands::list_saved_sessions,
-            commands::load_saved_session,
-            commands::delete_saved_session,
-            commands::delete_old_sessions,
-            commands::delete_all_saved_sessions,
-            commands::get_sessions_directory_info,
-            commands::open_sessions_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

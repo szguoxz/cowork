@@ -6,8 +6,7 @@ use tokio::sync::RwLock;
 
 use cowork_core::{AgentRegistry, Config, ConfigManager, Context};
 
-use crate::agentic_loop::LoopHandle;
-use crate::chat::ChatSession;
+use crate::simple_loop::LoopInputHandle;
 
 /// Global application state
 pub struct AppState {
@@ -17,12 +16,10 @@ pub struct AppState {
     pub registry: Arc<RwLock<AgentRegistry>>,
     /// Workspace root path
     pub workspace_path: PathBuf,
-    /// Active chat session (single session)
-    pub session: Arc<RwLock<Option<ChatSession>>>,
     /// Configuration manager
     pub config_manager: Arc<RwLock<ConfigManager>>,
-    /// Active agentic loop handle (single loop for single session)
-    pub loop_handle: Arc<RwLock<Option<LoopHandle>>>,
+    /// Handle to send input to the loop (None if loop not started)
+    pub loop_input: Arc<RwLock<Option<LoopInputHandle>>>,
 }
 
 impl AppState {

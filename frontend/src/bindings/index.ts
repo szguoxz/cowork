@@ -2,6 +2,7 @@
 // Regenerate with: cargo test --package cowork-app export_bindings
 
 export type { ChatMessage } from "./ChatMessage";
+export type { LoopOutput } from "./LoopOutput";
 export type { LoopState } from "./LoopState";
 export type { QuestionOption } from "./QuestionOption";
 export type { ToolCallInfo } from "./ToolCallInfo";
