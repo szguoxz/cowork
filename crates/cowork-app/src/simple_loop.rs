@@ -273,17 +273,21 @@ impl SimpleLoop {
             "list_directory" => {
                 let path = args["path"].as_str().unwrap_or(".");
                 let full_path = self.workspace_path.join(path);
+                tracing::info!("list_directory: listing {:?}", full_path);
                 let mut entries = Vec::new();
                 let mut dir = tokio::fs::read_dir(&full_path)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("{} (path: {:?})", e, full_path))?;
                 while let Some(entry) = dir.next_entry().await.map_err(|e| e.to_string())? {
                     let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
                     let name = entry.file_name().to_string_lossy().to_string();
+                    tracing::debug!("  entry: {} (is_dir: {})", name, is_dir);
                     entries.push(if is_dir { format!("{}/", name) } else { name });
                 }
                 entries.sort();
-                Ok(entries.join("\n"))
+                let result = entries.join("\n");
+                tracing::info!("list_directory result ({} entries): first 500 chars: {}", entries.len(), &result[..result.len().min(500)]);
+                Ok(result)
             }
             "execute_command" => {
                 let command = args["command"].as_str().ok_or("Missing command")?;
