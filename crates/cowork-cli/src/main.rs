@@ -545,12 +545,11 @@ async fn process_ai_message(
                                 Ok(output) => {
                                     exec_spinner.finish_and_clear();
                                     let result_str = output.content.to_string();
-                                    let truncated = if result_str.len() > 500 {
-                                        format!("{}... (truncated)", &result_str[..500])
-                                    } else {
-                                        result_str.clone()
-                                    };
-                                    println!("  {} {}", style("Result:").bold().green(), truncated);
+                                    let formatted = format_tool_result(&call.name, &result_str);
+                                    println!("  {}", style("Result:").bold().green());
+                                    for line in formatted.lines() {
+                                        println!("    {}", line);
+                                    }
 
                                     tool_results.push((call.name.clone(), result_str, true));
                                 }
@@ -950,6 +949,221 @@ fn print_help() {
     );
 }
 
+/// Format tool result for CLI display
+fn format_tool_result(tool_name: &str, result: &str) -> String {
+    // Try to parse as JSON and format nicely
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(result) {
+        match tool_name {
+            "list_directory" => format_directory_result(&json),
+            "glob" | "find_files" => format_glob_result(&json),
+            "grep" | "search_code" | "ripgrep" => format_grep_result(&json),
+            "read_file" | "read_pdf" | "read_office_doc" => format_file_content(&json, result),
+            "execute_command" | "shell" | "bash" => format_command_result(&json),
+            "write_file" | "edit_file" | "delete_file" | "move_file" => format_status_result(&json),
+            _ => format_generic_json(&json, result),
+        }
+    } else {
+        // Not JSON, return truncated text
+        truncate_result(result, 500)
+    }
+}
+
+fn format_directory_result(json: &serde_json::Value) -> String {
+    if let (Some(count), Some(entries)) = (json.get("count"), json.get("entries").and_then(|e| e.as_array())) {
+        let mut lines = vec![format!("{} items:", count)];
+
+        // Sort: directories first, then alphabetically
+        let mut sorted: Vec<_> = entries.iter().collect();
+        sorted.sort_by(|a, b| {
+            let a_dir = a.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
+            let b_dir = b.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
+            match (a_dir, b_dir) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => {
+                    let a_name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let b_name = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    a_name.cmp(b_name)
+                }
+            }
+        });
+
+        for entry in sorted.iter().take(30) {
+            let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+            let is_dir = entry.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
+            let size = entry.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+
+            if is_dir {
+                lines.push(format!("  📁 {}/", name));
+            } else {
+                lines.push(format!("  📄 {} ({})", name, format_size(size)));
+            }
+        }
+
+        if sorted.len() > 30 {
+            lines.push(format!("  ... and {} more", sorted.len() - 30));
+        }
+
+        lines.join("\n")
+    } else {
+        truncate_result(&json.to_string(), 500)
+    }
+}
+
+fn format_glob_result(json: &serde_json::Value) -> String {
+    if let (Some(count), Some(files)) = (json.get("count"), json.get("files").and_then(|f| f.as_array())) {
+        let mut lines = vec![format!("{} files found:", count)];
+
+        for file in files.iter().take(20) {
+            if let Some(path) = file.as_str() {
+                lines.push(format!("  📄 {}", path));
+            }
+        }
+
+        if files.len() > 20 {
+            lines.push(format!("  ... and {} more", files.len() - 20));
+        }
+
+        lines.join("\n")
+    } else {
+        truncate_result(&json.to_string(), 500)
+    }
+}
+
+fn format_grep_result(json: &serde_json::Value) -> String {
+    if let Some(matches) = json.get("matches").and_then(|m| m.as_array()) {
+        let total = json.get("total_matches").and_then(|t| t.as_u64()).unwrap_or(matches.len() as u64);
+        let mut lines = vec![format!("{} matches in {} files:", total, matches.len())];
+
+        for m in matches.iter().take(15) {
+            let path = m.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+            let line_num = m.get("line_number").and_then(|v| v.as_u64());
+            let count = m.get("count").and_then(|v| v.as_u64());
+
+            if let Some(n) = line_num {
+                lines.push(format!("  🔍 {}:{}", path, n));
+            } else if let Some(c) = count {
+                lines.push(format!("  🔍 {} ({} matches)", path, c));
+            } else {
+                lines.push(format!("  🔍 {}", path));
+            }
+        }
+
+        if matches.len() > 15 {
+            lines.push(format!("  ... and {} more files", matches.len() - 15));
+        }
+
+        lines.join("\n")
+    } else {
+        truncate_result(&json.to_string(), 500)
+    }
+}
+
+fn format_file_content(json: &serde_json::Value, raw: &str) -> String {
+    // Check if it's JSON with content field
+    if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
+        let lines: Vec<&str> = content.lines().take(20).collect();
+        let mut result = lines.join("\n");
+        if content.lines().count() > 20 {
+            result.push_str(&format!("\n  ... ({} more lines)", content.lines().count() - 20));
+        }
+        result
+    } else {
+        // Might be raw file content
+        truncate_result(raw, 1000)
+    }
+}
+
+fn format_command_result(json: &serde_json::Value) -> String {
+    let mut lines = Vec::new();
+
+    if let Some(exit_code) = json.get("exit_code").and_then(|c| c.as_i64()) {
+        let status = if exit_code == 0 { "✓" } else { "✗" };
+        lines.push(format!("{} Exit code: {}", status, exit_code));
+    }
+
+    if let Some(stdout) = json.get("stdout").and_then(|s| s.as_str()) {
+        if !stdout.is_empty() {
+            lines.push(truncate_result(stdout, 400));
+        }
+    }
+
+    if let Some(stderr) = json.get("stderr").and_then(|s| s.as_str()) {
+        if !stderr.is_empty() {
+            lines.push(format!("stderr: {}", truncate_result(stderr, 200)));
+        }
+    }
+
+    if lines.is_empty() {
+        "Command executed".to_string()
+    } else {
+        lines.join("\n")
+    }
+}
+
+fn format_status_result(json: &serde_json::Value) -> String {
+    if let Some(success) = json.get("success").and_then(|s| s.as_bool()) {
+        let msg = json.get("message").and_then(|m| m.as_str()).unwrap_or("");
+        if success {
+            format!("✓ {}", if msg.is_empty() { "Success" } else { msg })
+        } else {
+            let err = json.get("error").and_then(|e| e.as_str()).unwrap_or(msg);
+            format!("✗ {}", if err.is_empty() { "Failed" } else { err })
+        }
+    } else if let Some(msg) = json.get("message").and_then(|m| m.as_str()) {
+        msg.to_string()
+    } else {
+        truncate_result(&json.to_string(), 200)
+    }
+}
+
+fn format_generic_json(json: &serde_json::Value, raw: &str) -> String {
+    // Try to detect common patterns
+    if json.get("entries").is_some() {
+        return format_directory_result(json);
+    }
+    if json.get("matches").is_some() {
+        return format_grep_result(json);
+    }
+    if json.get("files").is_some() {
+        return format_glob_result(json);
+    }
+    if json.get("success").is_some() || json.get("error").is_some() {
+        return format_status_result(json);
+    }
+    if json.get("stdout").is_some() || json.get("stderr").is_some() {
+        return format_command_result(json);
+    }
+
+    truncate_result(raw, 500)
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes == 0 {
+        return "-".to_string();
+    }
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut size = bytes as f64;
+    let mut unit_idx = 0;
+    while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_idx += 1;
+    }
+    if unit_idx == 0 {
+        format!("{} {}", bytes, UNITS[unit_idx])
+    } else {
+        format!("{:.1} {}", size, UNITS[unit_idx])
+    }
+}
+
+fn truncate_result(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}... (truncated)", &s[..max_len])
+    }
+}
+
 async fn run_command(workspace: &PathBuf, command: &str) -> anyhow::Result<()> {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
@@ -1187,18 +1401,6 @@ fn show_config(workspace: &PathBuf) {
         )
         .dim()
     );
-}
-
-fn format_size(bytes: u64) -> String {
-    if bytes < 1024 {
-        format!("{} B", bytes)
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else if bytes < 1024 * 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-    }
 }
 
 /// Check if an API key is configured for the given provider
