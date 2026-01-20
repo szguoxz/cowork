@@ -5,6 +5,9 @@
 *.so
 *.dylib
 
+# Tauri generated files
+**/gen/schemas/
+
 # IDE
 .idea/
 .vscode/
