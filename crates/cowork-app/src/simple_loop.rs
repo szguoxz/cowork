@@ -173,17 +173,31 @@ impl SimpleLoop {
                 });
             }
 
-            // Add to history
-            self.messages.push(LlmMessage {
-                role: "assistant".to_string(),
-                content: content.clone(),
-            });
-
             // Handle tool calls
             if response.tool_calls.is_empty() {
-                // No tools, we're done
+                // No tools, we're done - add to history and return
+                self.messages.push(LlmMessage {
+                    role: "assistant".to_string(),
+                    content,
+                });
                 return;
             }
+
+            // Build assistant message with tool calls included
+            // This ensures the LLM knows it requested these tools
+            let tool_calls_str: Vec<String> = response.tool_calls.iter()
+                .map(|tc| format!("[Calling tool '{}' with args: {}]", tc.name, tc.arguments))
+                .collect();
+            let assistant_content = if content.is_empty() {
+                tool_calls_str.join("\n")
+            } else {
+                format!("{}\n{}", content, tool_calls_str.join("\n"))
+            };
+
+            self.messages.push(LlmMessage {
+                role: "assistant".to_string(),
+                content: assistant_content,
+            });
 
             // Process each tool call
             for tc in &response.tool_calls {
