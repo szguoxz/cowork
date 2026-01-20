@@ -54,16 +54,11 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            // Initialize with default workspace
-            let workspace_path = app
-                .path()
-                .app_data_dir()
-                .expect("Failed to get app data dir");
+            // Use current working directory as workspace
+            let workspace_path = std::env::current_dir()
+                .unwrap_or_else(|_| app.path().app_data_dir().expect("Failed to get app data dir"));
 
-            // Ensure the workspace directory exists (required for Windows)
-            if let Err(e) = std::fs::create_dir_all(&workspace_path) {
-                tracing::warn!("Failed to create workspace directory: {}", e);
-            }
+            tracing::info!("Using workspace: {:?}", workspace_path);
 
             // Ensure config directory exists (required for Windows)
             if let Some(config_dir) = dirs::config_dir() {
