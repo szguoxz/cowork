@@ -331,17 +331,17 @@ async fn run_chat(
         }
 
         match input {
-            "exit" | "quit" | "q" => {
+            "exit" | "quit" | "q" | "/exit" | "/quit" | "/q" => {
                 println!("{}", style("Goodbye!").green());
                 break;
             }
-            "help" | "?" => {
+            "help" | "?" | "/help" | "/?" => {
                 print_help();
             }
-            "tools" => {
+            "tools" | "/tools" => {
                 show_tools();
             }
-            "clear" => {
+            "clear" | "/clear" => {
                 messages.clear();
                 println!("{}", style("Conversation cleared.").green());
             }
@@ -910,7 +910,13 @@ fn create_provider_from_config(
 }
 
 fn print_help() {
-    println!("{}", style("Commands:").bold());
+    println!("{}", style("Built-in Commands:").bold());
+    println!("  {}       - Show this help", style("/help").green());
+    println!("  {}       - Exit the program", style("/exit").green());
+    println!("  {}      - Clear conversation history", style("/clear").green());
+    println!("  {}      - Show available tools", style("/tools").green());
+    println!();
+    println!("{}", style("Quick Commands:").bold());
     println!("  {}      - Run a shell command", style("run <cmd>").green());
     println!(
         "  {}    - List directory contents",
@@ -921,12 +927,8 @@ fn print_help() {
         "  {} - Search for files",
         style("search <pattern>").green()
     );
-    println!("  {}        - Show available tools", style("tools").green());
-    println!("  {}        - Clear conversation history", style("clear").green());
-    println!("  {}         - Show this help", style("help").green());
-    println!("  {}         - Exit the program", style("exit").green());
     println!();
-    println!("{}", style("Slash Commands:").bold());
+    println!("{}", style("Slash Commands (Skills):").bold());
     println!("  {}      - Create a git commit", style("/commit").green());
     println!("  {}        - Push to remote", style("/push").green());
     println!(
@@ -941,7 +943,6 @@ fn print_help() {
         "  {}  - Clean up deleted branches",
         style("/clean-gone").green()
     );
-    println!("  {}        - Show slash command help", style("/help").green());
     println!();
     println!(
         "{}",
