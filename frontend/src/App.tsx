@@ -35,16 +35,9 @@ function App() {
   useEffect(() => {
     const checkSetup = async () => {
       try {
-        // Check if setup has been completed before (via backend)
+        // Backend check is authoritative - show onboarding if no API key configured
         const isSetupDone = await invoke<boolean>('is_setup_complete')
-
-        // Also check localStorage for onboarding completion
-        const onboardingComplete = localStorage.getItem('onboarding_complete') === 'true'
-
-        // Show onboarding if either:
-        // 1. No API key is configured (backend check)
-        // 2. Onboarding was never completed (localStorage check)
-        setShowOnboarding(!isSetupDone && !onboardingComplete)
+        setShowOnboarding(!isSetupDone)
       } catch (err) {
         console.error('Failed to check setup status:', err)
         // On error, check localStorage as fallback

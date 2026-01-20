@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { Send, Loader2, Check, X, Terminal, AlertCircle, Brain, ChevronDown, ChevronRight, Sparkles } from 'lucide-react'
 import ContextIndicator from '../components/ContextIndicator'
+import QuestionModal from '../components/QuestionModal'
 import { Button } from '../components/ui/button'
 
 interface ToolCall {
@@ -27,6 +28,24 @@ interface SessionInfo {
   created_at: string
 }
 
+interface QuestionOption {
+  label: string
+  description: string
+}
+
+interface UserQuestion {
+  question: string
+  header: string
+  options: QuestionOption[]
+  multi_select: boolean
+}
+
+interface PendingQuestion {
+  requestId: string
+  toolCallId: string
+  questions: UserQuestion[]
+}
+
 export default function Chat() {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<Message[]>([])
@@ -38,6 +57,7 @@ export default function Chat() {
   const [streamingText, setStreamingText] = useState('')
   const [streamingThinking, setStreamingThinking] = useState('')
   const [showThinking, setShowThinking] = useState(true)
+  const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -84,7 +104,13 @@ export default function Chat() {
       }
     )
 
-    const unlistenLoop = listen<{ type: string; state?: string }>(
+    const unlistenLoop = listen<{
+      type: string
+      state?: string
+      request_id?: string
+      tool_call_id?: string
+      questions?: UserQuestion[]
+    }>(
       `loop:${sessionId}`,
       (event) => {
         if (event.payload.type === 'state_changed') {
@@ -93,7 +119,16 @@ export default function Chat() {
         }
         if (event.payload.type === 'loop_completed' || event.payload.type === 'loop_error') {
           setIsLoopActive(false)
+          setPendingQuestion(null)
           refreshMessages()
+        }
+        // Handle question requests from the AI
+        if (event.payload.type === 'question_requested' && event.payload.questions) {
+          setPendingQuestion({
+            requestId: event.payload.request_id || '',
+            toolCallId: event.payload.tool_call_id || '',
+            questions: event.payload.questions,
+          })
         }
       }
     )
@@ -250,6 +285,15 @@ export default function Chat() {
       setError(String(err))
     }
   }
+
+  const handleQuestionAnswered = useCallback(() => {
+    setPendingQuestion(null)
+  }, [])
+
+  const handleQuestionCancelled = useCallback(() => {
+    setPendingQuestion(null)
+    setIsLoopActive(false)
+  }, [])
 
   const formatToolArgs = (args: Record<string, unknown>) => {
     return Object.entries(args)
@@ -568,6 +612,17 @@ export default function Chat() {
           Press <kbd className="px-1.5 py-0.5 rounded bg-secondary text-foreground text-xs">Ctrl+Enter</kbd> to send
         </p>
       </form>
+
+      {/* Question Modal */}
+      {pendingQuestion && sessionId && (
+        <QuestionModal
+          sessionId={sessionId}
+          requestId={pendingQuestion.requestId}
+          questions={pendingQuestion.questions}
+          onAnswer={handleQuestionAnswered}
+          onCancel={handleQuestionCancelled}
+        />
+      )}
     </div>
   )
 }

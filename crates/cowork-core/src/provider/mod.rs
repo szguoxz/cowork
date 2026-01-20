@@ -12,11 +12,13 @@
 //! - Ollama (local)
 
 mod genai_provider;
+mod model_listing;
 
 pub use genai_provider::{
     create_provider, models, CompletionResult, GenAIProvider, PendingToolCall, ProviderType,
     StreamChunk,
 };
+pub use model_listing::{fetch_models, ModelInfo};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

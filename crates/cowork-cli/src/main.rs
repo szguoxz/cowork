@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use console::style;
-use dialoguer::{theme::ColorfulTheme, Input, Select};
+use dialoguer::{theme::ColorfulTheme, Input, MultiSelect, Select};
 use indicatif::{ProgressBar, ProgressStyle};
 
 use onboarding::OnboardingWizard;
@@ -25,6 +25,10 @@ use cowork_core::tools::notebook::NotebookEdit;
 use cowork_core::tools::shell::ExecuteCommand;
 use cowork_core::tools::task::{AgentInstanceRegistry, TaskOutputTool, TaskTool, TodoWrite};
 use cowork_core::tools::web::{WebFetch, WebSearch};
+use cowork_core::tools::interaction::AskUserQuestion;
+use cowork_core::tools::document::{ReadOfficeDoc, ReadPdf};
+use cowork_core::tools::browser::BrowserController;
+use cowork_core::tools::planning::{EnterPlanMode, ExitPlanMode, PlanModeState};
 use cowork_core::tools::{Tool, ToolDefinition, ToolRegistry};
 
 #[derive(Parser)]
@@ -115,7 +119,18 @@ async fn main() -> anyhow::Result<()> {
         })
         .init();
 
-    let workspace = cli.workspace.canonicalize().unwrap_or(cli.workspace);
+    // Use dunce::canonicalize to avoid UNC path prefix on Windows (\\?\)
+    // If canonicalize fails, ensure we at least have an absolute path
+    let workspace = dunce::canonicalize(&cli.workspace).unwrap_or_else(|_| {
+        if cli.workspace.is_absolute() {
+            cli.workspace.clone()
+        } else {
+            // Make relative path absolute using current directory
+            std::env::current_dir()
+                .map(|cwd| cwd.join(&cli.workspace))
+                .unwrap_or(cli.workspace.clone())
+        }
+    });
 
     // Parse provider type
     let provider_type = match cli.provider.to_lowercase().as_str() {
@@ -466,6 +481,22 @@ async fn process_ai_message(
                     };
 
                     if approved {
+                        // Special handling for ask_user_question - intercept and handle interactively
+                        if call.name == "ask_user_question" {
+                            match handle_ask_user_question(&call.arguments) {
+                                Ok(result_str) => {
+                                    println!("  {} {}", style("✓").green(), style("User answered questions").dim());
+                                    tool_results.push((call.name.clone(), result_str, true));
+                                }
+                                Err(e) => {
+                                    let error_msg = format!("Error: {}", e);
+                                    println!("  {}", style(&error_msg).red());
+                                    tool_results.push((call.name.clone(), error_msg, false));
+                                }
+                            }
+                            continue;
+                        }
+
                         // Execute tool
                         let exec_spinner = ProgressBar::new_spinner();
                         exec_spinner.set_style(
@@ -554,10 +585,129 @@ fn tool_needs_approval(tool_name: &str) -> bool {
     match tool_name {
         // Read-only tools - auto-approve
         "read_file" | "glob" | "grep" | "list_directory" | "search_files" | "web_fetch"
-        | "web_search" | "todo_write" | "lsp" | "task_output" => false,
+        | "web_search" | "todo_write" | "lsp" | "task_output"
+        // Browser read-only
+        | "browser_get_page_content" | "browser_screenshot"
+        // Document read-only
+        | "read_pdf" | "read_office_doc"
+        // User interaction - handled specially but doesn't need approval
+        | "ask_user_question" => false,
         // Write/execute tools - need approval
         _ => true,
     }
+}
+
+/// Handle ask_user_question tool call interactively in CLI
+fn handle_ask_user_question(args: &serde_json::Value) -> Result<String, String> {
+    let questions = args
+        .get("questions")
+        .and_then(|q| q.as_array())
+        .ok_or_else(|| "Missing questions array".to_string())?;
+
+    let mut answers: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+
+    for (i, question) in questions.iter().enumerate() {
+        let question_text = question
+            .get("question")
+            .and_then(|q| q.as_str())
+            .unwrap_or("Question");
+        let header = question
+            .get("header")
+            .and_then(|h| h.as_str())
+            .unwrap_or("");
+        let multi_select = question
+            .get("multiSelect")
+            .and_then(|m| m.as_bool())
+            .unwrap_or(false);
+        let options = question
+            .get("options")
+            .and_then(|o| o.as_array())
+            .ok_or_else(|| format!("Question {} missing options", i + 1))?;
+
+        // Build display items with label and description
+        let mut items: Vec<String> = options
+            .iter()
+            .map(|opt| {
+                let label = opt.get("label").and_then(|l| l.as_str()).unwrap_or("");
+                let desc = opt.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                if desc.is_empty() {
+                    label.to_string()
+                } else {
+                    format!("{} - {}", label, style(desc).dim())
+                }
+            })
+            .collect();
+
+        // Add "Other" option
+        items.push(format!("{}", style("Other (type custom answer)").italic()));
+
+        // Display the question
+        println!();
+        println!("{}", style(format!("┌─ {} ─────────────────────────────────────", header)).cyan());
+        println!("│ {}", style(question_text).bold());
+        println!("{}", style("└─────────────────────────────────────────────────").cyan());
+
+        if multi_select {
+            // Multi-select mode
+            let selections = MultiSelect::with_theme(&ColorfulTheme::default())
+                .items(&items)
+                .interact()
+                .map_err(|e| format!("Selection failed: {}", e))?;
+
+            let mut selected_labels: Vec<String> = Vec::new();
+            for idx in selections {
+                if idx == items.len() - 1 {
+                    // "Other" selected - prompt for custom input
+                    let custom: String = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter your custom answer")
+                        .interact_text()
+                        .map_err(|e| format!("Input failed: {}", e))?;
+                    selected_labels.push(custom);
+                } else {
+                    // Get the original label (not the formatted display string)
+                    let label = options[idx]
+                        .get("label")
+                        .and_then(|l| l.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    selected_labels.push(label);
+                }
+            }
+            answers.insert(i.to_string(), serde_json::json!(selected_labels.join(", ")));
+        } else {
+            // Single select mode
+            let selection = Select::with_theme(&ColorfulTheme::default())
+                .items(&items)
+                .default(0)
+                .interact()
+                .map_err(|e| format!("Selection failed: {}", e))?;
+
+            let answer = if selection == items.len() - 1 {
+                // "Other" selected - prompt for custom input
+                let custom: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter your custom answer")
+                    .interact_text()
+                    .map_err(|e| format!("Input failed: {}", e))?;
+                custom
+            } else {
+                // Get the original label
+                options[selection]
+                    .get("label")
+                    .and_then(|l| l.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            answers.insert(i.to_string(), serde_json::json!(answer));
+        }
+    }
+
+    // Return the answers as JSON
+    let result = serde_json::json!({
+        "answered": true,
+        "answers": answers
+    });
+
+    serde_json::to_string(&result).map_err(|e| format!("JSON serialization failed: {}", e))
 }
 
 /// Handle slash commands
@@ -608,6 +758,24 @@ fn create_tool_registry(
 
     // Code intelligence tools
     registry.register(std::sync::Arc::new(LspTool::new(workspace.clone())));
+
+    // Interaction tools
+    registry.register(std::sync::Arc::new(AskUserQuestion::new()));
+
+    // Document tools
+    registry.register(std::sync::Arc::new(ReadPdf::new(workspace.clone())));
+    registry.register(std::sync::Arc::new(ReadOfficeDoc::new(workspace.clone())));
+
+    // Browser tools (headless by default)
+    let browser_controller = BrowserController::default();
+    for tool in browser_controller.create_tools() {
+        registry.register(tool);
+    }
+
+    // Planning tools with shared state
+    let plan_mode_state = std::sync::Arc::new(tokio::sync::RwLock::new(PlanModeState::default()));
+    registry.register(std::sync::Arc::new(EnterPlanMode::new(plan_mode_state.clone())));
+    registry.register(std::sync::Arc::new(ExitPlanMode::new(plan_mode_state)));
 
     // Agent/Task tools - pass API key and model tiers for subagent execution
     let agent_registry = std::sync::Arc::new(AgentInstanceRegistry::new());
@@ -939,6 +1107,18 @@ fn show_tools() {
         // Sub-agents
         ("task", "Launch subagent for complex tasks", "Low"),
         ("task_output", "Get output from agents", "None"),
+        // Browser automation
+        ("browser_navigate", "Navigate to a URL", "Low"),
+        ("browser_screenshot", "Take a screenshot", "Low"),
+        ("browser_click", "Click an element", "Medium"),
+        ("browser_type", "Type text in an element", "Medium"),
+        ("browser_get_page_content", "Get page HTML content", "None"),
+        // Document parsing
+        ("read_pdf", "Extract text from PDF files", "None"),
+        ("read_office_doc", "Extract text from Office docs", "None"),
+        // Planning
+        ("enter_plan_mode", "Enter planning mode for complex tasks", "Low"),
+        ("exit_plan_mode", "Exit planning mode and request approval", "None"),
     ];
 
     for (name, desc, approval) in tools {
@@ -1099,6 +1279,21 @@ const SYSTEM_PROMPT: &str = r#"You are Cowork, an AI coding assistant. You help 
   - Explore: Fast codebase exploration
   - Plan: Software architecture and planning
 - task_output: Get output from running/completed agents
+
+### Browser Automation
+- browser_navigate: Navigate to a URL
+- browser_screenshot: Take a screenshot of the page
+- browser_click: Click an element on the page (use CSS selector)
+- browser_type: Type text into an input element
+- browser_get_page_content: Get the HTML content of the current page
+
+### Document Parsing
+- read_pdf: Extract text from PDF files (with optional page range)
+- read_office_doc: Extract text from Office documents (.docx, .xlsx, .pptx)
+
+### Planning Tools
+- enter_plan_mode: Enter planning mode for complex implementation tasks
+- exit_plan_mode: Exit planning mode and request user approval with permission requests
 
 ## Workflow Guidelines
 

@@ -97,6 +97,7 @@ pub fn run() {
             commands::check_api_key,
             commands::test_api_connection,
             commands::is_setup_complete,
+            commands::fetch_provider_models,
             // Chat commands
             commands::create_session,
             commands::list_sessions,
@@ -111,6 +112,7 @@ pub fn run() {
             commands::stop_loop,
             commands::approve_loop_tools,
             commands::reject_loop_tools,
+            commands::answer_loop_question,
             commands::get_loop_state,
             commands::is_loop_active,
             // Streaming commands

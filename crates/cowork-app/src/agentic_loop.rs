@@ -31,6 +31,8 @@ pub enum LoopState {
     WaitingForLlm,
     /// Waiting for user approval on tool calls
     WaitingForApproval,
+    /// Waiting for user to answer a question
+    WaitingForQuestion,
     /// Executing approved tools
     ExecutingTools,
     /// Loop completed successfully
@@ -39,6 +41,22 @@ pub enum LoopState {
     Cancelled,
     /// Loop encountered an error
     Error,
+}
+
+/// A question option for user interaction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionOption {
+    pub label: String,
+    pub description: String,
+}
+
+/// A question to ask the user
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserQuestion {
+    pub question: String,
+    pub header: String,
+    pub options: Vec<QuestionOption>,
+    pub multi_select: bool,
 }
 
 /// Events emitted by the agentic loop to the frontend
@@ -77,6 +95,13 @@ pub enum LoopEvent {
         tool_call_id: String,
         result: String,
         success: bool,
+    },
+    /// AI is asking the user a question
+    QuestionRequested {
+        session_id: String,
+        request_id: String,
+        tool_call_id: String,
+        questions: Vec<UserQuestion>,
     },
     /// Loop completed
     LoopCompleted {
@@ -121,11 +146,21 @@ pub enum ApprovalDecision {
     Cancel,
 }
 
+/// User's answer to questions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionAnswer {
+    pub request_id: String,
+    /// Map of question index to answer(s)
+    pub answers: std::collections::HashMap<String, String>,
+}
+
 /// Control commands for the agentic loop
 #[derive(Debug)]
 pub enum LoopCommand {
     /// User's approval decision
     Approval(ApprovalDecision),
+    /// User's answer to questions
+    QuestionAnswer(QuestionAnswer),
     /// Cancel the loop
     Cancel,
     /// Pause the loop
@@ -166,6 +201,8 @@ impl Default for ApprovalConfig {
         auto_approve.insert("search_files".to_string());
         auto_approve.insert("glob".to_string());
         auto_approve.insert("grep".to_string());
+        // User interaction tools - handled specially but don't need approval
+        auto_approve.insert("ask_user_question".to_string());
 
         let mut always_require = HashSet::new();
         always_require.insert("write_file".to_string());
@@ -525,10 +562,53 @@ impl AgenticLoop {
 
             let (auto_approved, needs_approval) = self.approval_config.categorize_tools(&pending_tools);
 
-            // Execute auto-approved tools
-            if !auto_approved.is_empty() {
+            // Check for ask_user_question tools - handle them specially
+            let question_tools: Vec<_> = pending_tools
+                .iter()
+                .filter(|tc| tc.name == "ask_user_question" && auto_approved.contains(&tc.id))
+                .cloned()
+                .collect();
+
+            // Handle question tools first (they require user interaction)
+            for tool_call in &question_tools {
+                match self.execute_ask_user_question(tool_call).await {
+                    Ok(result) => {
+                        // Update session with result
+                        if let Err(e) = session
+                            .execute_tool_call(&tool_call.id, result.clone())
+                            .await
+                        {
+                            tracing::error!("Failed to update tool result: {}", e);
+                        }
+                        self.emit_event(LoopEvent::ToolExecutionCompleted {
+                            session_id: self.session_id.clone(),
+                            tool_call_id: tool_call.id.clone(),
+                            result,
+                            success: true,
+                        });
+                    }
+                    Err(e) => {
+                        tracing::error!("Question tool error: {}", e);
+                        if let Err(err) = session
+                            .execute_tool_call(&tool_call.id, format!("Error: {}", e))
+                            .await
+                        {
+                            tracing::error!("Failed to update tool error: {}", err);
+                        }
+                    }
+                }
+            }
+
+            // Execute other auto-approved tools (not ask_user_question)
+            let other_auto_approved: Vec<_> = auto_approved
+                .iter()
+                .filter(|id| !question_tools.iter().any(|q| &q.id == *id))
+                .cloned()
+                .collect();
+
+            if !other_auto_approved.is_empty() {
                 self.set_state(LoopState::ExecutingTools).await;
-                for tool_id in &auto_approved {
+                for tool_id in &other_auto_approved {
                     if let Err(e) = self
                         .execute_tool(session, tool_id, &tool_executor)
                         .await
@@ -745,11 +825,100 @@ impl AgenticLoop {
                             // Continue waiting
                             continue;
                         }
+                        Some(LoopCommand::QuestionAnswer(_)) => {
+                            // Unexpected during approval, ignore
+                            continue;
+                        }
                         None => return Err("Command channel closed".to_string()),
                     }
                 }
             }
         }
+    }
+
+    /// Wait for user to answer a question
+    async fn wait_for_question_answer(&mut self, request_id: &str) -> Result<QuestionAnswer, String> {
+        loop {
+            tokio::select! {
+                cmd = self.command_rx.recv() => {
+                    match cmd {
+                        Some(LoopCommand::QuestionAnswer(answer)) => {
+                            if answer.request_id == request_id {
+                                return Ok(answer);
+                            }
+                            // Wrong request_id, keep waiting
+                            continue;
+                        }
+                        Some(LoopCommand::Cancel) => {
+                            return Err("User cancelled".to_string());
+                        }
+                        Some(LoopCommand::Pause) | Some(LoopCommand::Resume) => {
+                            continue;
+                        }
+                        Some(LoopCommand::Approval(_)) => {
+                            // Unexpected during question, ignore
+                            continue;
+                        }
+                        None => return Err("Command channel closed".to_string()),
+                    }
+                }
+            }
+        }
+    }
+
+    /// Execute the ask_user_question tool
+    async fn execute_ask_user_question(&mut self, tool_call: &ToolCallInfo) -> Result<String, String> {
+        // Parse questions from arguments
+        let questions_value = tool_call.arguments.get("questions")
+            .ok_or_else(|| "Missing questions field".to_string())?;
+
+        let questions: Vec<UserQuestion> = questions_value.as_array()
+            .ok_or_else(|| "questions must be an array".to_string())?
+            .iter()
+            .map(|q| {
+                let options = q.get("options")
+                    .and_then(|o| o.as_array())
+                    .map(|arr| {
+                        arr.iter().map(|opt| QuestionOption {
+                            label: opt.get("label").and_then(|l| l.as_str()).unwrap_or("").to_string(),
+                            description: opt.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+                        }).collect()
+                    })
+                    .unwrap_or_default();
+
+                UserQuestion {
+                    question: q.get("question").and_then(|q| q.as_str()).unwrap_or("").to_string(),
+                    header: q.get("header").and_then(|h| h.as_str()).unwrap_or("").to_string(),
+                    options,
+                    multi_select: q.get("multiSelect").and_then(|m| m.as_bool()).unwrap_or(false),
+                }
+            })
+            .collect();
+
+        // Generate request ID
+        let request_id = uuid::Uuid::new_v4().to_string();
+
+        // Set state to waiting for question
+        self.set_state(LoopState::WaitingForQuestion).await;
+
+        // Emit question event to frontend
+        self.emit_event(LoopEvent::QuestionRequested {
+            session_id: self.session_id.clone(),
+            request_id: request_id.clone(),
+            tool_call_id: tool_call.id.clone(),
+            questions,
+        });
+
+        // Wait for answer
+        let answer = self.wait_for_question_answer(&request_id).await?;
+
+        // Return the answer as JSON
+        let result = serde_json::json!({
+            "answered": true,
+            "answers": answer.answers
+        });
+
+        Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()))
     }
 }
 
@@ -934,6 +1103,13 @@ impl LoopHandle {
     pub async fn cancel(&self) -> Result<(), String> {
         self.command_tx
             .send(LoopCommand::Cancel)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn answer_question(&self, answer: QuestionAnswer) -> Result<(), String> {
+        self.command_tx
+            .send(LoopCommand::QuestionAnswer(answer))
             .await
             .map_err(|e| e.to_string())
     }

@@ -5,21 +5,19 @@ import {
   CheckCircle2,
   ArrowRight,
   AlertCircle,
-  Code,
-  FileText,
-  Terminal,
   Globe,
   Loader2,
   Zap,
   Brain,
   Server,
+  Cpu,
 } from 'lucide-react'
 
 interface OnboardingProps {
   onComplete: () => void
 }
 
-type Step = 'welcome' | 'provider' | 'apikey' | 'testing' | 'profile' | 'complete'
+type Step = 'welcome' | 'provider' | 'apikey' | 'model' | 'testing' | 'complete'
 
 interface ProviderOption {
   id: string
@@ -123,44 +121,24 @@ const PROVIDERS: ProviderOption[] = [
   },
 ]
 
-interface ProfileOption {
-  id: string
-  name: string
-  description: string
-  icon: React.ReactNode
-}
-
-const PROFILES: ProfileOption[] = [
-  {
-    id: 'developer',
-    name: 'Coding Assistant',
-    description: 'Full access to all tools for software development',
-    icon: <Code className="w-6 h-6" />,
-  },
-  {
-    id: 'writer',
-    name: 'Writing Helper',
-    description: 'Focus on document editing and content creation',
-    icon: <FileText className="w-6 h-6" />,
-  },
-  {
-    id: 'simple',
-    name: 'Simple Mode',
-    description: 'Hides technical details for everyday tasks',
-    icon: <Terminal className="w-6 h-6" />,
-  },
-]
-
 interface ApiTestResult {
   success: boolean
   message: string
+}
+
+interface ModelInfo {
+  id: string
+  name: string | null
+  description: string | null
+  recommended: boolean
 }
 
 export default function Onboarding({ onComplete }: OnboardingProps) {
   const [step, setStep] = useState<Step>('welcome')
   const [selectedProvider, setSelectedProvider] = useState<string>('anthropic')
   const [apiKey, setApiKey] = useState('')
-  const [selectedProfile, setSelectedProfile] = useState<string>('developer')
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [selectedModel, setSelectedModel] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [testResult, setTestResult] = useState<ApiTestResult | null>(null)
@@ -168,6 +146,33 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
   const handleProviderSelect = (providerId: string) => {
     setSelectedProvider(providerId)
     setError(null)
+  }
+
+  const handleModelSelect = (modelId: string) => {
+    setSelectedModel(modelId)
+    setError(null)
+  }
+
+  const fetchModels = async () => {
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const fetchedModels = await invoke<ModelInfo[]>('fetch_provider_models', {
+        providerType: selectedProvider,
+        apiKey: apiKey,
+      })
+      setModels(fetchedModels)
+      // Auto-select first recommended model, or first model
+      const recommended = fetchedModels.find((m) => m.recommended)
+      setSelectedModel(recommended?.id || fetchedModels[0]?.id || '')
+    } catch (err) {
+      console.error('Failed to fetch models:', err)
+      setModels([])
+      setError('Could not fetch models. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleNext = async () => {
@@ -180,7 +185,25 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
 
       case 'provider':
         if (selectedProvider === 'ollama') {
-          setStep('profile')
+          // Ollama: fetch models then go to model selection
+          setApiKey('') // No API key for Ollama
+          setStep('model')
+          // Fetch Ollama models
+          setIsLoading(true)
+          try {
+            const fetchedModels = await invoke<ModelInfo[]>('fetch_provider_models', {
+              providerType: selectedProvider,
+              apiKey: '',
+            })
+            setModels(fetchedModels)
+            const recommended = fetchedModels.find((m) => m.recommended)
+            setSelectedModel(recommended?.id || fetchedModels[0]?.id || 'llama3.2')
+          } catch {
+            setModels([])
+            setSelectedModel('llama3.2')
+          } finally {
+            setIsLoading(false)
+          }
         } else {
           setStep('apikey')
         }
@@ -191,7 +214,16 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
           setError('Please enter an API key')
           return
         }
+        // Move to model selection step
+        setStep('model')
+        await fetchModels()
+        break
 
+      case 'model':
+        if (!selectedModel && models.length > 0) {
+          setError('Please select a model')
+          return
+        }
         // Move to testing step
         setStep('testing')
         setIsLoading(true)
@@ -201,8 +233,8 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
           // Test the API connection
           const result = await invoke<ApiTestResult>('test_api_connection', {
             providerType: selectedProvider,
-            apiKey: apiKey,
-            model: null,
+            apiKey: apiKey || null,
+            model: selectedModel || null,
           })
 
           setTestResult(result)
@@ -213,8 +245,8 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
               settings: {
                 provider: {
                   provider_type: selectedProvider,
-                  api_key: apiKey,
-                  model: getDefaultModel(selectedProvider),
+                  api_key: apiKey || null,
+                  model: selectedModel,
                   base_url: null,
                 },
                 approval: {
@@ -242,24 +274,11 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
 
       case 'testing':
         if (testResult?.success) {
-          setStep('profile')
-        } else {
-          // Go back to API key entry
-          setStep('apikey')
-          setTestResult(null)
-        }
-        break
-
-      case 'profile':
-        setIsLoading(true)
-        try {
-          // Save profile preference (for future use)
-          localStorage.setItem('cowork_profile', selectedProfile)
           setStep('complete')
-        } catch (err) {
-          setError(String(err))
-        } finally {
-          setIsLoading(false)
+        } else {
+          // Go back to model selection
+          setStep('model')
+          setTestResult(null)
         }
         break
 
@@ -267,39 +286,6 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
         localStorage.setItem('onboarding_complete', 'true')
         onComplete()
         break
-    }
-  }
-
-  const getDefaultModel = (provider: string): string => {
-    switch (provider) {
-      case 'anthropic':
-        return 'claude-sonnet-4-20250514'
-      case 'openai':
-        return 'gpt-4o'
-      case 'gemini':
-        return 'gemini-2.0-flash'
-      case 'groq':
-        return 'llama-3.3-70b-versatile'
-      case 'deepseek':
-        return 'deepseek-chat'
-      case 'xai':
-        return 'grok-2'
-      case 'together':
-        return 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo'
-      case 'fireworks':
-        return 'accounts/fireworks/models/llama-v3p1-70b-instruct'
-      case 'zai':
-        return 'glm-4-plus'
-      case 'nebius':
-        return 'meta-llama/Meta-Llama-3.1-70B-Instruct'
-      case 'mimo':
-        return 'mimo-v2-flash'
-      case 'bigmodel':
-        return 'glm-4-plus'
-      case 'ollama':
-        return 'llama3.2'
-      default:
-        return ''
     }
   }
 
@@ -311,9 +297,9 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
         return 32
       case 'apikey':
         return 48
-      case 'testing':
+      case 'model':
         return 64
-      case 'profile':
+      case 'testing':
         return 80
       case 'complete':
         return 100
@@ -449,8 +435,103 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                 disabled={isLoading}
                 className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
               >
-                {isLoading ? 'Testing...' : 'Test Connection'}
-                {!isLoading && <ArrowRight className="w-5 h-5" />}
+                {isLoading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Fetching models...
+                  </>
+                ) : (
+                  <>
+                    Continue
+                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {step === 'model' && (
+            <div>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+                Select a model
+              </h2>
+              <p className="text-gray-600 dark:text-gray-400 mb-6">
+                Choose the AI model you'd like to use. Recommended models are marked.
+              </p>
+
+              {isLoading ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 text-primary-600 animate-spin mb-4" />
+                  <p className="text-gray-600 dark:text-gray-400">Fetching available models...</p>
+                </div>
+              ) : models.length > 0 ? (
+                <div className="space-y-2 mb-6 max-h-64 overflow-y-auto">
+                  {models.map((model) => (
+                    <button
+                      key={model.id}
+                      onClick={() => handleModelSelect(model.id)}
+                      className={`w-full p-3 rounded-lg border-2 text-left flex items-center gap-3 transition-colors ${
+                        selectedModel === model.id
+                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                      }`}
+                    >
+                      <Cpu
+                        className={`w-5 h-5 ${
+                          selectedModel === model.id ? 'text-primary-600' : 'text-gray-400'
+                        }`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-gray-900 dark:text-white truncate">
+                          {model.name || model.id}
+                        </div>
+                        {model.description && (
+                          <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                            {model.description}
+                          </div>
+                        )}
+                      </div>
+                      {model.recommended && (
+                        <span className="text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 px-2 py-1 rounded">
+                          Recommended
+                        </span>
+                      )}
+                      {selectedModel === model.id && (
+                        <CheckCircle2 className="w-5 h-5 text-primary-600 flex-shrink-0" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 mb-6">
+                  <AlertCircle className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
+                  <p className="text-gray-600 dark:text-gray-400 mb-4">
+                    Could not fetch models from the provider.
+                  </p>
+                  <input
+                    type="text"
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    placeholder="Enter model name manually"
+                    className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                </div>
+              )}
+
+              {error && (
+                <div className="mb-4 flex items-center gap-2 text-red-600 text-sm">
+                  <AlertCircle className="w-4 h-4" />
+                  {error}
+                </div>
+              )}
+
+              <button
+                onClick={handleNext}
+                disabled={isLoading || (!selectedModel && models.length > 0)}
+                className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+              >
+                Test Connection
+                <ArrowRight className="w-5 h-5" />
               </button>
             </div>
           )}
@@ -478,7 +559,8 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                     Connection Successful!
                   </h2>
                   <p className="text-gray-600 dark:text-gray-400 mb-8">
-                    Your API key is valid and working.
+                    Your API key is valid and working with model{' '}
+                    <span className="font-medium">{selectedModel}</span>.
                   </p>
                   <button
                     onClick={handleNext}
@@ -512,61 +594,6 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
             </div>
           )}
 
-          {step === 'profile' && (
-            <div>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                Choose your experience
-              </h2>
-              <p className="text-gray-600 dark:text-gray-400 mb-6">
-                How would you like to use Cowork? You can change this anytime.
-              </p>
-
-              <div className="space-y-3 mb-6">
-                {PROFILES.map((profile) => (
-                  <button
-                    key={profile.id}
-                    onClick={() => setSelectedProfile(profile.id)}
-                    className={`w-full p-4 rounded-lg border-2 text-left flex items-start gap-4 transition-colors ${
-                      selectedProfile === profile.id
-                        ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
-                    }`}
-                  >
-                    <div
-                      className={`p-3 rounded-lg ${
-                        selectedProfile === profile.id
-                          ? 'bg-primary-100 dark:bg-primary-900 text-primary-600'
-                          : 'bg-gray-100 dark:bg-gray-700 text-gray-500'
-                      }`}
-                    >
-                      {profile.icon}
-                    </div>
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-900 dark:text-white">
-                        {profile.name}
-                      </div>
-                      <div className="text-sm text-gray-500 dark:text-gray-400">
-                        {profile.description}
-                      </div>
-                    </div>
-                    {selectedProfile === profile.id && (
-                      <CheckCircle2 className="w-5 h-5 text-primary-600" />
-                    )}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                onClick={handleNext}
-                disabled={isLoading}
-                className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
-              >
-                {isLoading ? 'Finishing...' : 'Finish Setup'}
-                {!isLoading && <ArrowRight className="w-5 h-5" />}
-              </button>
-            </div>
-          )}
-
           {step === 'complete' && (
             <div className="text-center">
               <div className="w-16 h-16 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -576,8 +603,9 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                 You're all set!
               </h2>
               <p className="text-gray-600 dark:text-gray-400 mb-8">
-                Start by typing a message or try a command like <code className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">/help</code> to see what
-                Cowork can do.
+                Start by typing a message or try a command like{' '}
+                <code className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">/help</code> to see
+                what Cowork can do.
               </p>
               <button
                 onClick={handleNext}

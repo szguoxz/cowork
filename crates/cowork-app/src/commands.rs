@@ -434,6 +434,47 @@ pub async fn is_setup_complete(state: State<'_, AppState>) -> Result<bool, Strin
     Ok(cm.is_setup_complete())
 }
 
+/// Model info for the frontend
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelInfoResponse {
+    pub id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub recommended: bool,
+}
+
+/// Fetch available models for a provider
+#[tauri::command]
+pub async fn fetch_provider_models(
+    provider_type: String,
+    api_key: String,
+) -> Result<Vec<ModelInfoResponse>, String> {
+    use cowork_core::provider::{fetch_models, ProviderType};
+
+    // Parse provider type
+    let pt: ProviderType = provider_type
+        .parse()
+        .map_err(|e: String| e)?;
+
+    // Fetch models from provider API
+    let models = fetch_models(pt, &api_key)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Convert to response format
+    let response: Vec<ModelInfoResponse> = models
+        .into_iter()
+        .map(|m| ModelInfoResponse {
+            id: m.id,
+            name: m.name,
+            description: m.description,
+            recommended: m.recommended,
+        })
+        .collect();
+
+    Ok(response)
+}
+
 // ============================================================================
 // Chat Commands
 // ============================================================================
@@ -848,6 +889,26 @@ pub async fn reject_loop_tools(
             Some(ids) if !ids.is_empty() => handle.reject_selected(ids).await,
             _ => handle.reject_all().await,
         }
+    } else {
+        Err("No active loop for this session".to_string())
+    }
+}
+
+/// Answer a question from the AI during an agentic loop
+#[tauri::command]
+pub async fn answer_loop_question(
+    session_id: String,
+    request_id: String,
+    answers: std::collections::HashMap<String, String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let handles = state.loop_handles.read().await;
+    if let Some(handle) = handles.get(&session_id) {
+        let answer = crate::agentic_loop::QuestionAnswer {
+            request_id,
+            answers,
+        };
+        handle.answer_question(answer).await
     } else {
         Err("No active loop for this session".to_string())
     }

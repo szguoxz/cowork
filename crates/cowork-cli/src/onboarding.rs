@@ -7,7 +7,7 @@ use console::style;
 use dialoguer::{theme::ColorfulTheme, Input, Password, Select};
 
 use cowork_core::config::{ConfigManager, ProviderConfig};
-use cowork_core::provider::{GenAIProvider, ProviderType};
+use cowork_core::provider::{fetch_models, GenAIProvider, ModelInfo, ProviderType};
 
 /// Provider information for display
 pub struct ProviderInfo {
@@ -16,6 +16,7 @@ pub struct ProviderInfo {
     pub description: &'static str,
     pub signup_url: &'static str,
     pub env_var: &'static str,
+    #[allow(dead_code)] // Kept for reference, models now fetched from API
     pub default_model: &'static str,
 }
 
@@ -196,8 +197,10 @@ impl OnboardingWizard {
             Some(self.input_api_key(&provider_info)?)
         };
 
-        // Step 3: Model selection
-        let model = self.select_model(&provider_info)?;
+        // Step 3: Model selection (fetches from API)
+        let model = self
+            .select_model(provider_type, api_key.as_deref())
+            .await?;
 
         // Step 4: Connection test (skip for Ollama)
         if let Some(ref key) = api_key {
@@ -319,7 +322,11 @@ impl OnboardingWizard {
         Ok(api_key)
     }
 
-    fn select_model(&self, provider_info: &ProviderInfo) -> anyhow::Result<String> {
+    async fn select_model(
+        &self,
+        provider_type: ProviderType,
+        api_key: Option<&str>,
+    ) -> anyhow::Result<String> {
         println!(
             "{} {}",
             style("Step 3 of 4:").bold().cyan(),
@@ -327,35 +334,99 @@ impl OnboardingWizard {
         );
         println!();
 
-        let default_model = provider_info.default_model;
-        println!(
-            "  Default model: {}",
-            style(default_model).green().bold()
-        );
-        println!();
+        // Fetch available models from the provider API
+        let models = self.fetch_model_list(provider_type, api_key).await;
 
-        let options = vec![
-            format!("Use default ({})", default_model),
-            "Enter custom model".to_string(),
-        ];
+        if models.is_empty() {
+            // Fallback to manual input if no models fetched
+            println!(
+                "  {}",
+                style("Could not fetch models. Please enter model name manually.").yellow()
+            );
+            println!();
+
+            let default_model = provider_type.default_model();
+            let model: String = Input::with_theme(&ColorfulTheme::default())
+                .with_prompt("Model name")
+                .default(default_model.to_string())
+                .interact_text()?;
+
+            println!();
+            return Ok(model);
+        }
+
+        // Build selection list
+        let items: Vec<String> = models
+            .iter()
+            .map(|m| {
+                let name = m.name.as_deref().unwrap_or(&m.id);
+                if m.recommended {
+                    format!("{} {}", name, style("(recommended)").green())
+                } else {
+                    name.to_string()
+                }
+            })
+            .collect();
 
         let selection = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt("Model selection")
-            .items(&options)
+            .with_prompt("Select a model")
+            .items(&items)
             .default(0)
             .interact()?;
 
-        let model = if selection == 0 {
-            default_model.to_string()
-        } else {
-            Input::with_theme(&ColorfulTheme::default())
-                .with_prompt("Model name")
-                .default(default_model.to_string())
-                .interact_text()?
-        };
-
+        let model = models[selection].id.clone();
         println!();
         Ok(model)
+    }
+
+    async fn fetch_model_list(
+        &self,
+        provider_type: ProviderType,
+        api_key: Option<&str>,
+    ) -> Vec<ModelInfo> {
+        let Some(key) = api_key else {
+            // For Ollama, try to fetch without key
+            if provider_type == ProviderType::Ollama {
+                match fetch_models(provider_type, "").await {
+                    Ok(models) => return models,
+                    Err(_) => return Vec::new(),
+                }
+            }
+            return Vec::new();
+        };
+
+        let spinner = indicatif::ProgressBar::new_spinner();
+        spinner.set_style(
+            indicatif::ProgressStyle::default_spinner()
+                .template("{spinner:.blue} {msg}")
+                .unwrap(),
+        );
+        spinner.set_message("Fetching available models...");
+        spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+
+        let result = fetch_models(provider_type, key).await;
+        spinner.finish_and_clear();
+
+        match result {
+            Ok(models) => {
+                println!(
+                    "  {} Found {} models",
+                    style("✓").green(),
+                    models.len()
+                );
+                println!();
+                models
+            }
+            Err(e) => {
+                println!(
+                    "  {} Could not fetch models: {}",
+                    style("⚠").yellow(),
+                    style(e.to_string()).dim()
+                );
+                println!();
+                Vec::new()
+            }
+        }
     }
 
     async fn test_connection(
