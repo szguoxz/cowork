@@ -52,7 +52,7 @@ export default function Help() {
           <h4 className="font-semibold mt-4 text-foreground">Quick Start</h4>
           <ol className="list-decimal list-inside space-y-2 ml-2">
             <li>Configure your API key in <strong className="text-foreground">Settings</strong></li>
-            <li>Start a conversation in <strong className="text-foreground">Chat</strong></li>
+            <li>Click <strong className="text-foreground">New Chat</strong> to start a conversation</li>
             <li>Ask Cowork to help with coding tasks, file operations, or questions</li>
           </ol>
 
@@ -142,22 +142,30 @@ export default function Help() {
     },
     {
       id: 'sessions',
-      title: 'Session History',
+      title: 'Sessions & History',
       icon: History,
       content: (
         <div className="space-y-4">
           <p>
-            Cowork automatically saves your chat sessions so you can resume them later.
+            Cowork supports multiple concurrent sessions and automatically saves them when closed.
           </p>
+
+          <h4 className="font-semibold mt-4 text-foreground">Multiple Sessions</h4>
+          <ul className="list-disc list-inside space-y-2 ml-2">
+            <li><strong className="text-foreground">Session tabs</strong> - Work with multiple conversations at once</li>
+            <li><strong className="text-foreground">New Chat</strong> - Click to create a new session</li>
+            <li><strong className="text-foreground">Close tab</strong> - Sessions are saved automatically when closed</li>
+          </ul>
 
           <h4 className="font-semibold mt-4 text-foreground">Auto-Save</h4>
           <p>
-            Sessions are automatically saved after each message exchange. No manual saving needed!
+            Sessions are automatically saved when you close them or exit the app.
+            Empty sessions (with no messages) are not saved.
           </p>
 
           <h4 className="font-semibold mt-4 text-foreground">Storage Location</h4>
           <p className="font-mono text-sm bg-secondary p-2 rounded-lg text-foreground">
-            ~/.config/cowork/sessions/
+            ~/.local/share/cowork/sessions/
           </p>
           <p className="text-sm text-muted-foreground">
             Sessions are stored as JSON files named: <code className="bg-secondary px-1 rounded">YYYY-MM-DD_sessionid.json</code>
@@ -168,13 +176,11 @@ export default function Help() {
             <li><strong className="text-foreground">History page</strong> - Browse, load, or delete saved sessions</li>
             <li><strong className="text-foreground">Open Folder</strong> - Access session files directly in your file manager</li>
             <li><strong className="text-foreground">Quick cleanup</strong> - Delete sessions older than 7 or 30 days</li>
-            <li><strong className="text-foreground">Ask the AI</strong> - "Delete all sessions older than 2 weeks"</li>
           </ul>
 
           <h4 className="font-semibold mt-4 text-foreground">What's Saved</h4>
           <ul className="list-disc list-inside space-y-2 ml-2">
             <li>All messages (user and assistant)</li>
-            <li>Thinking/reasoning content</li>
             <li>Tool calls and results</li>
             <li>Session metadata (provider, timestamps)</li>
           </ul>
