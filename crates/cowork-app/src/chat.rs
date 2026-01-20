@@ -1,4 +1,7 @@
 //! Chat service for handling conversations with the LLM
+//!
+//! This module re-exports shared types from cowork-core and provides
+//! UI-specific chat session management.
 
 use std::sync::Arc;
 
@@ -9,10 +12,12 @@ use cowork_core::provider::{
     create_provider, LlmMessage, LlmProvider, LlmRequest, ProviderType,
 };
 use cowork_core::tools::ToolDefinition;
+// Use shared types from cowork-core
+use cowork_core::orchestration::{format_tool_result_for_llm, SystemPrompt};
 
 use crate::state::ProviderSettings;
 
-/// A message in the conversation
+/// A message in the conversation (UI-specific with serialization)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChatMessage {
     pub id: String,
@@ -23,7 +28,7 @@ pub struct ChatMessage {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-/// Tool call information for display
+/// Tool call information for display (UI-specific with serialization)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ToolCallInfo {
     pub id: String,
@@ -200,13 +205,13 @@ impl ChatSession {
             }
         }
 
-        // Add tool result as a message
+        // Add tool result as a message using the shared format from cowork-core
         // Note: Ideally this should be role "tool" but LlmMessage only supports user/assistant/system
         // We use a special format so the LLM knows this is a tool result, not a new user request
         let tool_result_msg = ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             role: "user".to_string(),
-            content: format!("[Tool result for {}]\n{}\n[End of tool result. Please summarize the above result for the user.]", tool_call_id, result),
+            content: format_tool_result_for_llm(tool_call_id, &result),
             tool_calls: Vec::new(),
             timestamp: chrono::Utc::now(),
         };
@@ -309,28 +314,8 @@ pub fn create_provider_from_settings(settings: &ProviderSettings) -> Result<Arc<
 }
 
 fn default_system_prompt() -> String {
-    r#"You are Cowork, an AI assistant that helps users with software development tasks.
-
-You have access to various tools:
-- read_file: Read contents of a file
-- write_file: Write content to a file
-- list_directory: List files in a directory
-- execute_command: Run shell commands
-- search_files: Search for files by pattern
-
-When the user asks you to perform a task:
-1. Analyze what needs to be done
-2. Use the appropriate tools to complete the task
-3. Present the results to the user
-
-IMPORTANT: After receiving tool results (messages starting with "Tool result for"), you should:
-- Summarize the results in a helpful response to the user
-- Do NOT call the same tool again unless the user explicitly asks for more
-- A single tool call is usually sufficient for simple queries like listing files
-
-Always ask for clarification if the request is ambiguous.
-Be careful with destructive operations - explain what will happen before executing."#
-        .to_string()
+    // Use the shared system prompt from cowork-core
+    SystemPrompt::new().build()
 }
 
 fn default_tools() -> Vec<ToolDefinition> {

@@ -7,7 +7,6 @@
 //! - Emits events to the frontend for real-time updates
 //! - Monitors context usage and triggers auto-compact when needed
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -19,6 +18,8 @@ use cowork_core::context::{
     Message, MessageRole, MonitorConfig, SummarizerConfig,
 };
 use cowork_core::provider::{LlmMessage, LlmRequest, ProviderType};
+// Use shared approval config from cowork-core
+use cowork_core::ToolApprovalConfig;
 
 use crate::chat::{ChatMessage, ChatSession, ToolCallInfo, ToolCallStatus};
 
@@ -169,83 +170,20 @@ pub enum LoopCommand {
     Resume,
 }
 
-/// Configuration for auto-approval of tools
-#[derive(Debug, Clone)]
-pub struct ApprovalConfig {
-    /// Tools that are automatically approved (read-only, safe)
-    pub auto_approve: HashSet<String>,
-    /// Tools that always require approval (destructive)
-    pub always_require_approval: HashSet<String>,
-    /// Auto-approve level: none, low, medium, high
-    pub level: ApprovalLevel,
-}
+/// Re-export ApprovalLevel for use by other modules
+pub use cowork_core::ApprovalLevel;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ApprovalLevel {
-    /// No auto-approval - all tools require approval
-    None,
-    /// Low - only read operations auto-approved
-    Low,
-    /// Medium - read and list operations auto-approved
-    Medium,
-    /// High - most operations auto-approved except destructive
-    High,
-}
+/// Type alias for backward compatibility with existing UI code
+pub type ApprovalConfig = ToolApprovalConfig;
 
-impl Default for ApprovalConfig {
-    fn default() -> Self {
-        // Default: auto-approve read-only tools
-        let mut auto_approve = HashSet::new();
-        // File system read operations
-        auto_approve.insert("read_file".to_string());
-        auto_approve.insert("list_directory".to_string());
-        auto_approve.insert("search_files".to_string());
-        auto_approve.insert("glob".to_string());
-        auto_approve.insert("grep".to_string());
-        // Document parsing (read-only)
-        auto_approve.insert("read_pdf".to_string());
-        auto_approve.insert("read_office_doc".to_string());
-        // Web operations (read-only)
-        auto_approve.insert("web_fetch".to_string());
-        auto_approve.insert("web_search".to_string());
-        // Task/planning tools
-        auto_approve.insert("todo_write".to_string());
-        auto_approve.insert("task_output".to_string());
-        // LSP operations (read-only)
-        auto_approve.insert("lsp".to_string());
-        // User interaction tools - handled specially but don't need approval
-        auto_approve.insert("ask_user_question".to_string());
-
-        let mut always_require = HashSet::new();
-        always_require.insert("write_file".to_string());
-        always_require.insert("execute_command".to_string());
-        always_require.insert("edit".to_string());
-        always_require.insert("delete_file".to_string());
-
-        Self {
-            auto_approve,
-            always_require_approval: always_require,
-            level: ApprovalLevel::Low,
-        }
-    }
-}
-
-impl ApprovalConfig {
-    /// Check if a tool should be auto-approved
-    pub fn should_auto_approve(&self, tool_name: &str) -> bool {
-        match self.level {
-            ApprovalLevel::None => false,
-            ApprovalLevel::Low => self.auto_approve.contains(tool_name),
-            ApprovalLevel::Medium => {
-                self.auto_approve.contains(tool_name)
-                    && !self.always_require_approval.contains(tool_name)
-            }
-            ApprovalLevel::High => !self.always_require_approval.contains(tool_name),
-        }
-    }
-
+/// Extension trait to add UI-specific categorize_tools method
+pub trait ApprovalConfigExt {
     /// Categorize tool calls into auto-approve and need-approval
-    pub fn categorize_tools(&self, tool_calls: &[ToolCallInfo]) -> (Vec<String>, Vec<String>) {
+    fn categorize_tools(&self, tool_calls: &[ToolCallInfo]) -> (Vec<String>, Vec<String>);
+}
+
+impl ApprovalConfigExt for ToolApprovalConfig {
+    fn categorize_tools(&self, tool_calls: &[ToolCallInfo]) -> (Vec<String>, Vec<String>) {
         let mut auto_approved = Vec::new();
         let mut needs_approval = Vec::new();
 

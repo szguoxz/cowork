@@ -138,3 +138,174 @@ impl ApprovalHandler {
         self.session_approvals.clear();
     }
 }
+
+// ============================================================================
+// Tool Approval Configuration
+// ============================================================================
+
+/// Configuration for auto-approval of tools
+///
+/// This is the canonical source for determining which tools need user approval.
+/// Both CLI and UI should use this configuration.
+#[derive(Debug, Clone)]
+pub struct ToolApprovalConfig {
+    /// Tools that are automatically approved (read-only, safe)
+    auto_approve: std::collections::HashSet<String>,
+    /// Tools that always require approval (destructive)
+    always_require_approval: std::collections::HashSet<String>,
+    /// Current approval level threshold
+    level: ApprovalLevel,
+    /// Session-approved tools (approved for the current session)
+    session_approved: std::collections::HashSet<String>,
+    /// If true, auto-approve everything for the session
+    session_approve_all: bool,
+}
+
+impl Default for ToolApprovalConfig {
+    fn default() -> Self {
+        Self::new(ApprovalLevel::Low)
+    }
+}
+
+impl ToolApprovalConfig {
+    /// Create a new tool approval config with the given threshold level
+    pub fn new(level: ApprovalLevel) -> Self {
+        let mut auto_approve = std::collections::HashSet::new();
+
+        // Read-only file operations
+        auto_approve.insert("read_file".to_string());
+        auto_approve.insert("list_directory".to_string());
+        auto_approve.insert("search_files".to_string());
+        auto_approve.insert("glob".to_string());
+        auto_approve.insert("grep".to_string());
+
+        // Document parsing (read-only)
+        auto_approve.insert("read_pdf".to_string());
+        auto_approve.insert("read_office_doc".to_string());
+
+        // Web operations (read-only)
+        auto_approve.insert("web_fetch".to_string());
+        auto_approve.insert("web_search".to_string());
+
+        // Task/planning tools
+        auto_approve.insert("todo_write".to_string());
+        auto_approve.insert("task_output".to_string());
+
+        // LSP operations (read-only)
+        auto_approve.insert("lsp".to_string());
+
+        // User interaction tools
+        auto_approve.insert("ask_user_question".to_string());
+
+        // Browser read-only operations
+        auto_approve.insert("browser_get_page_content".to_string());
+        auto_approve.insert("browser_screenshot".to_string());
+
+        // Destructive tools that always require approval
+        let mut always_require = std::collections::HashSet::new();
+        always_require.insert("write_file".to_string());
+        always_require.insert("edit".to_string());
+        always_require.insert("edit_file".to_string());
+        always_require.insert("delete_file".to_string());
+        always_require.insert("execute_command".to_string());
+
+        Self {
+            auto_approve,
+            always_require_approval: always_require,
+            level,
+            session_approved: std::collections::HashSet::new(),
+            session_approve_all: false,
+        }
+    }
+
+    /// Create with no auto-approval (require approval for everything)
+    pub fn strict() -> Self {
+        Self {
+            auto_approve: std::collections::HashSet::new(),
+            always_require_approval: std::collections::HashSet::new(),
+            level: ApprovalLevel::None,
+            session_approved: std::collections::HashSet::new(),
+            session_approve_all: false,
+        }
+    }
+
+    /// Create with auto-approval for everything (dangerous - for testing)
+    pub fn trust_all() -> Self {
+        let mut config = Self::new(ApprovalLevel::Critical);
+        config.session_approve_all = true;
+        config
+    }
+
+    /// Check if a tool should be auto-approved
+    pub fn should_auto_approve(&self, tool_name: &str) -> bool {
+        // Session-wide approval overrides everything
+        if self.session_approve_all {
+            return true;
+        }
+
+        // Check session-approved tools
+        if self.session_approved.contains(tool_name) {
+            return true;
+        }
+
+        // Check based on approval level
+        match self.level {
+            ApprovalLevel::None => false,
+            ApprovalLevel::Low => self.auto_approve.contains(tool_name),
+            ApprovalLevel::Medium => {
+                self.auto_approve.contains(tool_name)
+                    && !self.always_require_approval.contains(tool_name)
+            }
+            ApprovalLevel::High | ApprovalLevel::Critical => {
+                !self.always_require_approval.contains(tool_name)
+            }
+        }
+    }
+
+    /// Check if a tool needs user approval
+    pub fn needs_approval(&self, tool_name: &str) -> bool {
+        !self.should_auto_approve(tool_name)
+    }
+
+    /// Approve a tool for the current session
+    pub fn approve_for_session(&mut self, tool_name: impl Into<String>) {
+        self.session_approved.insert(tool_name.into());
+    }
+
+    /// Approve all tools for the current session
+    pub fn approve_all_for_session(&mut self) {
+        self.session_approve_all = true;
+    }
+
+    /// Clear session approvals
+    pub fn clear_session(&mut self) {
+        self.session_approved.clear();
+        self.session_approve_all = false;
+    }
+
+    /// Categorize tool calls into auto-approve and needs-approval lists
+    pub fn categorize<'a>(&self, tool_names: impl Iterator<Item = &'a str>) -> (Vec<&'a str>, Vec<&'a str>) {
+        let mut auto_approved = Vec::new();
+        let mut needs_approval = Vec::new();
+
+        for name in tool_names {
+            if self.should_auto_approve(name) {
+                auto_approved.push(name);
+            } else {
+                needs_approval.push(name);
+            }
+        }
+
+        (auto_approved, needs_approval)
+    }
+
+    /// Get the current approval level
+    pub fn level(&self) -> ApprovalLevel {
+        self.level
+    }
+
+    /// Set the approval level
+    pub fn set_level(&mut self, level: ApprovalLevel) {
+        self.level = level;
+    }
+}

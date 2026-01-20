@@ -3,7 +3,6 @@
 mod onboarding;
 
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
@@ -22,6 +21,8 @@ use onboarding::OnboardingWizard;
 use cowork_core::config::ConfigManager;
 use cowork_core::mcp_manager::McpServerManager;
 use cowork_core::provider::{CompletionResult, GenAIProvider, LlmMessage, ProviderType};
+use cowork_core::orchestration::SystemPrompt;
+use cowork_core::ToolApprovalConfig;
 use cowork_core::skills::SkillRegistry;
 use cowork_core::tools::filesystem::{
     DeleteFile, EditFile, GlobFiles, GrepFiles, ListDirectory, MoveFile, ReadFile, SearchFiles,
@@ -292,9 +293,14 @@ async fn run_one_shot(
     // Load config
     let config_manager = ConfigManager::new()?;
 
+    // Create system prompt
+    let system_prompt = SystemPrompt::new()
+        .with_workspace_context(workspace)
+        .build();
+
     // Create provider from config or environment
     let provider = create_provider_from_config(&config_manager, provider_type, model)?
-        .with_system_prompt(SYSTEM_PROMPT);
+        .with_system_prompt(&system_prompt);
 
     // Get API key and model tiers for subagents
     let api_key = get_api_key(&config_manager, provider_type);
@@ -307,9 +313,12 @@ async fn run_one_shot(
     // Chat history
     let mut messages: Vec<LlmMessage> = Vec::new();
 
-    // Session state (for one-shot, just use auto_approve setting)
-    let mut session_approved_tools: HashSet<String> = HashSet::new();
-    let mut session_approve_all = auto_approve;
+    // Tool approval configuration
+    let mut approval_config = if auto_approve {
+        ToolApprovalConfig::trust_all()
+    } else {
+        ToolApprovalConfig::default()
+    };
 
     // Process the single message
     process_ai_message(
@@ -318,8 +327,7 @@ async fn run_one_shot(
         &tool_registry,
         &tool_definitions,
         &mut messages,
-        &mut session_approved_tools,
-        &mut session_approve_all,
+        &mut approval_config,
     )
     .await?;
 
@@ -382,16 +390,21 @@ async fn run_chat(
         McpServerManager::with_configs(config_manager.config().mcp_servers.clone())
     );
 
+    // Create system prompt with workspace context
+    let system_prompt = SystemPrompt::new()
+        .with_workspace_context(workspace)
+        .build();
+
     // Create provider from config or environment
     let provider = match create_provider_from_config(&config_manager, provider_type, model) {
-        Ok(p) => p.with_system_prompt(SYSTEM_PROMPT),
+        Ok(p) => p.with_system_prompt(&system_prompt),
         Err(e) => {
             println!(
                 "{}",
                 style(format!("Warning: {}. The AI may not work.", e)).yellow()
             );
             println!();
-            GenAIProvider::new(provider_type, model).with_system_prompt(SYSTEM_PROMPT)
+            GenAIProvider::new(provider_type, model).with_system_prompt(&system_prompt)
         }
     };
 
@@ -409,10 +422,12 @@ async fn run_chat(
     // Chat history
     let mut messages: Vec<LlmMessage> = Vec::new();
 
-    // Session-approved tools (auto-approve these for the rest of the session)
-    let mut session_approved_tools: HashSet<String> = HashSet::new();
-    // If true, auto-approve all tools for the session
-    let mut session_approve_all = auto_approve;
+    // Tool approval configuration (shared with UI)
+    let mut approval_config = if auto_approve {
+        ToolApprovalConfig::trust_all()
+    } else {
+        ToolApprovalConfig::default()
+    };
 
     // Set up readline with history and slash command completion
     let config = Config::builder()
@@ -510,8 +525,7 @@ async fn run_chat(
                     &tool_registry,
                     &tool_definitions,
                     &mut messages,
-                    &mut session_approved_tools,
-                    &mut session_approve_all,
+                    &mut approval_config,
                 )
                 .await?;
             }
@@ -536,8 +550,7 @@ async fn process_ai_message(
     tool_registry: &ToolRegistry,
     tool_definitions: &[ToolDefinition],
     messages: &mut Vec<LlmMessage>,
-    session_approved_tools: &mut HashSet<String>,
-    session_approve_all: &mut bool,
+    approval_config: &mut ToolApprovalConfig,
 ) -> anyhow::Result<()> {
     // Add user message
     messages.push(LlmMessage {
@@ -601,21 +614,14 @@ async fn process_ai_message(
                     }
                     println!("{}", style("└─────────────────────────────────────────────────").dim());
 
-                    // Check if tool needs approval
-                    let needs_approval = tool_needs_approval(&call.name);
-
-                    // Determine approval status
-                    let approved = if *session_approve_all {
-                        // Session auto-approve all
-                        println!("  {} {}", style("✓").green(), style("Auto-approved (session)").dim());
+                    // Determine approval status using shared approval config
+                    let approved = if approval_config.should_auto_approve(&call.name) {
+                        // Auto-approved (read-only or session approved)
+                        println!("  {} {}", style("✓").green(), style("Auto-approved").dim());
                         true
-                    } else if session_approved_tools.contains(&call.name) {
-                        // This tool type is session-approved
-                        println!("  {} {}", style("✓").green(), style(format!("Auto-approved ({} for session)", call.name)).dim());
-                        true
-                    } else if !needs_approval {
-                        // Read-only tools auto-approved
-                        println!("  {} {}", style("✓").green(), style("Auto-approved (read-only)").dim());
+                    } else if !approval_config.needs_approval(&call.name) {
+                        // Configured as auto-approve
+                        println!("  {} {}", style("✓").green(), style("Auto-approved (configured)").dim());
                         true
                     } else {
                         // Need user approval - show options
@@ -637,14 +643,14 @@ async fn process_ai_message(
                             1 => false, // No
                             2 => {
                                 // Always - add to session approved
-                                session_approved_tools.insert(call.name.clone());
+                                approval_config.approve_for_session(call.name.clone());
                                 println!("  {} '{}' will be auto-approved for this session",
                                     style("✓").green(), call.name);
                                 true
                             }
                             3 => {
                                 // Approve all
-                                *session_approve_all = true;
+                                approval_config.approve_all_for_session();
                                 println!("  {} All tools will be auto-approved for this session",
                                     style("✓").green());
                                 true
@@ -752,22 +758,6 @@ async fn process_ai_message(
     Ok(())
 }
 
-/// Check if a tool needs user approval
-fn tool_needs_approval(tool_name: &str) -> bool {
-    match tool_name {
-        // Read-only tools - auto-approve
-        "read_file" | "glob" | "grep" | "list_directory" | "search_files" | "web_fetch"
-        | "web_search" | "todo_write" | "lsp" | "task_output"
-        // Browser read-only
-        | "browser_get_page_content" | "browser_screenshot"
-        // Document read-only
-        | "read_pdf" | "read_office_doc"
-        // User interaction - handled specially but doesn't need approval
-        | "ask_user_question" => false,
-        // Write/execute tools - need approval
-        _ => true,
-    }
-}
 
 /// Handle ask_user_question tool call interactively in CLI
 fn handle_ask_user_question(args: &serde_json::Value) -> Result<String, String> {
@@ -1612,74 +1602,3 @@ fn show_setup_instructions(provider_type: ProviderType) {
     println!("For more help: {}", style("cowork --help").cyan());
 }
 
-const SYSTEM_PROMPT: &str = r#"You are Cowork, an AI coding assistant. You help developers with software engineering tasks.
-
-## Available Tools
-
-### File Operations
-- read_file: Read file contents (supports offset/limit for large files)
-- write_file: Create or completely overwrite a file
-- edit: Surgical string replacement in files. PREFER THIS over write_file for modifications - requires unique old_string or use replace_all for renaming
-- glob: Find files by pattern (e.g., "**/*.rs", "src/**/*.ts")
-- grep: Search file contents with regex patterns
-- list_directory: List directory contents
-- search_files: Search for files by name or content
-- delete_file: Delete a file
-- move_file: Move or rename a file
-
-### Shell Execution
-- execute_command: Run shell commands (build, test, git, etc.)
-
-### Web Access
-- web_fetch: Fetch URL content and extract text
-- web_search: Search the web (requires API key configuration)
-
-### Jupyter Notebooks
-- notebook_edit: Edit, insert, or delete cells in .ipynb files
-
-### Task Management
-- todo_write: Track progress with a structured todo list
-
-### Code Intelligence (LSP)
-- lsp: Language Server Protocol operations
-  - goToDefinition: Find where a symbol is defined
-  - findReferences: Find all usages of a symbol
-  - hover: Get type info and documentation
-  - documentSymbol: List all symbols in a file
-  - workspaceSymbol: Search symbols across workspace
-
-### Sub-Agents
-- task: Launch specialized subagents for complex tasks
-  - Bash: Command execution specialist
-  - general-purpose: Research and multi-step tasks
-  - Explore: Fast codebase exploration
-  - Plan: Software architecture and planning
-- task_output: Get output from running/completed agents
-
-### Browser Automation
-- browser_navigate: Navigate to a URL
-- browser_screenshot: Take a screenshot of the page
-- browser_click: Click an element on the page (use CSS selector)
-- browser_type: Type text into an input element
-- browser_get_page_content: Get the HTML content of the current page
-
-### Document Parsing
-- read_pdf: Extract text from PDF files (with optional page range)
-- read_office_doc: Extract text from Office documents (.docx, .xlsx, .pptx)
-
-### Planning Tools
-- enter_plan_mode: Enter planning mode for complex implementation tasks
-- exit_plan_mode: Exit planning mode and request user approval with permission requests
-
-## Workflow Guidelines
-
-1. **Understand first**: Use read-only tools (read_file, glob, grep) to understand the codebase before making changes
-2. **Use edit for modifications**: When changing existing files, use the `edit` tool with old_string/new_string for surgical precision. Only use write_file for creating new files.
-3. **Be precise with edit**: The old_string must be unique in the file, or use replace_all=true. Include enough context (surrounding lines) to make it unique.
-4. **Verify changes**: After modifications, verify your changes worked (read the file, run tests, etc.)
-5. **Explain your reasoning**: Tell the user what you're doing and why
-
-## Slash Commands
-Users can use slash commands like /commit, /pr, /review, /help for common workflows.
-
-Be concise and helpful. Follow existing code style. Ask for clarification if needed."#;

@@ -13,13 +13,14 @@ pub mod config;
 pub mod context;
 pub mod error;
 pub mod mcp_manager;
+pub mod orchestration;
 pub mod provider;
 pub mod skills;
 pub mod task;
 pub mod tools;
 
 pub use agent::{Agent, AgentRegistry};
-pub use approval::{ApprovalLevel, ApprovalPolicy, ApprovalRequest};
+pub use approval::{ApprovalLevel, ApprovalPolicy, ApprovalRequest, ToolApprovalConfig};
 pub use config::{Config, ConfigManager, McpServerConfig, ProviderConfig};
 pub use context::{Context, Workspace};
 pub use mcp_manager::{McpServerInfo, McpServerManager, McpServerStatus, McpToolInfo};
@@ -27,3 +28,9 @@ pub use error::{Error, Result};
 pub use skills::{Skill, SkillContext, SkillRegistry, SkillResult};
 pub use task::{Task, TaskExecutor, TaskPlanner, TaskStatus, TaskStep};
 pub use tools::{Tool, ToolOutput, ToolRegistry};
+
+// Orchestration exports
+pub use orchestration::{
+    ChatSession, ChatMessage, ToolCallInfo, ToolCallStatus,
+    SystemPrompt, format_tool_result_for_llm,
+};

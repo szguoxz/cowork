@@ -804,7 +804,7 @@ pub async fn start_loop(
             _ => ApprovalLevel::Low,
         };
         let mut ac = ApprovalConfig::default();
-        ac.level = level;
+        ac.set_level(level);
         ac
     };
 
