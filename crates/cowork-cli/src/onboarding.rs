@@ -190,31 +190,38 @@ impl OnboardingWizard {
         let provider_type = self.select_provider()?;
         let provider_info = get_provider_info(provider_type);
 
-        // Step 2: API key input (skip for Ollama)
-        let api_key = if provider_type == ProviderType::Ollama {
-            None
-        } else {
-            Some(self.input_api_key(&provider_info)?)
-        };
+        // Loop for API key retry
+        loop {
+            // Step 2: API key input (skip for Ollama)
+            let api_key = if provider_type == ProviderType::Ollama {
+                None
+            } else {
+                Some(self.input_api_key(&provider_info)?)
+            };
 
-        // Step 3: Model selection (fetches from API)
-        let model = self
-            .select_model(provider_type, api_key.as_deref())
-            .await?;
+            // Step 3: Model selection (fetches from API)
+            let model = self
+                .select_model(provider_type, api_key.as_deref())
+                .await?;
 
-        // Step 4: Connection test (skip for Ollama)
-        if let Some(ref key) = api_key {
-            if !self.test_connection(provider_type, key, &model).await? {
-                // User chose to go back or skip
-                return Ok(());
+            // Step 4: Connection test (skip for Ollama)
+            if let Some(ref key) = api_key {
+                if !self.test_connection(provider_type, key, &model).await? {
+                    // User chose to try again - loop back to step 2
+                    println!("{}", style("Let's try again...").dim());
+                    println!();
+                    continue;
+                }
             }
+
+            // Step 5: Save configuration
+            self.save_config(provider_type, &provider_info, api_key.as_deref(), &model)?;
+
+            // Step 6: Show completion
+            self.show_completion(&provider_info);
+
+            break;
         }
-
-        // Step 5: Save configuration
-        self.save_config(provider_type, &provider_info, api_key.as_deref(), &model)?;
-
-        // Step 6: Show completion
-        self.show_completion(&provider_info);
 
         Ok(())
     }
