@@ -266,6 +266,8 @@ impl SimpleLoop {
                     .map_err(|e| format!("{} (tried: {:?})", e, full_path))?;
                 if content.is_empty() {
                     Ok(format!("(File is empty: {:?})", full_path))
+                } else if content.trim().is_empty() {
+                    Ok(format!("(File contains only whitespace, {} bytes: {:?})", content.len(), full_path))
                 } else {
                     Ok(content)
                 }
