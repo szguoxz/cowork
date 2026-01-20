@@ -459,7 +459,7 @@ export default function Chat() {
 
         {messages
           // Filter out tool result messages (they're shown in the tool call cards)
-          .filter((m) => !(m.role === 'user' && m.content.startsWith('Tool result for ')))
+          .filter((m) => !(m.role === 'user' && m.content.startsWith('[Tool result for ')))
           .map((message) => {
           const { thinking, text } = message.role === 'assistant'
             ? parseThinking(message.content)

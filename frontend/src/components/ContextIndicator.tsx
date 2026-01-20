@@ -1,20 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
+import { invoke } from '@tauri-apps/api/core'
+import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { Database, AlertTriangle, Trash2, Minimize2 } from 'lucide-react'
 
 // Check if we're running in Tauri
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-
-// Dynamic imports for Tauri APIs
-const getTauriApi = async () => {
-  if (!isTauri) return null
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    const { listen } = await import('@tauri-apps/api/event')
-    return { invoke, listen }
-  } catch {
-    return null
-  }
-}
 
 interface ContextBreakdown {
   system_tokens: number
@@ -69,10 +59,7 @@ export default function ContextIndicator({ sessionId, onCompact, onClear }: Cont
     if (!sessionId) return
 
     try {
-      const api = await getTauriApi()
-      if (!api) return
-
-      const contextUsage = await api.invoke<ContextUsage>('get_context_usage', { sessionId })
+      const contextUsage = await invoke<ContextUsage>('get_context_usage', { sessionId })
       setUsage(contextUsage)
       setError(null)
     } catch (err) {
@@ -90,14 +77,11 @@ export default function ContextIndicator({ sessionId, onCompact, onClear }: Cont
   useEffect(() => {
     if (!isTauri || !sessionId) return
 
-    let unlistenContext: Promise<() => void> | null = null
-    let unlistenLoop: Promise<() => void> | null = null
+    let unlistenContext: UnlistenFn | null = null
+    let unlistenLoop: UnlistenFn | null = null
 
     const setupListeners = async () => {
-      const api = await getTauriApi()
-      if (!api) return
-
-      unlistenContext = api.listen<{ type: string; usage?: ContextUsage }>(
+      unlistenContext = await listen<{ type: string; usage?: ContextUsage }>(
         `context:${sessionId}`,
         (event) => {
           if (event.payload.type === 'usage_updated' && event.payload.usage) {
@@ -110,7 +94,7 @@ export default function ContextIndicator({ sessionId, onCompact, onClear }: Cont
       )
 
       // Also refresh on loop events
-      unlistenLoop = api.listen<{ type: string }>(
+      unlistenLoop = await listen<{ type: string }>(
         `loop:${sessionId}`,
         (event) => {
           if (event.payload.type === 'loop_completed' || event.payload.type === 'iteration_complete') {
@@ -123,8 +107,8 @@ export default function ContextIndicator({ sessionId, onCompact, onClear }: Cont
     setupListeners()
 
     return () => {
-      unlistenContext?.then((fn) => fn())
-      unlistenLoop?.then((fn) => fn())
+      unlistenContext?.()
+      unlistenLoop?.()
     }
   }, [sessionId, fetchUsage])
 
@@ -152,10 +136,7 @@ export default function ContextIndicator({ sessionId, onCompact, onClear }: Cont
 
     setIsCompacting(true)
     try {
-      const api = await getTauriApi()
-      if (!api) return
-
-      await api.invoke('compact_session', { sessionId })
+      await invoke('compact_session', { sessionId })
       await fetchUsage()
       onCompact?.()
     } catch (err) {
@@ -183,10 +164,7 @@ export default function ContextIndicator({ sessionId, onCompact, onClear }: Cont
     if (!sessionId) return
 
     try {
-      const api = await getTauriApi()
-      if (!api) return
-
-      await api.invoke('clear_session', { sessionId })
+      await invoke('clear_session', { sessionId })
       await fetchUsage()
       onClear?.()
     } catch (err) {
