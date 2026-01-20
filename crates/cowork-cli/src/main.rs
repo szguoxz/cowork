@@ -345,29 +345,32 @@ async fn run_chat(
                 messages.clear();
                 println!("{}", style("Conversation cleared.").green());
             }
-            cmd if cmd.starts_with('/') => {
-                // Handle slash commands via skill registry
-                handle_slash_command(cmd, workspace, &skill_registry).await;
-            }
-            cmd if cmd.starts_with("run ") => {
-                let command = &cmd[4..];
+            cmd if cmd.starts_with("/run ") => {
+                let command = &cmd[5..];
                 run_command(workspace, command).await?;
             }
-            cmd if cmd.starts_with("ls ") || cmd.starts_with("list ") => {
+            cmd if cmd.starts_with("/ls ") || cmd.starts_with("/list ") => {
                 let path = cmd.split_whitespace().nth(1).unwrap_or(".");
                 list_files(workspace, path).await?;
             }
-            cmd if cmd.starts_with("cat ") || cmd.starts_with("read ") => {
+            "/ls" | "/list" => {
+                list_files(workspace, ".").await?;
+            }
+            cmd if cmd.starts_with("/cat ") || cmd.starts_with("/read ") => {
                 let path = cmd.split_whitespace().nth(1).unwrap_or("");
                 if path.is_empty() {
-                    println!("{}", style("Usage: read <file>").yellow());
+                    println!("{}", style("Usage: /read <file>").yellow());
                 } else {
                     read_file(workspace, path).await?;
                 }
             }
-            cmd if cmd.starts_with("search ") || cmd.starts_with("find ") => {
+            cmd if cmd.starts_with("/search ") || cmd.starts_with("/find ") => {
                 let pattern = &cmd[cmd.find(' ').unwrap_or(0) + 1..];
                 search_files(workspace, pattern, false).await?;
+            }
+            cmd if cmd.starts_with('/') => {
+                // Handle slash commands via skill registry
+                handle_slash_command(cmd, workspace, &skill_registry).await;
             }
             _ => {
                 // Process with AI
@@ -916,15 +919,15 @@ fn print_help() {
     println!("  {}      - Show available tools", style("/tools").green());
     println!();
     println!("{}", style("Quick Commands:").bold());
-    println!("  {}      - Run a shell command", style("run <cmd>").green());
+    println!("  {}     - Run a shell command", style("/run <cmd>").green());
     println!(
-        "  {}    - List directory contents",
-        style("ls <path>").green()
+        "  {}   - List directory contents",
+        style("/ls [path]").green()
     );
-    println!("  {}  - Read file contents", style("read <file>").green());
+    println!("  {} - Read file contents", style("/read <file>").green());
     println!(
         "  {} - Search for files",
-        style("search <pattern>").green()
+        style("/search <pattern>").green()
     );
     println!();
     println!("{}", style("Slash Commands (Skills):").bold());
