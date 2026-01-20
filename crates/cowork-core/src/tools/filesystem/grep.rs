@@ -68,15 +68,19 @@ struct GrepMatch {
 
 impl Tool for GrepFiles {
     fn name(&self) -> &str {
-        "grep"
+        "Grep"
     }
 
     fn description(&self) -> &str {
-        "A powerful search tool built on ripgrep. \
-         Supports full regex syntax (e.g., 'log.*Error', 'function\\s+\\w+'). \
-         Filter files with glob parameter or type parameter. \
-         Output modes: 'content' shows matching lines, 'files_with_matches' shows only file paths, \
-         'count' shows match counts."
+        "A powerful search tool built on ripgrep\n\n\
+         Usage:\n\
+         - ALWAYS use Grep for search tasks. NEVER invoke grep or rg as a Bash command.\n\
+         - Supports full regex syntax (e.g., \"log.*Error\", \"function\\\\s+\\\\w+\")\n\
+         - Filter files with glob parameter (e.g., \"*.js\", \"**/*.tsx\") or type parameter (e.g., \"js\", \"py\", \"rust\")\n\
+         - Output modes: \"content\" shows matching lines, \"files_with_matches\" shows only file paths (default), \"count\" shows match counts\n\
+         - Use Task tool for open-ended searches requiring multiple rounds\n\
+         - Pattern syntax: Uses ripgrep (not grep) - literal braces need escaping\n\
+         - Multiline matching: By default patterns match within single lines only. For cross-line patterns, use multiline: true"
     }
 
     fn parameters_schema(&self) -> Value {

@@ -101,13 +101,15 @@ impl KillShell {
 
 impl Tool for KillShell {
     fn name(&self) -> &str {
-        "kill_shell"
+        "KillShell"
     }
 
     fn description(&self) -> &str {
-        "Kills a running background bash shell by its ID. \
-         Use this tool when you need to terminate a long-running shell command. \
-         Shell IDs can be found using the /tasks command."
+        "Kills a running background bash shell by its ID.\n\n\
+         - Takes a shell_id parameter identifying the shell to kill\n\
+         - Returns a success or failure status\n\
+         - Use this tool when you need to terminate a long-running shell\n\
+         - Shell IDs can be found using the /tasks command"
     }
 
     fn parameters_schema(&self) -> Value {

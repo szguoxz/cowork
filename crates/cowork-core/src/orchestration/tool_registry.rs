@@ -18,7 +18,7 @@ use crate::tools::interaction::AskUserQuestion;
 use crate::tools::lsp::LspTool;
 use crate::tools::notebook::NotebookEdit;
 use crate::tools::planning::{EnterPlanMode, ExitPlanMode, PlanModeState};
-use crate::tools::shell::ExecuteCommand;
+use crate::tools::shell::{ExecuteCommand, KillShell, ShellProcessRegistry};
 use crate::tools::task::{AgentInstanceRegistry, TaskOutputTool, TaskTool, TodoWrite};
 use crate::tools::web::{WebFetch, WebSearch};
 use crate::tools::ToolRegistry;
@@ -157,9 +157,14 @@ impl ToolRegistryBuilder {
             registry.register(Arc::new(MoveFile::new(self.workspace.clone())));
         }
 
-        // Shell tools
+        // Shell tools with shared process registry
         if self.include_shell {
-            registry.register(Arc::new(ExecuteCommand::new(self.workspace.clone())));
+            let shell_registry = Arc::new(ShellProcessRegistry::new());
+            registry.register(Arc::new(
+                ExecuteCommand::new(self.workspace.clone())
+                    .with_registry(shell_registry.clone())
+            ));
+            registry.register(Arc::new(KillShell::new(shell_registry)));
         }
 
         // Web tools
@@ -271,23 +276,30 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let registry = ToolRegistryBuilder::new(temp_dir.path().to_path_buf()).build();
 
-        // Should have filesystem tools
-        assert!(registry.get("read_file").is_some());
-        assert!(registry.get("write_file").is_some());
-        assert!(registry.get("edit").is_some()); // EditFile has name "edit"
-        assert!(registry.get("glob").is_some());
-        assert!(registry.get("grep").is_some());
+        // Should have filesystem tools (PascalCase names)
+        assert!(registry.get("Read").is_some());
+        assert!(registry.get("Write").is_some());
+        assert!(registry.get("Edit").is_some());
+        assert!(registry.get("Glob").is_some());
+        assert!(registry.get("Grep").is_some());
 
         // Should have shell tools
-        assert!(registry.get("execute_command").is_some());
+        assert!(registry.get("Bash").is_some());
+        assert!(registry.get("KillShell").is_some());
 
         // Should have web tools
-        assert!(registry.get("web_fetch").is_some());
-        assert!(registry.get("web_search").is_some());
+        assert!(registry.get("WebFetch").is_some());
+        assert!(registry.get("WebSearch").is_some());
 
         // Should have planning tools
-        assert!(registry.get("enter_plan_mode").is_some());
-        assert!(registry.get("exit_plan_mode").is_some());
+        assert!(registry.get("EnterPlanMode").is_some());
+        assert!(registry.get("ExitPlanMode").is_some());
+
+        // Should have other tools
+        assert!(registry.get("TodoWrite").is_some());
+        assert!(registry.get("AskUserQuestion").is_some());
+        assert!(registry.get("NotebookEdit").is_some());
+        assert!(registry.get("LSP").is_some());
     }
 
     #[test]
@@ -299,14 +311,15 @@ mod tests {
             .build();
 
         // Filesystem tools should be missing
-        assert!(registry.get("read_file").is_none());
-        assert!(registry.get("write_file").is_none());
+        assert!(registry.get("Read").is_none());
+        assert!(registry.get("Write").is_none());
 
         // Shell tools should be missing
-        assert!(registry.get("execute_command").is_none());
+        assert!(registry.get("Bash").is_none());
+        assert!(registry.get("KillShell").is_none());
 
         // But web tools should still be there
-        assert!(registry.get("web_fetch").is_some());
+        assert!(registry.get("WebFetch").is_some());
     }
 
     #[test]
@@ -319,9 +332,9 @@ mod tests {
             Some(ModelTiers::anthropic()),
         );
 
-        // Should have task tools since provider was specified
-        assert!(registry.get("task").is_some());
-        assert!(registry.get("task_output").is_some());
+        // Should have task tools since provider was specified (PascalCase names)
+        assert!(registry.get("Task").is_some());
+        assert!(registry.get("TaskOutput").is_some());
     }
 
     #[test]
@@ -330,7 +343,7 @@ mod tests {
         let registry = ToolRegistryBuilder::new(temp_dir.path().to_path_buf()).build();
 
         // No task tools without provider
-        assert!(registry.get("task").is_none());
-        assert!(registry.get("task_output").is_none());
+        assert!(registry.get("Task").is_none());
+        assert!(registry.get("TaskOutput").is_none());
     }
 }

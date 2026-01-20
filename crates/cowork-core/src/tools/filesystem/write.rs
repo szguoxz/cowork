@@ -22,40 +22,41 @@ impl WriteFile {
 
 impl Tool for WriteFile {
     fn name(&self) -> &str {
-        "write_file"
+        "Write"
     }
 
     fn description(&self) -> &str {
-        "Write content to a file. Creates the file if it doesn't exist, overwrites if it does."
+        "Writes a file to the local filesystem.\n\n\
+         Usage:\n\
+         - This tool will overwrite the existing file if there is one at the provided path.\n\
+         - If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.\n\
+         - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n\
+         - NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.\n\
+         - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."
     }
 
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "path": {
+                "file_path": {
                     "type": "string",
-                    "description": "Path to the file to write (relative to workspace)"
+                    "description": "The absolute path to the file to write (must be absolute, not relative)"
                 },
                 "content": {
                     "type": "string",
-                    "description": "Content to write to the file"
-                },
-                "create_dirs": {
-                    "type": "boolean",
-                    "description": "Create parent directories if they don't exist",
-                    "default": true
+                    "description": "The content to write to the file"
                 }
             },
-            "required": ["path", "content"]
+            "required": ["file_path", "content"]
         })
     }
 
     fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
-            let path_str = params["path"]
+            let path_str = params["file_path"]
                 .as_str()
-                .ok_or_else(|| ToolError::InvalidParams("path is required".into()))?;
+                .ok_or_else(|| ToolError::InvalidParams("file_path is required".into()))?;
 
             let content = params["content"]
                 .as_str()

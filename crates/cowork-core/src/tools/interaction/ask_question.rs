@@ -126,13 +126,19 @@ impl Default for AskUserQuestion {
 
 impl Tool for AskUserQuestion {
     fn name(&self) -> &str {
-        "ask_user_question"
+        "AskUserQuestion"
     }
 
     fn description(&self) -> &str {
-        "Ask the user questions during execution to gather preferences, clarify requirements, \
-         or get decisions on implementation choices. Users can select from predefined options \
-         or provide custom text input."
+        "Use this tool when you need to ask the user questions during execution. This allows you to:\n\
+         1. Gather user preferences or requirements\n\
+         2. Clarify ambiguous instructions\n\
+         3. Get decisions on implementation choices as you work\n\
+         4. Offer choices to the user about what direction to take\n\n\
+         Usage notes:\n\
+         - Users will always be able to select \"Other\" to provide custom text input\n\
+         - Use multiSelect: true to allow multiple answers to be selected\n\
+         - If you recommend a specific option, make that the first option and add \"(Recommended)\" at the end"
     }
 
     fn parameters_schema(&self) -> Value {

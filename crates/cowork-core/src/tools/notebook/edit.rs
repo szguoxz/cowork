@@ -43,12 +43,15 @@ impl NotebookEdit {
 
 impl Tool for NotebookEdit {
     fn name(&self) -> &str {
-        "notebook_edit"
+        "NotebookEdit"
     }
 
     fn description(&self) -> &str {
-        "Edit Jupyter notebook (.ipynb) cells. Supports replacing, inserting, and deleting cells. \
-         Can edit both code and markdown cells."
+        "Completely replaces the contents of a specific cell in a Jupyter notebook (.ipynb file) with new source.\n\n\
+         Jupyter notebooks are interactive documents that combine code, text, and visualizations, commonly used for data analysis and scientific computing.\n\
+         - The notebook_path parameter must be an absolute path, not a relative path\n\
+         - Use edit_mode=insert to add a new cell at the specified position\n\
+         - Use edit_mode=delete to delete the cell at the specified position"
     }
 
     fn parameters_schema(&self) -> Value {

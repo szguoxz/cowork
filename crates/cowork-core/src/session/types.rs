@@ -325,10 +325,10 @@ mod tests {
 
     #[test]
     fn test_session_output_serialization() {
-        let output = SessionOutput::tool_done("t1", "read_file", true, "file contents");
+        let output = SessionOutput::tool_done("t1", "Read", true, "file contents");
         let json = serde_json::to_string(&output).unwrap();
         assert!(json.contains("tool_done"));
-        assert!(json.contains("read_file"));
+        assert!(json.contains("Read"));
 
         let deserialized: SessionOutput = serde_json::from_str(&json).unwrap();
         match deserialized {
@@ -339,7 +339,7 @@ mod tests {
                 output,
             } => {
                 assert_eq!(id, "t1");
-                assert_eq!(name, "read_file");
+                assert_eq!(name, "Read");
                 assert!(success);
                 assert_eq!(output, "file contents");
             }

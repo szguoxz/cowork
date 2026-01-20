@@ -14,11 +14,11 @@ pub fn format_tool_result(tool_name: &str, result: &str) -> String {
     if let Ok(json) = serde_json::from_str::<Value>(result) {
         match tool_name {
             "list_directory" => format_directory_result(&json),
-            "glob" | "find_files" => format_glob_result(&json),
-            "grep" | "search_code" | "ripgrep" => format_grep_result(&json),
-            "read_file" | "read_pdf" | "read_office_doc" => format_file_content(&json, result),
-            "execute_command" | "shell" | "bash" => format_command_result(&json),
-            "write_file" | "edit_file" | "delete_file" | "move_file" | "edit" => {
+            "Glob" | "glob" | "find_files" => format_glob_result(&json),
+            "Grep" | "grep" | "search_code" | "ripgrep" => format_grep_result(&json),
+            "Read" | "read_file" | "read_pdf" | "read_office_doc" => format_file_content(&json, result),
+            "Bash" | "execute_command" | "shell" | "bash" => format_command_result(&json),
+            "Write" | "write_file" | "Edit" | "edit_file" | "delete_file" | "move_file" | "edit" => {
                 format_status_result(&json)
             }
             _ => format_generic_json(&json, result),

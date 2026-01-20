@@ -34,13 +34,13 @@ impl TaskPlanner {
         match &task.task_type {
             TaskType::FileOperation => vec![TaskStep::new(
                 &task.description,
-                "read_file",
+                "Read",
                 task.context.clone(),
             )],
 
             TaskType::ShellCommand => vec![TaskStep::new(
                 &task.description,
-                "execute_command",
+                "Bash",
                 task.context.clone(),
             )],
 
@@ -67,13 +67,13 @@ impl TaskPlanner {
 
             TaskType::Build => vec![TaskStep::new(
                 "Run build command",
-                "execute_command",
+                "Bash",
                 serde_json::json!({ "command": "make" }),
             )],
 
             TaskType::Test => vec![TaskStep::new(
                 "Run tests",
-                "execute_command",
+                "Bash",
                 serde_json::json!({ "command": "make test" }),
             )],
 
@@ -85,7 +85,7 @@ impl TaskPlanner {
 
             TaskType::Custom(_) => vec![TaskStep::new(
                 &task.description,
-                "execute_command",
+                "Bash",
                 task.context.clone(),
             )],
         }

@@ -54,11 +54,11 @@ mod tool_registry_tests {
         let dir = setup_workspace();
         let registry = create_tool_registry(dir.path());
 
-        assert!(registry.get("read_file").is_some());
-        assert!(registry.get("write_file").is_some());
-        assert!(registry.get("glob").is_some());
-        assert!(registry.get("grep").is_some());
-        assert!(registry.get("execute_command").is_some());
+        assert!(registry.get("Read").is_some());
+        assert!(registry.get("Write").is_some());
+        assert!(registry.get("Glob").is_some());
+        assert!(registry.get("Grep").is_some());
+        assert!(registry.get("Bash").is_some());
     }
 
     #[test]
@@ -97,9 +97,9 @@ mod tool_registry_tests {
         let dir = setup_workspace();
         let registry = create_tool_registry(dir.path());
 
-        let tool = registry.get("read_file").unwrap();
+        let tool = registry.get("Read").unwrap();
         let result = tool.execute(json!({
-            "path": "README.md"
+            "file_path": "README.md"
         })).await;
 
         assert!(result.is_ok(), "Read failed: {:?}", result.err());
@@ -174,7 +174,7 @@ mod tool_execution_tests {
         let dir = setup_workspace();
         let registry = create_tool_registry(dir.path());
 
-        let tool = registry.get("glob").unwrap();
+        let tool = registry.get("Glob").unwrap();
         let result = tool.execute(json!({
             "pattern": "**/*.rs"
         })).await;
@@ -189,7 +189,7 @@ mod tool_execution_tests {
         let dir = setup_workspace();
         let registry = create_tool_registry(dir.path());
 
-        let tool = registry.get("grep").unwrap();
+        let tool = registry.get("Grep").unwrap();
         let result = tool.execute(json!({
             "pattern": "fn main"
         })).await;
@@ -204,7 +204,7 @@ mod tool_execution_tests {
         let dir = setup_workspace();
         let registry = create_tool_registry(dir.path());
 
-        let tool = registry.get("execute_command").unwrap();
+        let tool = registry.get("Bash").unwrap();
         let result = tool.execute(json!({
             "command": "echo 'test'"
         })).await;
@@ -219,9 +219,9 @@ mod tool_execution_tests {
         let dir = setup_workspace();
         let registry = create_tool_registry(dir.path());
 
-        let tool = registry.get("read_file").unwrap();
+        let tool = registry.get("Read").unwrap();
         let result = tool.execute(json!({
-            "path": "nonexistent_file.txt"
+            "file_path": "nonexistent_file.txt"
         })).await;
 
         // Should return an error

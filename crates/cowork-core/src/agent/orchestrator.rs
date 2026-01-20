@@ -38,13 +38,13 @@ impl Orchestrator {
     /// Select the appropriate tool for a task type
     fn select_tool_for_task(&self, task_type: &TaskType) -> Result<String> {
         match task_type {
-            TaskType::FileOperation => Ok("read_file".to_string()),
-            TaskType::ShellCommand => Ok("execute_command".to_string()),
+            TaskType::FileOperation => Ok("Read".to_string()),
+            TaskType::ShellCommand => Ok("Bash".to_string()),
             TaskType::WebAutomation => Ok("browser_navigate".to_string()),
             TaskType::DocumentProcessing => Ok("read_pdf".to_string()),
             TaskType::Search => Ok("search_files".to_string()),
-            TaskType::Build => Ok("execute_command".to_string()),
-            TaskType::Test => Ok("execute_command".to_string()),
+            TaskType::Build => Ok("Bash".to_string()),
+            TaskType::Test => Ok("Bash".to_string()),
             TaskType::Screenshot => Ok("browser_screenshot".to_string()),
             TaskType::Custom(name) => Ok(name.clone()),
         }
@@ -90,11 +90,11 @@ impl Orchestrator {
     /// Infer task type from step
     fn infer_task_type(&self, step: &TaskStep) -> TaskType {
         match step.tool_name.as_str() {
-            "read_file" | "write_file" | "list_directory" | "delete_file" | "move_file" => {
+            "Read" | "Write" | "list_directory" | "delete_file" | "move_file" => {
                 TaskType::FileOperation
             }
             "search_files" => TaskType::Search,
-            "execute_command" => TaskType::ShellCommand,
+            "Bash" => TaskType::ShellCommand,
             "browser_navigate" | "browser_click" => TaskType::WebAutomation,
             "browser_screenshot" => TaskType::Screenshot,
             "read_pdf" | "read_office_doc" => TaskType::DocumentProcessing,

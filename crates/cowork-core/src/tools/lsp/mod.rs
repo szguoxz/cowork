@@ -108,21 +108,22 @@ impl LspTool {
 
 impl Tool for LspTool {
     fn name(&self) -> &str {
-        "lsp"
+        "LSP"
     }
 
     fn description(&self) -> &str {
-        "Interact with Language Server Protocol (LSP) servers for code intelligence. \
-         Supported operations: goToDefinition (find where a symbol is defined), \
-         findReferences (find all references to a symbol), \
-         hover (get documentation and type info), \
-         documentSymbol (get all symbols in a file), \
-         workspaceSymbol (search for symbols across the workspace), \
-         goToImplementation (find implementations of an interface), \
-         prepareCallHierarchy (get call hierarchy item at position), \
-         incomingCalls (find all callers of a function), \
-         outgoingCalls (find all functions called by a function). \
-         Requires a language server to be installed (rust-analyzer, typescript-language-server, etc.)."
+        "Interact with Language Server Protocol (LSP) servers to get code intelligence features.\n\n\
+         Supported operations:\n\
+         - goToDefinition: Find where a symbol is defined\n\
+         - findReferences: Find all references to a symbol\n\
+         - hover: Get hover information (documentation, type info) for a symbol\n\
+         - documentSymbol: Get all symbols (functions, classes, variables) in a document\n\
+         - workspaceSymbol: Search for symbols across the entire workspace\n\
+         - goToImplementation: Find implementations of an interface or abstract method\n\
+         - prepareCallHierarchy: Get call hierarchy item at a position (functions/methods)\n\
+         - incomingCalls: Find all functions/methods that call the function at a position\n\
+         - outgoingCalls: Find all functions/methods called by the function at a position\n\n\
+         Note: LSP servers must be configured for the file type. If no server is available, an error will be returned."
     }
 
     fn parameters_schema(&self) -> Value {

@@ -47,13 +47,16 @@ impl ExitPlanMode {
 
 impl Tool for ExitPlanMode {
     fn name(&self) -> &str {
-        "exit_plan_mode"
+        "ExitPlanMode"
     }
 
     fn description(&self) -> &str {
-        "Use this tool when in plan mode and have finished writing your plan. \
-         This signals readiness for user approval. You can request prompt-based permissions \
-         for bash commands your plan will need."
+        "Use this tool when you are in plan mode and have finished writing your plan to the plan file and are ready for user approval.\n\n\
+         How This Tool Works:\n\
+         - You should have already written your plan to the plan file specified in the plan mode system message\n\
+         - This tool does NOT take the plan content as a parameter - it will read the plan from the file you wrote\n\
+         - This tool signals that you're done planning and ready for the user to review and approve\n\n\
+         IMPORTANT: Do NOT use AskUserQuestion to ask \"Is my plan okay?\" - that's exactly what THIS tool does."
     }
 
     fn parameters_schema(&self) -> Value {

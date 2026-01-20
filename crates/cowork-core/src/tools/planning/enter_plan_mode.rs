@@ -31,15 +31,20 @@ impl EnterPlanMode {
 
 impl Tool for EnterPlanMode {
     fn name(&self) -> &str {
-        "enter_plan_mode"
+        "EnterPlanMode"
     }
 
     fn description(&self) -> &str {
-        "Use this tool proactively when starting a non-trivial implementation task. \
-         Getting user sign-off on your approach before writing code prevents wasted effort. \
-         In plan mode, you can explore the codebase and design an implementation approach \
-         for user approval. Use this when: adding new features, code modifications affect \
-         existing behavior, multiple valid approaches exist, or task requires architectural decisions."
+        "Use this tool proactively when you're about to start a non-trivial implementation task.\n\n\
+         Getting user sign-off on your approach before writing code prevents wasted effort and ensures alignment.\n\n\
+         Prefer using EnterPlanMode for implementation tasks unless they're simple. Use when:\n\
+         - New Feature Implementation: Adding meaningful new functionality\n\
+         - Multiple Valid Approaches: The task can be solved several different ways\n\
+         - Code Modifications: Changes that affect existing behavior or structure\n\
+         - Architectural Decisions: Task requires choosing between patterns or technologies\n\
+         - Multi-File Changes: Task will likely touch more than 2-3 files\n\
+         - Unclear Requirements: Need to explore before understanding the full scope\n\n\
+         Skip for: single-line fixes, typos, obvious bugs, small tweaks"
     }
 
     fn parameters_schema(&self) -> Value {

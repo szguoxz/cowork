@@ -221,14 +221,22 @@ impl TaskTool {
 
 impl Tool for TaskTool {
     fn name(&self) -> &str {
-        "task"
+        "Task"
     }
 
     fn description(&self) -> &str {
-        "Launch a new agent to handle complex, multi-step tasks autonomously. \
-         Available agent types: Bash (command execution), general-purpose (research and multi-step tasks), \
-         Explore (fast codebase exploration), Plan (software architecture and planning). \
-         Use this tool when you need specialized help with complex tasks."
+        "Launch a new agent to handle complex, multi-step tasks autonomously.\n\n\
+         Available agent types:\n\
+         - Bash: Command execution specialist for git operations, npm, docker, etc.\n\
+         - general-purpose: General-purpose agent for research and multi-step tasks\n\
+         - Explore: Fast agent for exploring codebases (finding files, searching code, understanding structure)\n\
+         - Plan: Software architect for designing implementation plans\n\n\
+         Usage notes:\n\
+         - Always include a short description (3-5 words) summarizing what the agent will do\n\
+         - Launch multiple agents concurrently whenever possible to maximize performance\n\
+         - The agent's results are not visible to the user - send a text message with a summary\n\
+         - Agents can be resumed using the resume parameter\n\
+         - Provide clear, detailed prompts so the agent can work autonomously"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -416,12 +424,17 @@ impl TaskOutputTool {
 
 impl Tool for TaskOutputTool {
     fn name(&self) -> &str {
-        "task_output"
+        "TaskOutput"
     }
 
     fn description(&self) -> &str {
-        "Retrieves output from a running or completed task (background agent or shell). \
-         Use block=true to wait for completion, block=false for non-blocking status check."
+        "Retrieves output from a running or completed task (background shell, agent, or remote session).\n\n\
+         - Takes a task_id parameter identifying the task\n\
+         - Returns the task output along with status information\n\
+         - Use block=true (default) to wait for task completion\n\
+         - Use block=false for non-blocking check of current status\n\
+         - Task IDs can be found using the /tasks command\n\
+         - Works with all task types: background shells, async agents, and remote sessions"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -527,8 +540,8 @@ mod tests {
         let workspace = PathBuf::from("/tmp/test-workspace");
         let tool = TaskTool::new(registry.clone(), workspace);
 
-        // Verify tool metadata
-        assert_eq!(tool.name(), "task");
+        // Verify tool metadata (PascalCase name)
+        assert_eq!(tool.name(), "Task");
         assert!(tool.description().contains("agent"));
     }
 

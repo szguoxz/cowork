@@ -22,14 +22,18 @@ impl EditFile {
 
 impl Tool for EditFile {
     fn name(&self) -> &str {
-        "edit"
+        "Edit"
     }
 
     fn description(&self) -> &str {
-        "Performs exact string replacements in files. \
-         The edit will FAIL if old_string is not unique in the file. \
-         Either provide a larger string with more surrounding context to make it unique, \
-         or use replace_all to change every instance of old_string."
+        "Performs exact string replacements in files.\n\n\
+         Usage:\n\
+         - You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.\n\
+         - When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.\n\
+         - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n\
+         - Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.\n\
+         - The edit will FAIL if old_string is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance of old_string.\n\
+         - Use replace_all for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -38,11 +42,11 @@ impl Tool for EditFile {
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "The absolute or relative path to the file to modify"
+                    "description": "The absolute path to the file to modify"
                 },
                 "old_string": {
                     "type": "string",
-                    "description": "The text to replace. Must match exactly, including whitespace and indentation."
+                    "description": "The text to replace"
                 },
                 "new_string": {
                     "type": "string",
@@ -50,7 +54,7 @@ impl Tool for EditFile {
                 },
                 "replace_all": {
                     "type": "boolean",
-                    "description": "Replace all occurrences of old_string (default false). Use for renaming variables across the file.",
+                    "description": "Replace all occurrences of old_string (default false)",
                     "default": false
                 }
             },

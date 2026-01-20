@@ -25,13 +25,22 @@ impl Default for WebFetch {
 
 impl Tool for WebFetch {
     fn name(&self) -> &str {
-        "web_fetch"
+        "WebFetch"
     }
 
     fn description(&self) -> &str {
-        "Fetches content from a specified URL. \
-         Retrieves the page content and converts HTML to a readable text format. \
-         Use this tool when you need to retrieve and analyze web content."
+        "Fetches content from a specified URL and processes it.\n\n\
+         Usage:\n\
+         - Takes a URL and a prompt as input\n\
+         - Fetches the URL content, converts HTML to readable text\n\
+         - Processes the content with the prompt\n\
+         - Returns the processed content about the page\n\
+         - The URL must be a fully-formed valid URL\n\
+         - HTTP URLs will be automatically upgraded to HTTPS\n\
+         - The prompt should describe what information you want to extract from the page\n\
+         - This tool is read-only and does not modify any files\n\
+         - Results may be summarized if the content is very large\n\
+         - When a URL redirects to a different host, the tool will inform you and provide the redirect URL"
     }
 
     fn parameters_schema(&self) -> Value {

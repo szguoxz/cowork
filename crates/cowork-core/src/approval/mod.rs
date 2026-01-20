@@ -200,30 +200,30 @@ impl ToolApprovalConfig {
     pub fn new(level: ApprovalLevel) -> Self {
         let mut auto_approve = std::collections::HashSet::new();
 
-        // Read-only file operations
-        auto_approve.insert("read_file".to_string());
+        // Read-only file operations (PascalCase tool names)
+        auto_approve.insert("Read".to_string());
         auto_approve.insert("list_directory".to_string());
         auto_approve.insert("search_files".to_string());
-        auto_approve.insert("glob".to_string());
-        auto_approve.insert("grep".to_string());
+        auto_approve.insert("Glob".to_string());
+        auto_approve.insert("Grep".to_string());
 
         // Document parsing (read-only)
         auto_approve.insert("read_pdf".to_string());
         auto_approve.insert("read_office_doc".to_string());
 
         // Web operations (read-only)
-        auto_approve.insert("web_fetch".to_string());
-        auto_approve.insert("web_search".to_string());
+        auto_approve.insert("WebFetch".to_string());
+        auto_approve.insert("WebSearch".to_string());
 
         // Task/planning tools
-        auto_approve.insert("todo_write".to_string());
-        auto_approve.insert("task_output".to_string());
+        auto_approve.insert("TodoWrite".to_string());
+        auto_approve.insert("TaskOutput".to_string());
 
         // LSP operations (read-only)
-        auto_approve.insert("lsp".to_string());
+        auto_approve.insert("LSP".to_string());
 
         // User interaction tools
-        auto_approve.insert("ask_user_question".to_string());
+        auto_approve.insert("AskUserQuestion".to_string());
 
         // Browser read-only operations
         auto_approve.insert("browser_get_page_content".to_string());
@@ -231,11 +231,10 @@ impl ToolApprovalConfig {
 
         // Destructive tools that always require approval
         let mut always_require = std::collections::HashSet::new();
-        always_require.insert("write_file".to_string());
-        always_require.insert("edit".to_string());
-        always_require.insert("edit_file".to_string());
+        always_require.insert("Write".to_string());
+        always_require.insert("Edit".to_string());
         always_require.insert("delete_file".to_string());
-        always_require.insert("execute_command".to_string());
+        always_require.insert("Bash".to_string());
 
         Self {
             auto_approve,

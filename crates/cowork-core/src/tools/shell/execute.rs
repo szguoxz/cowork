@@ -51,11 +51,25 @@ impl ExecuteCommand {
 
 impl Tool for ExecuteCommand {
     fn name(&self) -> &str {
-        "execute_command"
+        "Bash"
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command and return its output. Commands are run in a sandboxed environment."
+        "Executes a given bash command in a persistent shell session with optional timeout.\n\n\
+         IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.\n\n\
+         Usage notes:\n\
+         - The command argument is required.\n\
+         - You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). Default is 120000ms (2 minutes).\n\
+         - Always quote file paths that contain spaces with double quotes.\n\
+         - Avoid using Bash with find, grep, cat, head, tail, sed, awk, or echo commands. Instead use:\n\
+           - File search: Use Glob (NOT find or ls)\n\
+           - Content search: Use Grep (NOT grep or rg)\n\
+           - Read files: Use Read (NOT cat/head/tail)\n\
+           - Edit files: Use Edit (NOT sed/awk)\n\
+           - Write files: Use Write (NOT echo >/cat <<EOF)\n\
+         - If the output exceeds 30000 characters, output will be truncated.\n\
+         - You can use run_in_background to run commands in the background.\n\
+         - Try to maintain your current working directory by using absolute paths."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -64,29 +78,25 @@ impl Tool for ExecuteCommand {
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "The shell command to execute"
+                    "description": "The command to execute"
                 },
                 "description": {
                     "type": "string",
-                    "description": "Clear, concise description of what this command does"
-                },
-                "working_dir": {
-                    "type": "string",
-                    "description": "Working directory for the command (relative to workspace)"
+                    "description": "Clear, concise description of what this command does in active voice. For simple commands keep it brief (5-10 words). For complex commands add enough context to clarify what it does."
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Timeout in milliseconds (max 600000, default: 120000)",
+                    "description": "Optional timeout in milliseconds (max 600000)",
                     "default": 120000
                 },
                 "run_in_background": {
                     "type": "boolean",
-                    "description": "Run command in background. Use TaskOutput to check results.",
+                    "description": "Set to true to run this command in the background. Use TaskOutput to read the output later.",
                     "default": false
                 },
                 "dangerouslyDisableSandbox": {
                     "type": "boolean",
-                    "description": "Override sandbox mode and run without sandboxing",
+                    "description": "Set this to true to dangerously override sandbox mode and run commands without sandboxing.",
                     "default": false
                 }
             },

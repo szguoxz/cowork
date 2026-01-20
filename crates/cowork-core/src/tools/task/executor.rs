@@ -76,9 +76,9 @@ impl AgentExecutionConfig {
 const BASH_SYSTEM_PROMPT: &str = r#"You are a Bash command execution specialist. Your role is to help execute shell commands efficiently and safely.
 
 ## Your Capabilities
-- Execute shell commands using execute_command
-- Read files to understand context
-- Write files when needed
+- Execute shell commands using Bash tool
+- Read files to understand context using Read tool
+- Write files when needed using Write tool
 - List directories to explore the filesystem
 
 ## Guidelines
@@ -98,12 +98,12 @@ When you complete a task:
 const EXPLORE_SYSTEM_PROMPT: &str = r#"You are a fast codebase exploration specialist. Your role is to quickly find and analyze code patterns, files, and structures.
 
 ## Your Capabilities
-- Search for files using glob patterns (glob)
-- Search file contents using regex (grep)
-- Read files to examine code
+- Search for files using glob patterns (Glob tool)
+- Search file contents using regex (Grep tool)
+- Read files to examine code (Read tool)
 - List directories to understand structure
 - Use LSP for code intelligence (definitions, references, hover info)
-- Search files by name or content (search_files)
+- Search files by name or content
 
 ## Guidelines
 - You are READ-ONLY - do not modify any files
@@ -122,8 +122,8 @@ Provide a clear summary of your findings including:
 const PLAN_SYSTEM_PROMPT: &str = r#"You are a software architect and implementation planner. Your role is to explore codebases and design implementation plans.
 
 ## Your Capabilities
-- All exploration tools (glob, grep, read_file, list_directory, search_files, lsp)
-- Task tracking with todo_write
+- All exploration tools (Glob, Grep, Read, list_directory, search_files, LSP)
+- Task tracking with TodoWrite
 
 ## Guidelines
 - Thoroughly understand existing code before planning
@@ -144,16 +144,16 @@ Provide a structured implementation plan:
 const GENERAL_PURPOSE_SYSTEM_PROMPT: &str = r#"You are a general-purpose AI coding assistant with full capabilities. You can research, modify code, and execute commands.
 
 ## Your Capabilities
-- File operations: read, write, edit, delete, move
-- Code search: glob, grep, search_files
-- Shell execution: execute_command
-- Web access: web_fetch, web_search
-- Code intelligence: lsp
-- Task tracking: todo_write
+- File operations: Read, Write, Edit, delete, move
+- Code search: Glob, Grep, search_files
+- Shell execution: Bash
+- Web access: WebFetch, WebSearch
+- Code intelligence: LSP
+- Task tracking: TodoWrite
 
 ## Guidelines
 - Understand before modifying - read files first
-- Use the edit tool for surgical changes (preferred over write_file)
+- Use the Edit tool for surgical changes (preferred over Write)
 - Verify changes after making them
 - Test when possible
 - Keep the user informed of progress
@@ -193,7 +193,7 @@ pub fn create_agent_tool_registry(agent_type: &AgentType, workspace: &Path) -> T
 
     match agent_type {
         AgentType::Bash => {
-            // Bash agent: execute_command, read_file, write_file, list_directory
+            // Bash agent: Bash, Read, Write, list_directory
             registry.register(Arc::new(ExecuteCommand::new(workspace.clone())));
             registry.register(Arc::new(ReadFile::new(workspace.clone())));
             registry.register(Arc::new(WriteFile::new(workspace.clone())));
@@ -209,7 +209,7 @@ pub fn create_agent_tool_registry(agent_type: &AgentType, workspace: &Path) -> T
             registry.register(Arc::new(LspTool::new(workspace.clone())));
         }
         AgentType::Plan => {
-            // Plan agent: same as Explore + todo_write
+            // Plan agent: same as Explore + TodoWrite
             registry.register(Arc::new(ReadFile::new(workspace.clone())));
             registry.register(Arc::new(GlobFiles::new(workspace.clone())));
             registry.register(Arc::new(GrepFiles::new(workspace.clone())));
@@ -431,7 +431,6 @@ mod tests {
     fn test_get_system_prompt() {
         let bash_prompt = get_system_prompt(&AgentType::Bash);
         assert!(bash_prompt.contains("Bash"));
-        assert!(bash_prompt.contains("execute_command"));
 
         let explore_prompt = get_system_prompt(&AgentType::Explore);
         assert!(explore_prompt.contains("exploration"));
@@ -439,7 +438,7 @@ mod tests {
 
         let plan_prompt = get_system_prompt(&AgentType::Plan);
         assert!(plan_prompt.contains("architect"));
-        assert!(plan_prompt.contains("todo_write"));
+        assert!(plan_prompt.contains("TodoWrite"));
 
         let gp_prompt = get_system_prompt(&AgentType::GeneralPurpose);
         assert!(gp_prompt.contains("general-purpose"));
@@ -489,38 +488,38 @@ mod tests {
     fn test_create_agent_tool_registry() {
         let workspace = PathBuf::from("/tmp/test");
 
-        // Bash agent tools
+        // Bash agent tools (PascalCase names)
         let bash_registry = create_agent_tool_registry(&AgentType::Bash, &workspace);
-        assert!(bash_registry.get("execute_command").is_some());
-        assert!(bash_registry.get("read_file").is_some());
-        assert!(bash_registry.get("write_file").is_some());
+        assert!(bash_registry.get("Bash").is_some());
+        assert!(bash_registry.get("Read").is_some());
+        assert!(bash_registry.get("Write").is_some());
         assert!(bash_registry.get("list_directory").is_some());
-        assert!(bash_registry.get("glob").is_none()); // Bash doesn't have glob
+        assert!(bash_registry.get("Glob").is_none()); // Bash doesn't have glob
 
         // Explore agent tools (read-only)
         let explore_registry = create_agent_tool_registry(&AgentType::Explore, &workspace);
-        assert!(explore_registry.get("read_file").is_some());
-        assert!(explore_registry.get("glob").is_some());
-        assert!(explore_registry.get("grep").is_some());
-        assert!(explore_registry.get("lsp").is_some());
-        assert!(explore_registry.get("write_file").is_none()); // Explore can't write
-        assert!(explore_registry.get("execute_command").is_none()); // Explore can't execute
+        assert!(explore_registry.get("Read").is_some());
+        assert!(explore_registry.get("Glob").is_some());
+        assert!(explore_registry.get("Grep").is_some());
+        assert!(explore_registry.get("LSP").is_some());
+        assert!(explore_registry.get("Write").is_none()); // Explore can't write
+        assert!(explore_registry.get("Bash").is_none()); // Explore can't execute
 
         // Plan agent tools
         let plan_registry = create_agent_tool_registry(&AgentType::Plan, &workspace);
-        assert!(plan_registry.get("read_file").is_some());
-        assert!(plan_registry.get("glob").is_some());
-        assert!(plan_registry.get("todo_write").is_some());
-        assert!(plan_registry.get("write_file").is_none()); // Plan can't write
+        assert!(plan_registry.get("Read").is_some());
+        assert!(plan_registry.get("Glob").is_some());
+        assert!(plan_registry.get("TodoWrite").is_some());
+        assert!(plan_registry.get("Write").is_none()); // Plan can't write
 
         // GeneralPurpose agent tools
         let gp_registry = create_agent_tool_registry(&AgentType::GeneralPurpose, &workspace);
-        assert!(gp_registry.get("read_file").is_some());
-        assert!(gp_registry.get("write_file").is_some());
-        assert!(gp_registry.get("edit").is_some());
-        assert!(gp_registry.get("execute_command").is_some());
-        assert!(gp_registry.get("web_fetch").is_some());
-        assert!(gp_registry.get("task").is_none()); // No recursive task tool
+        assert!(gp_registry.get("Read").is_some());
+        assert!(gp_registry.get("Write").is_some());
+        assert!(gp_registry.get("Edit").is_some());
+        assert!(gp_registry.get("Bash").is_some());
+        assert!(gp_registry.get("WebFetch").is_some());
+        assert!(gp_registry.get("Task").is_none()); // No recursive task tool
     }
 
     #[test]

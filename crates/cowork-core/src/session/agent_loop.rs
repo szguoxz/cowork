@@ -271,10 +271,10 @@ impl AgentLoop {
             // Categorize tool calls
             let (auto_approved, needs_approval) = self.categorize_tools(&tool_calls);
 
-            // Check for ask_user_question - it needs special handling
+            // Check for AskUserQuestion - it needs special handling
             let mut has_question = false;
             for tool_call in &tool_calls {
-                if tool_call.name == "ask_user_question" {
+                if tool_call.name == "AskUserQuestion" {
                     // Parse questions from arguments
                     if let Some(questions) = self.parse_questions(&tool_call.arguments) {
                         self.emit(SessionOutput::Question {
@@ -413,7 +413,7 @@ impl AgentLoop {
         .await;
     }
 
-    /// Parse questions from ask_user_question tool arguments
+    /// Parse questions from AskUserQuestion tool arguments
     fn parse_questions(
         &self,
         args: &serde_json::Value,
@@ -500,7 +500,7 @@ impl AgentLoop {
         }
     }
 
-    /// Handle answer to a question from ask_user_question tool
+    /// Handle answer to a question from AskUserQuestion tool
     async fn handle_answer_question(
         &mut self,
         request_id: &str,
@@ -513,11 +513,11 @@ impl AgentLoop {
             "answers": answers
         });
 
-        // Find the pending ask_user_question tool call by ID (request_id is the tool call ID)
+        // Find the pending AskUserQuestion tool call by ID (request_id is the tool call ID)
         let tool_call = self
             .pending_approvals
             .iter()
-            .find(|tc| tc.id == request_id || tc.name == "ask_user_question")
+            .find(|tc| tc.id == request_id || tc.name == "AskUserQuestion")
             .cloned();
 
         if let Some(tool_call) = tool_call {
@@ -532,7 +532,7 @@ impl AgentLoop {
             // Emit done
             self.emit(SessionOutput::tool_done(
                 &tool_call.id,
-                "ask_user_question",
+                "AskUserQuestion",
                 true,
                 result.to_string(),
             ))
@@ -769,13 +769,13 @@ mod tests {
     fn test_tool_categorization() {
         let approval_config = ToolApprovalConfig::new(crate::approval::ApprovalLevel::Low);
 
-        // read_file should be auto-approved
-        assert!(approval_config.should_auto_approve("read_file"));
-        assert!(approval_config.should_auto_approve("glob"));
-        assert!(approval_config.should_auto_approve("grep"));
+        // Read should be auto-approved (PascalCase tool names)
+        assert!(approval_config.should_auto_approve("Read"));
+        assert!(approval_config.should_auto_approve("Glob"));
+        assert!(approval_config.should_auto_approve("Grep"));
 
-        // write operations should need approval
-        assert!(!approval_config.should_auto_approve("write_file"));
-        assert!(!approval_config.should_auto_approve("execute_command"));
+        // Write operations should need approval
+        assert!(!approval_config.should_auto_approve("Write"));
+        assert!(!approval_config.should_auto_approve("Bash"));
     }
 }

@@ -170,12 +170,16 @@ impl Default for WebSearch {
 
 impl Tool for WebSearch {
     fn name(&self) -> &str {
-        "web_search"
+        "WebSearch"
     }
 
     fn description(&self) -> &str {
-        "Search the web for up-to-date information. Returns search results with titles, URLs, \
-         and snippets. Use for current events, documentation, or information beyond the knowledge cutoff."
+        "Allows Claude to search the web and use the results to inform responses.\n\n\
+         - Provides up-to-date information for current events and recent data\n\
+         - Returns search result information with links as markdown hyperlinks\n\
+         - Use this tool for accessing information beyond the knowledge cutoff\n\
+         - Domain filtering is supported to include or block specific websites\n\
+         - IMPORTANT: After answering the user's question, include a \"Sources:\" section at the end with relevant URLs"
     }
 
     fn parameters_schema(&self) -> Value {

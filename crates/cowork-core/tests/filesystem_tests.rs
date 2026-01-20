@@ -55,7 +55,7 @@ mod read_file_tests {
         let tool = ReadFile::new(dir.path().to_path_buf());
 
         let result = tool.execute(json!({
-            "path": "src/main.rs"
+            "file_path": "src/main.rs"
         })).await;
 
         assert!(result.is_ok(), "Failed to read file: {:?}", result.err());
@@ -72,7 +72,7 @@ mod read_file_tests {
         let tool = ReadFile::new(dir.path().to_path_buf());
 
         let result = tool.execute(json!({
-            "path": "nonexistent.txt"
+            "file_path": "nonexistent.txt"
         })).await;
 
         assert!(result.is_err(), "Should fail for nonexistent file");
@@ -89,7 +89,7 @@ mod write_file_tests {
 
         let content = "This is a new file.";
         let result = tool.execute(json!({
-            "path": "new_file.txt",
+            "file_path": "new_file.txt",
             "content": content
         })).await;
 
@@ -106,7 +106,7 @@ mod write_file_tests {
         let tool = WriteFile::new(dir.path().to_path_buf());
 
         let result = tool.execute(json!({
-            "path": "deep/nested/dir/file.txt",
+            "file_path": "deep/nested/dir/file.txt",
             "content": "nested content"
         })).await;
 

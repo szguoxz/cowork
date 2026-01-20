@@ -165,7 +165,7 @@ Execute the git commands now. Only output tool calls, no explanatory text."#,
     }
 
     fn allowed_tools(&self) -> Option<Vec<&str>> {
-        Some(vec!["execute_command"])
+        Some(vec!["Bash"])
     }
 }
 
@@ -268,7 +268,7 @@ Execute all commands now. Only output tool calls, no explanatory text."#,
     }
 
     fn allowed_tools(&self) -> Option<Vec<&str>> {
-        Some(vec!["execute_command"])
+        Some(vec!["Bash"])
     }
 }
 
@@ -351,7 +351,7 @@ Execute the push command now."#,
     }
 
     fn allowed_tools(&self) -> Option<Vec<&str>> {
-        Some(vec!["execute_command"])
+        Some(vec!["Bash"])
     }
 }
 
@@ -469,7 +469,7 @@ Execute the gh command now."#,
     }
 
     fn allowed_tools(&self) -> Option<Vec<&str>> {
-        Some(vec!["execute_command"])
+        Some(vec!["Bash"])
     }
 }
 
@@ -630,7 +630,7 @@ Execute the cleanup now."#,
     }
 
     fn allowed_tools(&self) -> Option<Vec<&str>> {
-        Some(vec!["execute_command"])
+        Some(vec!["Bash"])
     }
 }
 
@@ -1061,7 +1061,7 @@ mod tests {
 
         let commit = CommitSkill::new(dir.path().to_path_buf());
         assert!(commit.allowed_tools().is_some());
-        assert!(commit.allowed_tools().unwrap().contains(&"execute_command"));
+        assert!(commit.allowed_tools().unwrap().contains(&"Bash"));
 
         let review = ReviewSkill::new(dir.path().to_path_buf());
         assert!(review.allowed_tools().is_none()); // Review doesn't need to execute commands
