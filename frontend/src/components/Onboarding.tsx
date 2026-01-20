@@ -1,124 +1,40 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import {
   Sparkles,
   CheckCircle2,
   ArrowRight,
   AlertCircle,
-  Globe,
   Loader2,
-  Zap,
-  Brain,
-  Server,
-  Cpu,
+  ChevronLeft,
 } from 'lucide-react'
 
 interface OnboardingProps {
   onComplete: () => void
 }
 
-type Step = 'welcome' | 'provider' | 'apikey' | 'model' | 'testing' | 'complete'
+type Step = 'provider' | 'apikey' | 'model' | 'testing'
 
 interface ProviderOption {
   id: string
   name: string
-  description: string
   envVar: string
-  icon: React.ReactNode
 }
 
 const PROVIDERS: ProviderOption[] = [
-  {
-    id: 'anthropic',
-    name: 'Anthropic (Claude)',
-    description: 'Best for code, writing, and reasoning',
-    envVar: 'ANTHROPIC_API_KEY',
-    icon: <Sparkles className="w-5 h-5" />,
-  },
-  {
-    id: 'openai',
-    name: 'OpenAI (GPT-4)',
-    description: 'Versatile and widely supported',
-    envVar: 'OPENAI_API_KEY',
-    icon: <Globe className="w-5 h-5" />,
-  },
-  {
-    id: 'gemini',
-    name: 'Google Gemini',
-    description: 'Large context window (1M tokens)',
-    envVar: 'GEMINI_API_KEY',
-    icon: <Brain className="w-5 h-5" />,
-  },
-  {
-    id: 'groq',
-    name: 'Groq',
-    description: 'Ultra-fast inference',
-    envVar: 'GROQ_API_KEY',
-    icon: <Zap className="w-5 h-5" />,
-  },
-  {
-    id: 'deepseek',
-    name: 'DeepSeek',
-    description: 'Cost-effective reasoning',
-    envVar: 'DEEPSEEK_API_KEY',
-    icon: <Brain className="w-5 h-5" />,
-  },
-  {
-    id: 'xai',
-    name: 'xAI (Grok)',
-    description: 'Latest Grok models',
-    envVar: 'XAI_API_KEY',
-    icon: <Sparkles className="w-5 h-5" />,
-  },
-  {
-    id: 'together',
-    name: 'Together AI',
-    description: '200+ open source models',
-    envVar: 'TOGETHER_API_KEY',
-    icon: <Globe className="w-5 h-5" />,
-  },
-  {
-    id: 'fireworks',
-    name: 'Fireworks AI',
-    description: 'Fast open source model inference',
-    envVar: 'FIREWORKS_API_KEY',
-    icon: <Zap className="w-5 h-5" />,
-  },
-  {
-    id: 'zai',
-    name: 'Zai (Zhipu AI)',
-    description: 'GLM-4 models from China',
-    envVar: 'ZAI_API_KEY',
-    icon: <Brain className="w-5 h-5" />,
-  },
-  {
-    id: 'nebius',
-    name: 'Nebius AI Studio',
-    description: '30+ open source models',
-    envVar: 'NEBIUS_API_KEY',
-    icon: <Globe className="w-5 h-5" />,
-  },
-  {
-    id: 'mimo',
-    name: 'MIMO (Xiaomi)',
-    description: "Xiaomi's MIMO models",
-    envVar: 'MIMO_API_KEY',
-    icon: <Zap className="w-5 h-5" />,
-  },
-  {
-    id: 'bigmodel',
-    name: 'BigModel.cn',
-    description: 'Zhipu AI China platform',
-    envVar: 'BIGMODEL_API_KEY',
-    icon: <Brain className="w-5 h-5" />,
-  },
-  {
-    id: 'ollama',
-    name: 'Ollama (Local)',
-    description: 'Run models locally, no API key needed',
-    envVar: '',
-    icon: <Server className="w-5 h-5" />,
-  },
+  { id: 'anthropic', name: 'Anthropic (Claude)', envVar: 'ANTHROPIC_API_KEY' },
+  { id: 'openai', name: 'OpenAI (GPT-4)', envVar: 'OPENAI_API_KEY' },
+  { id: 'deepseek', name: 'DeepSeek', envVar: 'DEEPSEEK_API_KEY' },
+  { id: 'gemini', name: 'Google Gemini', envVar: 'GEMINI_API_KEY' },
+  { id: 'groq', name: 'Groq', envVar: 'GROQ_API_KEY' },
+  { id: 'xai', name: 'xAI (Grok)', envVar: 'XAI_API_KEY' },
+  { id: 'together', name: 'Together AI', envVar: 'TOGETHER_API_KEY' },
+  { id: 'fireworks', name: 'Fireworks AI', envVar: 'FIREWORKS_API_KEY' },
+  { id: 'ollama', name: 'Ollama (Local)', envVar: '' },
+  { id: 'nebius', name: 'Nebius AI', envVar: 'NEBIUS_API_KEY' },
+  { id: 'zai', name: 'Zhipu AI', envVar: 'ZAI_API_KEY' },
+  { id: 'bigmodel', name: 'BigModel.cn', envVar: 'BIGMODEL_API_KEY' },
+  { id: 'mimo', name: 'MIMO (Xiaomi)', envVar: 'MIMO_API_KEY' },
 ]
 
 interface ApiTestResult {
@@ -134,8 +50,8 @@ interface ModelInfo {
 }
 
 export default function Onboarding({ onComplete }: OnboardingProps) {
-  const [step, setStep] = useState<Step>('welcome')
-  const [selectedProvider, setSelectedProvider] = useState<string>('anthropic')
+  const [step, setStep] = useState<Step>('provider')
+  const [selectedProvider, setSelectedProvider] = useState<string>('')
   const [apiKey, setApiKey] = useState('')
   const [models, setModels] = useState<ModelInfo[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
@@ -143,476 +59,299 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [testResult, setTestResult] = useState<ApiTestResult | null>(null)
 
+  const selectedProviderInfo = PROVIDERS.find((p) => p.id === selectedProvider)
+
+  // Auto-complete after successful test
+  useEffect(() => {
+    if (testResult?.success) {
+      const timer = setTimeout(() => {
+        localStorage.setItem('onboarding_complete', 'true')
+        onComplete()
+      }, 1500)
+      return () => clearTimeout(timer)
+    }
+  }, [testResult, onComplete])
+
   const handleProviderSelect = (providerId: string) => {
     setSelectedProvider(providerId)
     setError(null)
+    // Auto-advance after selection
+    setTimeout(() => {
+      if (providerId === 'ollama') {
+        setApiKey('')
+        setStep('model')
+        fetchModelsForProvider(providerId, '')
+      } else {
+        setStep('apikey')
+      }
+    }, 150)
   }
 
-  const handleModelSelect = (modelId: string) => {
-    setSelectedModel(modelId)
-    setError(null)
-  }
-
-  const fetchModels = async () => {
+  const fetchModelsForProvider = async (provider: string, key: string) => {
     setIsLoading(true)
-    setError(null)
-
     try {
       const fetchedModels = await invoke<ModelInfo[]>('fetch_provider_models', {
-        providerType: selectedProvider,
-        apiKey: apiKey,
+        providerType: provider,
+        apiKey: key,
       })
       setModels(fetchedModels)
-      // Auto-select first recommended model, or first model
       const recommended = fetchedModels.find((m) => m.recommended)
       setSelectedModel(recommended?.id || fetchedModels[0]?.id || '')
-    } catch (err) {
-      console.error('Failed to fetch models:', err)
+    } catch {
       setModels([])
-      setError('Could not fetch models. Please try again.')
+      setSelectedModel('')
     } finally {
       setIsLoading(false)
     }
   }
 
-  const handleNext = async () => {
+  const handleApiKeySubmit = async () => {
+    if (!apiKey.trim()) {
+      setError('Please enter an API key')
+      return
+    }
     setError(null)
+    setStep('model')
+    await fetchModelsForProvider(selectedProvider, apiKey)
+  }
 
-    switch (step) {
-      case 'welcome':
-        setStep('provider')
-        break
+  const handleModelSubmit = async () => {
+    if (!selectedModel && models.length > 0) {
+      setError('Please select a model')
+      return
+    }
+    setError(null)
+    setStep('testing')
+    setIsLoading(true)
+    setTestResult(null)
 
-      case 'provider':
-        if (selectedProvider === 'ollama') {
-          // Ollama: fetch models then go to model selection
-          setApiKey('') // No API key for Ollama
-          setStep('model')
-          // Fetch Ollama models
-          setIsLoading(true)
-          try {
-            const fetchedModels = await invoke<ModelInfo[]>('fetch_provider_models', {
-              providerType: selectedProvider,
-              apiKey: '',
-            })
-            setModels(fetchedModels)
-            const recommended = fetchedModels.find((m) => m.recommended)
-            setSelectedModel(recommended?.id || fetchedModels[0]?.id || 'llama3.2')
-          } catch {
-            setModels([])
-            setSelectedModel('llama3.2')
-          } finally {
-            setIsLoading(false)
-          }
-        } else {
-          setStep('apikey')
-        }
-        break
+    try {
+      const result = await invoke<ApiTestResult>('test_api_connection', {
+        providerType: selectedProvider,
+        apiKey: apiKey || null,
+        model: selectedModel || null,
+      })
+      setTestResult(result)
 
-      case 'apikey':
-        if (!apiKey.trim()) {
-          setError('Please enter an API key')
-          return
-        }
-        // Move to model selection step
-        setStep('model')
-        await fetchModels()
-        break
-
-      case 'model':
-        if (!selectedModel && models.length > 0) {
-          setError('Please select a model')
-          return
-        }
-        // Move to testing step
-        setStep('testing')
-        setIsLoading(true)
-        setTestResult(null)
-
-        try {
-          // Test the API connection
-          const result = await invoke<ApiTestResult>('test_api_connection', {
-            providerType: selectedProvider,
-            apiKey: apiKey || null,
-            model: selectedModel || null,
-          })
-
-          setTestResult(result)
-
-          if (result.success) {
-            // Save the settings on success
-            await invoke('update_settings', {
-              settings: {
-                provider: {
-                  provider_type: selectedProvider,
-                  api_key: apiKey || null,
-                  model: selectedModel,
-                  base_url: null,
-                },
-                approval: {
-                  auto_approve_level: 'low',
-                  show_confirmation_dialogs: true,
-                },
-                ui: {
-                  theme: 'system',
-                  font_size: 14,
-                  show_tool_calls: true,
-                },
-              },
-            })
-            await invoke('save_settings')
-          }
-        } catch (err) {
-          setTestResult({
-            success: false,
-            message: String(err),
-          })
-        } finally {
-          setIsLoading(false)
-        }
-        break
-
-      case 'testing':
-        if (testResult?.success) {
-          setStep('complete')
-        } else {
-          // Go back to model selection
-          setStep('model')
-          setTestResult(null)
-        }
-        break
-
-      case 'complete':
-        localStorage.setItem('onboarding_complete', 'true')
-        onComplete()
-        break
+      if (result.success) {
+        await invoke('update_settings', {
+          settings: {
+            provider: {
+              provider_type: selectedProvider,
+              api_key: apiKey || null,
+              model: selectedModel,
+              base_url: null,
+            },
+            approval: { auto_approve_level: 'low', show_confirmation_dialogs: true },
+            ui: { theme: 'system', font_size: 14, show_tool_calls: true },
+          },
+        })
+        await invoke('save_settings')
+      }
+    } catch (err) {
+      setTestResult({ success: false, message: String(err) })
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  const getStepProgress = () => {
-    switch (step) {
-      case 'welcome':
-        return 16
-      case 'provider':
-        return 32
-      case 'apikey':
-        return 48
-      case 'model':
-        return 64
-      case 'testing':
-        return 80
-      case 'complete':
-        return 100
-      default:
-        return 0
+  const handleBack = () => {
+    setError(null)
+    setTestResult(null)
+    if (step === 'apikey') setStep('provider')
+    else if (step === 'model') setStep(selectedProvider === 'ollama' ? 'provider' : 'apikey')
+    else if (step === 'testing') setStep('model')
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !isLoading) {
+      if (step === 'apikey') handleApiKeySubmit()
+      else if (step === 'model' && selectedModel) handleModelSubmit()
     }
   }
+
+  const progress = step === 'provider' ? 25 : step === 'apikey' ? 50 : step === 'model' ? 75 : 100
 
   return (
-    <div className="fixed inset-0 bg-gray-900/80 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+    <div className="fixed inset-0 bg-gray-900/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
         {/* Progress bar */}
         <div className="h-1 bg-gray-200 dark:bg-gray-700">
           <div
             className="h-full bg-primary-500 transition-all duration-300"
-            style={{ width: `${getStepProgress()}%` }}
+            style={{ width: `${progress}%` }}
           />
         </div>
 
-        {/* Content */}
-        <div className="p-8">
-          {step === 'welcome' && (
-            <div className="text-center">
-              <div className="w-16 h-16 bg-primary-100 dark:bg-primary-900 rounded-full flex items-center justify-center mx-auto mb-6">
-                <Sparkles className="w-8 h-8 text-primary-600" />
-              </div>
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
-                Welcome to Cowork
-              </h2>
-              <p className="text-gray-600 dark:text-gray-400 mb-8">
-                Your AI-powered assistant for software development. Let's get you set up in a few
-                quick steps.
-              </p>
-              <button
-                onClick={handleNext}
-                className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
-              >
-                Get Started
-                <ArrowRight className="w-5 h-5" />
-              </button>
-            </div>
+        {/* Header */}
+        <div className="px-5 pt-4 pb-2 flex items-center gap-3">
+          {step !== 'provider' && (
+            <button
+              onClick={handleBack}
+              className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+            >
+              <ChevronLeft className="w-5 h-5 text-gray-500" />
+            </button>
           )}
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-primary-500" />
+            <span className="font-semibold text-gray-900 dark:text-white">Cowork Setup</span>
+          </div>
+        </div>
 
+        {/* Content */}
+        <div className="px-5 pb-5" onKeyDown={handleKeyDown}>
+          {/* Provider Selection */}
           {step === 'provider' && (
             <div>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                Choose your AI provider
-              </h2>
-              <p className="text-gray-600 dark:text-gray-400 mb-6">
-                Select which AI service you'd like to use. You can change this later in settings.
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                Choose your AI provider:
               </p>
-
-              <div className="space-y-3 mb-6 max-h-80 overflow-y-auto">
+              <div className="grid grid-cols-2 gap-2 max-h-[320px] overflow-y-auto pr-1">
                 {PROVIDERS.map((provider) => (
                   <button
                     key={provider.id}
                     onClick={() => handleProviderSelect(provider.id)}
-                    className={`w-full p-4 rounded-lg border-2 text-left flex items-start gap-4 transition-colors ${
+                    className={`p-2.5 rounded-lg border text-left text-sm transition-all ${
                       selectedProvider === provider.id
-                        ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                        ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30 ring-1 ring-primary-500'
+                        : 'border-gray-200 dark:border-gray-700 hover:border-primary-300 dark:hover:border-primary-700'
                     }`}
                   >
-                    <div
-                      className={`p-2 rounded-lg ${
-                        selectedProvider === provider.id
-                          ? 'bg-primary-100 dark:bg-primary-900 text-primary-600'
-                          : 'bg-gray-100 dark:bg-gray-700 text-gray-500'
-                      }`}
-                    >
-                      {provider.icon}
-                    </div>
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-900 dark:text-white">
-                        {provider.name}
-                      </div>
-                      <div className="text-sm text-gray-500 dark:text-gray-400">
-                        {provider.description}
-                      </div>
-                    </div>
-                    {selectedProvider === provider.id && (
-                      <CheckCircle2 className="w-5 h-5 text-primary-600" />
-                    )}
+                    <span className="font-medium text-gray-900 dark:text-white block truncate">
+                      {provider.name}
+                    </span>
                   </button>
                 ))}
               </div>
-
-              <button
-                onClick={handleNext}
-                className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
-              >
-                Continue
-                <ArrowRight className="w-5 h-5" />
-              </button>
             </div>
           )}
 
+          {/* API Key Input */}
           {step === 'apikey' && (
             <div>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                Enter your API key
-              </h2>
-              <p className="text-gray-600 dark:text-gray-400 mb-6">
-                Your API key is stored locally and never sent anywhere except to the AI provider.
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                Enter your {selectedProviderInfo?.name} API key:
               </p>
-
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  {PROVIDERS.find((p) => p.id === selectedProvider)?.envVar || 'API Key'}
-                </label>
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="sk-..."
-                  className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                />
-                {error && (
-                  <div className="mt-2 flex items-center gap-2 text-red-600 text-sm">
-                    <AlertCircle className="w-4 h-4" />
-                    {error}
-                  </div>
-                )}
-              </div>
-
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-6">
-                You can also set the {PROVIDERS.find((p) => p.id === selectedProvider)?.envVar}{' '}
-                environment variable instead.
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={selectedProviderInfo?.envVar || 'API Key'}
+                autoFocus
+                className="w-full px-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              />
+              {error && (
+                <p className="mt-2 text-sm text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-4 h-4" /> {error}
+                </p>
+              )}
+              <p className="mt-2 text-xs text-gray-500">
+                Stored locally. Or set {selectedProviderInfo?.envVar} env var.
               </p>
-
               <button
-                onClick={handleNext}
+                onClick={handleApiKeySubmit}
                 disabled={isLoading}
-                className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                className="w-full mt-4 py-2.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
               >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Fetching models...
-                  </>
-                ) : (
-                  <>
-                    Continue
-                    <ArrowRight className="w-5 h-5" />
-                  </>
-                )}
+                {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Continue'}
+                {!isLoading && <ArrowRight className="w-4 h-4" />}
               </button>
             </div>
           )}
 
+          {/* Model Selection */}
           {step === 'model' && (
             <div>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                Select a model
-              </h2>
-              <p className="text-gray-600 dark:text-gray-400 mb-6">
-                Choose the AI model you'd like to use. Recommended models are marked.
-              </p>
-
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">Select a model:</p>
               {isLoading ? (
-                <div className="flex flex-col items-center justify-center py-12">
-                  <Loader2 className="w-8 h-8 text-primary-600 animate-spin mb-4" />
-                  <p className="text-gray-600 dark:text-gray-400">Fetching available models...</p>
+                <div className="py-8 flex flex-col items-center">
+                  <Loader2 className="w-6 h-6 text-primary-500 animate-spin" />
+                  <p className="mt-2 text-sm text-gray-500">Loading models...</p>
                 </div>
               ) : models.length > 0 ? (
-                <div className="space-y-2 mb-6 max-h-64 overflow-y-auto">
+                <div className="space-y-1.5 max-h-[240px] overflow-y-auto pr-1">
                   {models.map((model) => (
                     <button
                       key={model.id}
-                      onClick={() => handleModelSelect(model.id)}
-                      className={`w-full p-3 rounded-lg border-2 text-left flex items-center gap-3 transition-colors ${
+                      onClick={() => setSelectedModel(model.id)}
+                      className={`w-full p-2.5 rounded-lg border text-left text-sm transition-all flex items-center justify-between ${
                         selectedModel === model.id
-                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30'
+                          : 'border-gray-200 dark:border-gray-700 hover:border-primary-300'
                       }`}
                     >
-                      <Cpu
-                        className={`w-5 h-5 ${
-                          selectedModel === model.id ? 'text-primary-600' : 'text-gray-400'
-                        }`}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-gray-900 dark:text-white truncate">
-                          {model.name || model.id}
-                        </div>
-                        {model.description && (
-                          <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                            {model.description}
-                          </div>
+                      <span className="truncate text-gray-900 dark:text-white">
+                        {model.name || model.id}
+                      </span>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {model.recommended && (
+                          <span className="text-xs bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-400 px-1.5 py-0.5 rounded">
+                            rec
+                          </span>
+                        )}
+                        {selectedModel === model.id && (
+                          <CheckCircle2 className="w-4 h-4 text-primary-500" />
                         )}
                       </div>
-                      {model.recommended && (
-                        <span className="text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 px-2 py-1 rounded">
-                          Recommended
-                        </span>
-                      )}
-                      {selectedModel === model.id && (
-                        <CheckCircle2 className="w-5 h-5 text-primary-600 flex-shrink-0" />
-                      )}
                     </button>
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-8 mb-6">
-                  <AlertCircle className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
-                  <p className="text-gray-600 dark:text-gray-400 mb-4">
-                    Could not fetch models from the provider.
-                  </p>
+                <div className="py-4">
                   <input
                     type="text"
                     value={selectedModel}
                     onChange={(e) => setSelectedModel(e.target.value)}
-                    placeholder="Enter model name manually"
-                    className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    placeholder="Enter model name"
+                    className="w-full px-3 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
                   />
+                  <p className="mt-2 text-xs text-gray-500">Could not fetch models. Enter manually.</p>
                 </div>
               )}
-
               {error && (
-                <div className="mb-4 flex items-center gap-2 text-red-600 text-sm">
-                  <AlertCircle className="w-4 h-4" />
-                  {error}
-                </div>
+                <p className="mt-2 text-sm text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-4 h-4" /> {error}
+                </p>
               )}
-
               <button
-                onClick={handleNext}
-                disabled={isLoading || (!selectedModel && models.length > 0)}
-                className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                onClick={handleModelSubmit}
+                disabled={isLoading || !selectedModel}
+                className="w-full mt-4 py-2.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
               >
                 Test Connection
-                <ArrowRight className="w-5 h-5" />
+                <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           )}
 
+          {/* Testing */}
           {step === 'testing' && (
-            <div className="text-center">
+            <div className="py-6 text-center">
               {isLoading ? (
                 <>
-                  <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
-                  </div>
-                  <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-                    Testing Connection
-                  </h2>
-                  <p className="text-gray-600 dark:text-gray-400">
-                    Connecting to {PROVIDERS.find((p) => p.id === selectedProvider)?.name}...
-                  </p>
+                  <Loader2 className="w-10 h-10 text-primary-500 animate-spin mx-auto" />
+                  <p className="mt-3 text-gray-600 dark:text-gray-400">Testing connection...</p>
                 </>
               ) : testResult?.success ? (
                 <>
-                  <div className="w-16 h-16 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <CheckCircle2 className="w-8 h-8 text-green-600" />
-                  </div>
-                  <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-                    Connection Successful!
-                  </h2>
-                  <p className="text-gray-600 dark:text-gray-400 mb-8">
-                    Your API key is valid and working with model{' '}
-                    <span className="font-medium">{selectedModel}</span>.
-                  </p>
-                  <button
-                    onClick={handleNext}
-                    className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
-                  >
-                    Continue
-                    <ArrowRight className="w-5 h-5" />
-                  </button>
+                  <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto" />
+                  <p className="mt-3 font-medium text-gray-900 dark:text-white">Connected!</p>
+                  <p className="text-sm text-gray-500 mt-1">Starting Cowork...</p>
                 </>
               ) : (
                 <>
-                  <div className="w-16 h-16 bg-red-100 dark:bg-red-900 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <AlertCircle className="w-8 h-8 text-red-600" />
-                  </div>
-                  <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-                    Connection Failed
-                  </h2>
-                  <p className="text-gray-600 dark:text-gray-400 mb-2">{testResult?.message}</p>
-                  <p className="text-sm text-gray-500 dark:text-gray-500 mb-8">
-                    Please check your API key and try again.
-                  </p>
+                  <AlertCircle className="w-12 h-12 text-red-500 mx-auto" />
+                  <p className="mt-3 font-medium text-gray-900 dark:text-white">Connection Failed</p>
+                  <p className="text-sm text-red-500 mt-1">{testResult?.message}</p>
                   <button
-                    onClick={handleNext}
-                    className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                    onClick={handleBack}
+                    className="mt-4 px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
                   >
                     Try Again
-                    <ArrowRight className="w-5 h-5" />
                   </button>
                 </>
               )}
-            </div>
-          )}
-
-          {step === 'complete' && (
-            <div className="text-center">
-              <div className="w-16 h-16 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mx-auto mb-6">
-                <CheckCircle2 className="w-8 h-8 text-green-600" />
-              </div>
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
-                You're all set!
-              </h2>
-              <p className="text-gray-600 dark:text-gray-400 mb-8">
-                Start by typing a message or try a command like{' '}
-                <code className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">/help</code> to see
-                what Cowork can do.
-              </p>
-              <button
-                onClick={handleNext}
-                className="w-full py-3 px-4 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium transition-colors"
-              >
-                Start Using Cowork
-              </button>
             </div>
           )}
         </div>
