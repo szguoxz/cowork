@@ -25,8 +25,6 @@ pub struct SessionManager {
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
     /// Factory for creating session configs
     config_factory: ConfigFactory,
-    /// Channel buffer size for session input/output
-    channel_buffer_size: usize,
 }
 
 impl SessionManager {
@@ -39,23 +37,12 @@ impl SessionManager {
     where
         F: Fn() -> SessionConfig + Send + Sync + 'static,
     {
-        Self::with_buffer_size(config_factory, 256)
-    }
-
-    /// Create a new session manager with custom buffer size
-    ///
-    /// Returns the manager and an output receiver for consuming session outputs.
-    pub fn with_buffer_size<F>(config_factory: F, buffer_size: usize) -> (Self, OutputReceiver)
-    where
-        F: Fn() -> SessionConfig + Send + Sync + 'static,
-    {
-        let (output_tx, output_rx) = mpsc::channel(buffer_size);
+        let (output_tx, output_rx) = mpsc::channel(256);
 
         let manager = Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             output_tx,
             config_factory: Arc::new(config_factory),
-            channel_buffer_size: buffer_size,
         };
 
         (manager, output_rx)
@@ -98,7 +85,7 @@ impl SessionManager {
         info!("Creating new session: {}", session_id);
 
         // Create input channel for this session
-        let (input_tx, input_rx) = mpsc::channel(self.channel_buffer_size);
+        let (input_tx, input_rx) = mpsc::channel(256);
 
         // Get config from factory
         let config = (self.config_factory)();
@@ -261,12 +248,6 @@ mod tests {
         // Stopping all when empty should be fine
         let result = manager.stop_all().await;
         assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_custom_buffer_size() {
-        let (manager, _output_rx) = SessionManager::with_buffer_size(test_config, 64);
-        assert_eq!(manager.channel_buffer_size, 64);
     }
 
     #[tokio::test]

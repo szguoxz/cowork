@@ -62,13 +62,6 @@ mod session_manager_tests {
     }
 
     #[tokio::test]
-    async fn test_custom_buffer_size() {
-        let (manager, _output_rx) = SessionManager::with_buffer_size(test_config, 32);
-        // Just verify it creates successfully
-        assert_eq!(manager.session_count().await, 0);
-    }
-
-    #[tokio::test]
     async fn test_output_sender_clone() {
         let (manager, _output_rx) = SessionManager::new(test_config);
         let sender = manager.output_sender();
