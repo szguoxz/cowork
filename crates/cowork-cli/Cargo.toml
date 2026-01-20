@@ -25,3 +25,4 @@ console = "0.15"
 indicatif = "0.17"
 directories = "5"
 dunce = "1"  # Cross-platform canonicalize without UNC prefix on Windows
+rustyline = { version = "14", features = ["derive"] }

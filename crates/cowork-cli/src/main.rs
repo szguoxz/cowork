@@ -2,6 +2,7 @@
 
 mod onboarding;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -9,6 +10,12 @@ use clap::{Parser, Subcommand};
 use console::style;
 use dialoguer::{theme::ColorfulTheme, Input, MultiSelect, Select};
 use indicatif::{ProgressBar, ProgressStyle};
+use rustyline::completion::{Completer, Pair};
+use rustyline::error::ReadlineError;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::validate::Validator;
+use rustyline::{Config, Editor, Helper};
 
 use onboarding::OnboardingWizard;
 
@@ -30,6 +37,89 @@ use cowork_core::tools::document::{ReadOfficeDoc, ReadPdf};
 use cowork_core::tools::browser::BrowserController;
 use cowork_core::tools::planning::{EnterPlanMode, ExitPlanMode, PlanModeState};
 use cowork_core::tools::{Tool, ToolDefinition, ToolRegistry};
+
+/// Slash command completer for readline
+#[derive(Default)]
+struct SlashCompleter {
+    commands: Vec<(&'static str, &'static str)>,
+}
+
+impl SlashCompleter {
+    fn new() -> Self {
+        Self {
+            commands: vec![
+                ("/help", "Show help"),
+                ("/exit", "Exit the program"),
+                ("/quit", "Exit the program"),
+                ("/clear", "Clear conversation history"),
+                ("/tools", "Show available tools"),
+                ("/ls", "List directory contents"),
+                ("/read", "Read file contents"),
+                ("/run", "Run a shell command"),
+                ("/search", "Search for files"),
+                ("/commit", "Create a git commit"),
+                ("/push", "Push to remote"),
+                ("/pr", "Create a pull request"),
+                ("/review", "Review staged changes"),
+                ("/clean-gone", "Clean up deleted branches"),
+            ],
+        }
+    }
+}
+
+impl Completer for SlashCompleter {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        // Only complete if line starts with /
+        if !line.starts_with('/') {
+            return Ok((0, vec![]));
+        }
+
+        let input = &line[..pos];
+        let matches: Vec<Pair> = self
+            .commands
+            .iter()
+            .filter(|(cmd, _)| cmd.starts_with(input))
+            .map(|(cmd, desc)| Pair {
+                display: format!("{} - {}", cmd, desc),
+                replacement: cmd.to_string(),
+            })
+            .collect();
+
+        Ok((0, matches))
+    }
+}
+
+impl Hinter for SlashCompleter {
+    type Hint = String;
+
+    fn hint(&self, line: &str, pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
+        if !line.starts_with('/') || pos < line.len() {
+            return None;
+        }
+
+        // Find first matching command and show hint
+        self.commands
+            .iter()
+            .find(|(cmd, _)| cmd.starts_with(line) && *cmd != line)
+            .map(|(cmd, _)| cmd[line.len()..].to_string())
+    }
+}
+
+impl Highlighter for SlashCompleter {
+    fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
+        Cow::Owned(format!("\x1b[90m{}\x1b[0m", hint))
+    }
+}
+
+impl Validator for SlashCompleter {}
+impl Helper for SlashCompleter {}
 
 #[derive(Parser)]
 #[command(name = "cowork")]
@@ -319,16 +409,46 @@ async fn run_chat(
     // If true, auto-approve all tools for the session
     let mut session_approve_all = auto_approve;
 
+    // Set up readline with history and slash command completion
+    let config = Config::builder()
+        .history_ignore_space(true)
+        .completion_type(rustyline::CompletionType::List)
+        .build();
+    let mut rl = Editor::with_config(config)?;
+    rl.set_helper(Some(SlashCompleter::new()));
+
+    // Load history from file
+    let history_path = directories::ProjectDirs::from("", "", "cowork")
+        .map(|p| p.config_dir().join("history.txt"))
+        .unwrap_or_else(|| PathBuf::from(".cowork_history"));
+    let _ = rl.load_history(&history_path);
+
     loop {
-        let input: String = Input::with_theme(&ColorfulTheme::default())
-            .with_prompt("You")
-            .interact_text()?;
+        let readline = rl.readline(&format!("{} ", style("You").green().bold()));
+        let input = match readline {
+            Ok(line) => line,
+            Err(ReadlineError::Interrupted) => {
+                println!("{}", style("Use /exit to quit").dim());
+                continue;
+            }
+            Err(ReadlineError::Eof) => {
+                println!("{}", style("Goodbye!").green());
+                break;
+            }
+            Err(err) => {
+                println!("{}", style(format!("Error: {}", err)).red());
+                continue;
+            }
+        };
 
         let input = input.trim();
 
         if input.is_empty() {
             continue;
         }
+
+        // Add to history
+        let _ = rl.add_history_entry(input);
 
         match input {
             "/exit" | "/quit" | "/q" => {
@@ -389,6 +509,12 @@ async fn run_chat(
 
         println!();
     }
+
+    // Save history on exit
+    if let Some(parent) = history_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = rl.save_history(&history_path);
 
     Ok(())
 }
