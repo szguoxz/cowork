@@ -254,9 +254,14 @@ impl SimpleLoop {
             "read_file" => {
                 let path = args["path"].as_str().ok_or("Missing path")?;
                 let full_path = self.workspace_path.join(path);
-                tokio::fs::read_to_string(&full_path)
+                let content = tokio::fs::read_to_string(&full_path)
                     .await
-                    .map_err(|e| format!("{} (tried: {:?})", e, full_path))
+                    .map_err(|e| format!("{} (tried: {:?})", e, full_path))?;
+                if content.is_empty() {
+                    Ok(format!("(File is empty: {:?})", full_path))
+                } else {
+                    Ok(content)
+                }
             }
             "write_file" => {
                 let path = args["path"].as_str().ok_or("Missing path")?;
@@ -285,9 +290,13 @@ impl SimpleLoop {
                     entries.push(if is_dir { format!("{}/", name) } else { name });
                 }
                 entries.sort();
-                let result = entries.join("\n");
-                tracing::info!("list_directory result ({} entries): first 500 chars: {}", entries.len(), &result[..result.len().min(500)]);
-                Ok(result)
+                if entries.is_empty() {
+                    Ok(format!("(Directory is empty: {:?})", full_path))
+                } else {
+                    let result = entries.join("\n");
+                    tracing::info!("list_directory result ({} entries)", entries.len());
+                    Ok(result)
+                }
             }
             "execute_command" => {
                 let command = args["command"].as_str().ok_or("Missing command")?;
