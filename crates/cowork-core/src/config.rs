@@ -805,11 +805,28 @@ impl ConfigManager {
     }
 
     /// Check if setup is complete (at least one provider has an API key)
+    /// Note: This checks both config file and environment variables
     pub fn is_setup_complete(&self) -> bool {
         self.config
             .providers
             .values()
             .any(|p| p.get_api_key().is_some())
+    }
+
+    /// Check if setup is complete based on config file only (not env vars)
+    /// This is used for onboarding - we want to show the wizard if no config
+    /// file exists or no API key is saved, even if env vars are set.
+    pub fn is_setup_complete_config_only(&self) -> bool {
+        // Check if config file exists on disk
+        if !self.config_path.exists() {
+            return false;
+        }
+
+        // Check if any provider has an explicit API key in config (not from env)
+        self.config
+            .providers
+            .values()
+            .any(|p| p.api_key.as_ref().map(|k| !k.is_empty()).unwrap_or(false))
     }
 
     /// List all configured providers

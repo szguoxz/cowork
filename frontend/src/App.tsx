@@ -35,8 +35,13 @@ function App() {
   useEffect(() => {
     const checkSetup = async () => {
       try {
-        // Backend check is authoritative - show onboarding if no API key configured
+        // Backend check is authoritative - show onboarding if no config file with API key
         const isSetupDone = await invoke<boolean>('is_setup_complete')
+        if (!isSetupDone) {
+          // Clear localStorage flag if backend says setup is not complete
+          // This handles the case where user deleted their config file
+          localStorage.removeItem('onboarding_complete')
+        }
         setShowOnboarding(!isSetupDone)
       } catch (err) {
         console.error('Failed to check setup status:', err)

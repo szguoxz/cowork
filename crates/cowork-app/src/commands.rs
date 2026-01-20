@@ -427,11 +427,13 @@ pub async fn test_api_connection(
     }
 }
 
-/// Check if onboarding is complete (config exists and has API key)
+/// Check if onboarding is complete (config file exists and has saved API key)
+/// This does NOT check environment variables - we want to show onboarding
+/// if no config file exists, even if env vars are set.
 #[tauri::command]
 pub async fn is_setup_complete(state: State<'_, AppState>) -> Result<bool, String> {
     let cm = state.config_manager.read().await;
-    Ok(cm.is_setup_complete())
+    Ok(cm.is_setup_complete_config_only())
 }
 
 /// Model info for the frontend
