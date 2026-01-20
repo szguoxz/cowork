@@ -201,10 +201,12 @@ impl ChatSession {
         }
 
         // Add tool result as a message
+        // Note: Ideally this should be role "tool" but LlmMessage only supports user/assistant/system
+        // We use a special format so the LLM knows this is a tool result, not a new user request
         let tool_result_msg = ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             role: "user".to_string(),
-            content: format!("Tool result for {}: {}", tool_call_id, result),
+            content: format!("[Tool result for {}]\n{}\n[End of tool result. Please summarize the above result for the user.]", tool_call_id, result),
             tool_calls: Vec::new(),
             timestamp: chrono::Utc::now(),
         };
@@ -319,7 +321,12 @@ You have access to various tools:
 When the user asks you to perform a task:
 1. Analyze what needs to be done
 2. Use the appropriate tools to complete the task
-3. Explain what you're doing and why
+3. Present the results to the user
+
+IMPORTANT: After receiving tool results (messages starting with "Tool result for"), you should:
+- Summarize the results in a helpful response to the user
+- Do NOT call the same tool again unless the user explicitly asks for more
+- A single tool call is usually sufficient for simple queries like listing files
 
 Always ask for clarification if the request is ambiguous.
 Be careful with destructive operations - explain what will happen before executing."#
