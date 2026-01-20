@@ -147,8 +147,11 @@ pub fn run() {
                 if let Err(e) = std::fs::create_dir_all(&cowork_config_dir) {
                     tracing::warn!("Failed to create config directory: {}", e);
                 }
-                // Also create sessions subdirectory
-                let sessions_dir = cowork_config_dir.join("sessions");
+            }
+
+            // Ensure data directory exists for sessions
+            if let Some(data_dir) = dirs::data_dir() {
+                let sessions_dir = data_dir.join("cowork").join("sessions");
                 if let Err(e) = std::fs::create_dir_all(&sessions_dir) {
                     tracing::warn!("Failed to create sessions directory: {}", e);
                 }

@@ -1,6 +1,6 @@
 //! Session storage for persisting chat sessions to JSON files
 //!
-//! Saves sessions to: ~/.config/cowork/sessions/{date}_{id}.json
+//! Saves sessions to: ~/.local/share/cowork/sessions/{date}_{id}.json
 
 use std::path::PathBuf;
 
@@ -54,8 +54,8 @@ impl SessionStorage {
 
     /// Get the default sessions directory
     pub fn default_sessions_dir() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from(".cowork"))
             .join("cowork")
             .join("sessions")
     }
