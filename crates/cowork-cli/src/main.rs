@@ -106,6 +106,25 @@ enum Commands {
     Config,
 }
 
+/// Parse provider name string to ProviderType
+fn parse_provider_type(provider_str: &str) -> ProviderType {
+    match provider_str.to_lowercase().as_str() {
+        "openai" => ProviderType::OpenAI,
+        "gemini" => ProviderType::Gemini,
+        "deepseek" => ProviderType::DeepSeek,
+        "groq" => ProviderType::Groq,
+        "xai" => ProviderType::XAI,
+        "together" => ProviderType::Together,
+        "fireworks" => ProviderType::Fireworks,
+        "ollama" => ProviderType::Ollama,
+        "anthropic" => ProviderType::Anthropic,
+        _ => {
+            eprintln!("Warning: Unknown provider '{}', defaulting to Anthropic", provider_str);
+            ProviderType::Anthropic
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -144,21 +163,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Parse provider type
-    let provider_type = match provider_str.to_lowercase().as_str() {
-        "openai" => ProviderType::OpenAI,
-        "gemini" => ProviderType::Gemini,
-        "deepseek" => ProviderType::DeepSeek,
-        "groq" => ProviderType::Groq,
-        "xai" => ProviderType::XAI,
-        "together" => ProviderType::Together,
-        "fireworks" => ProviderType::Fireworks,
-        "ollama" => ProviderType::Ollama,
-        "anthropic" => ProviderType::Anthropic,
-        _ => {
-            eprintln!("Warning: Unknown provider '{}', defaulting to Anthropic", provider_str);
-            ProviderType::Anthropic
-        }
-    };
+    let provider_type = parse_provider_type(&provider_str);
 
     // Handle one-shot mode
     if let Some(prompt) = cli.one_shot {
@@ -228,7 +233,7 @@ async fn run_one_shot(
 
 async fn run_chat(
     workspace: &PathBuf,
-    provider_type: ProviderType,
+    cli_provider_type: ProviderType,
     model: Option<&str>,
     auto_approve: bool,
 ) -> anyhow::Result<()> {
@@ -237,12 +242,20 @@ async fn run_chat(
 
     // Check if onboarding wizard should run (first-run detection)
     let mut wizard = OnboardingWizard::new(config_manager);
-    if wizard.should_run() {
+    let ran_wizard = wizard.should_run();
+    if ran_wizard {
         wizard.run().await?;
-        config_manager = wizard.into_config_manager();
-    } else {
-        config_manager = wizard.into_config_manager();
     }
+    config_manager = wizard.into_config_manager();
+
+    // After wizard, re-read provider from config (wizard may have changed it)
+    let provider_type = if ran_wizard {
+        // Use the provider that was just configured
+        parse_provider_type(config_manager.default_provider())
+    } else {
+        // Use CLI argument or config default
+        cli_provider_type
+    };
 
     println!("{}", style("Cowork - AI Coding Assistant").bold().cyan());
     println!(
