@@ -34,120 +34,118 @@ export default function Chat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Check API key and start loop on mount
+  // Initialize: set up listener FIRST, then start loop
   useEffect(() => {
+    let unlistenFn: (() => void) | null = null
+
     const init = async () => {
+      // 1. Set up event listener FIRST (before starting loop)
+      unlistenFn = await listen<LoopOutput>('loop_output', (event) => {
+        const output = event.payload
+        console.log('Loop output:', output)
+
+        switch (output.type) {
+          case 'ready':
+            setIsLoopStarted(true)
+            break
+
+          case 'idle':
+            setIsIdle(true)
+            break
+
+          case 'user_message':
+            setIsIdle(false)
+            setMessages(prev => [...prev, {
+              id: output.id,
+              type: 'user',
+              content: output.content,
+            }])
+            break
+
+          case 'assistant_message':
+            setMessages(prev => [...prev, {
+              id: output.id,
+              type: 'assistant',
+              content: output.content,
+            }])
+            break
+
+          case 'tool_start':
+            setMessages(prev => [...prev, {
+              id: output.id,
+              type: 'tool',
+              content: '',
+              tool: {
+                id: output.id,
+                name: output.name,
+                arguments: output.arguments as Record<string, unknown>,
+                status: 'executing',
+              }
+            }])
+            break
+
+          case 'tool_pending':
+            setMessages(prev => [...prev, {
+              id: output.id,
+              type: 'tool',
+              content: '',
+              tool: {
+                id: output.id,
+                name: output.name,
+                arguments: output.arguments as Record<string, unknown>,
+                status: 'pending',
+              }
+            }])
+            break
+
+          case 'tool_done':
+            setMessages(prev => prev.map(msg =>
+              msg.tool?.id === output.id
+                ? {
+                    ...msg,
+                    tool: {
+                      ...msg.tool!,
+                      status: output.success ? 'done' : 'failed',
+                      output: output.output,
+                    }
+                  }
+                : msg
+            ))
+            break
+
+          case 'error':
+            setError(output.message)
+            setIsIdle(true)
+            break
+
+          case 'stopped':
+            setIsLoopStarted(false)
+            setIsIdle(false)
+            break
+        }
+      })
+
+      // 2. Check API key
       try {
         const hasKey = await invoke<boolean>('check_api_key')
         setHasApiKey(hasKey)
 
+        // 3. Start the loop (listener is already active)
         if (hasKey) {
-          // Start the loop once
           await invoke('start_loop')
-          setIsLoopStarted(true)
         }
       } catch (err) {
         console.error('Init error:', err)
         setError(String(err))
       }
     }
+
     init()
 
-    // Cleanup: stop loop on unmount
+    // Cleanup
     return () => {
+      if (unlistenFn) unlistenFn()
       invoke('stop_loop').catch(console.error)
-    }
-  }, [])
-
-  // Listen for loop output events
-  useEffect(() => {
-    const unlisten = listen<LoopOutput>('loop_output', (event) => {
-      const output = event.payload
-      console.log('Loop output:', output)
-
-      switch (output.type) {
-        case 'ready':
-          setIsLoopStarted(true)
-          break
-
-        case 'idle':
-          setIsIdle(true)
-          break
-
-        case 'user_message':
-          setIsIdle(false)
-          setMessages(prev => [...prev, {
-            id: output.id,
-            type: 'user',
-            content: output.content,
-          }])
-          break
-
-        case 'assistant_message':
-          setMessages(prev => [...prev, {
-            id: output.id,
-            type: 'assistant',
-            content: output.content,
-          }])
-          break
-
-        case 'tool_start':
-          setMessages(prev => [...prev, {
-            id: output.id,
-            type: 'tool',
-            content: '',
-            tool: {
-              id: output.id,
-              name: output.name,
-              arguments: output.arguments as Record<string, unknown>,
-              status: 'executing',
-            }
-          }])
-          break
-
-        case 'tool_pending':
-          setMessages(prev => [...prev, {
-            id: output.id,
-            type: 'tool',
-            content: '',
-            tool: {
-              id: output.id,
-              name: output.name,
-              arguments: output.arguments as Record<string, unknown>,
-              status: 'pending',
-            }
-          }])
-          break
-
-        case 'tool_done':
-          setMessages(prev => prev.map(msg =>
-            msg.tool?.id === output.id
-              ? {
-                  ...msg,
-                  tool: {
-                    ...msg.tool!,
-                    status: output.success ? 'done' : 'failed',
-                    output: output.output,
-                  }
-                }
-              : msg
-          ))
-          break
-
-        case 'error':
-          setError(output.message)
-          setIsIdle(true)
-          break
-
-        case 'stopped':
-          setIsLoopStarted(false)
-          setIsIdle(false)
-          break
-      }
-    })
-
-    return () => {
-      unlisten.then(fn => fn())
     }
   }, [])
 

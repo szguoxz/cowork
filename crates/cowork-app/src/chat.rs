@@ -15,37 +15,31 @@ use cowork_core::provider::{
 use cowork_core::tools::{standard_tool_definitions, ToolDefinition};
 // Use shared types from cowork-core
 use cowork_core::orchestration::{format_tool_result_for_llm, SystemPrompt};
-use ts_rs::TS;
 
 use crate::state::ProviderSettings;
 
 /// A message in the conversation (UI-specific with serialization)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, TS)]
-#[ts(export, export_to = "../../../frontend/src/bindings/")]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChatMessage {
     pub id: String,
     pub role: String,
     pub content: String,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub tool_calls: Vec<ToolCallInfo>,
-    #[ts(type = "string")]
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 /// Tool call information for display (UI-specific with serialization)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, TS)]
-#[ts(export, export_to = "../../../frontend/src/bindings/")]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ToolCallInfo {
     pub id: String,
     pub name: String,
-    #[ts(type = "Record<string, unknown>")]
     pub arguments: serde_json::Value,
     pub status: ToolCallStatus,
     pub result: Option<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, TS)]
-#[ts(export, export_to = "../../../frontend/src/bindings/")]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ToolCallStatus {
     Pending,
     Approved,
