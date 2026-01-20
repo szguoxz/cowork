@@ -176,6 +176,10 @@ pub fn run() {
             simple_commands::answer_question,
             simple_commands::list_sessions,
             simple_commands::create_session,
+            // Saved session commands
+            simple_commands::list_saved_sessions,
+            simple_commands::load_saved_session,
+            simple_commands::delete_saved_session,
             // Settings commands
             commands::get_settings,
             commands::update_settings,

@@ -179,3 +179,24 @@ pub async fn create_session(
 
     Ok(())
 }
+
+/// List saved sessions from disk
+#[tauri::command]
+pub async fn list_saved_sessions() -> Result<Vec<crate::session_storage::SessionMetadata>, String> {
+    let storage = crate::session_storage::SessionStorage::new();
+    storage.list().map_err(|e| e.to_string())
+}
+
+/// Load a saved session by ID
+#[tauri::command]
+pub async fn load_saved_session(session_id: String) -> Result<crate::session_storage::SessionData, String> {
+    let storage = crate::session_storage::SessionStorage::new();
+    storage.load(&session_id).map_err(|e| e.to_string())
+}
+
+/// Delete a saved session by ID
+#[tauri::command]
+pub async fn delete_saved_session(session_id: String) -> Result<(), String> {
+    let storage = crate::session_storage::SessionStorage::new();
+    storage.delete(&session_id).map_err(|e| e.to_string())
+}
