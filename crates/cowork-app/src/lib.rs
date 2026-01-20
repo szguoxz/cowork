@@ -151,3 +151,26 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    use ts_rs::TS;
+
+    /// Generate TypeScript bindings for all exported types.
+    /// Run with: cargo test --package cowork-app export_bindings -- --nocapture
+    #[test]
+    fn export_bindings() {
+        use crate::agentic_loop::{LoopState, QuestionOption, UserQuestion};
+        use crate::chat::{ChatMessage, ToolCallInfo, ToolCallStatus};
+
+        // Export all types - they will be written to frontend/src/bindings/
+        LoopState::export_all().expect("Failed to export LoopState");
+        QuestionOption::export_all().expect("Failed to export QuestionOption");
+        UserQuestion::export_all().expect("Failed to export UserQuestion");
+        ChatMessage::export_all().expect("Failed to export ChatMessage");
+        ToolCallInfo::export_all().expect("Failed to export ToolCallInfo");
+        ToolCallStatus::export_all().expect("Failed to export ToolCallStatus");
+
+        println!("TypeScript bindings exported to frontend/src/bindings/");
+    }
+}

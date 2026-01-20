@@ -6,6 +6,8 @@ import ContextIndicator from '../components/ContextIndicator'
 import QuestionModal from '../components/QuestionModal'
 import ToolResultFormatter from '../components/ToolResultFormatter'
 import { Button } from '../components/ui/button'
+// Use generated constants for type safety between frontend and backend
+import { INACTIVE_LOOP_STATES, type LoopState } from '../bindings'
 
 interface ToolCall {
   id: string
@@ -119,8 +121,8 @@ export default function Chat() {
       `loop:${sessionId}`,
       (event) => {
         if (event.payload.type === 'state_changed') {
-          const state = event.payload.state || ''
-          setIsLoopActive(!['idle', 'completed', 'cancelled', 'error'].includes(state))
+          const state = (event.payload.state || '') as LoopState
+          setIsLoopActive(!INACTIVE_LOOP_STATES.includes(state))
         }
         // Add new messages directly to state
         if (event.payload.type === 'message_added' && event.payload.message) {
@@ -642,10 +644,13 @@ export default function Chat() {
           </div>
         )}
 
-        {isLoading && !streamingText && !streamingThinking && (
+        {(isLoading || isLoopActive) && !streamingText && !streamingThinking && (
           <div className="flex justify-start animate-in">
-            <div className="bg-card border border-border rounded-xl px-4 py-3">
+            <div className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-2">
               <Loader2 className="w-5 h-5 animate-spin text-primary" />
+              <span className="text-sm text-muted-foreground">
+                {isLoopActive ? 'Thinking...' : 'Connecting...'}
+              </span>
             </div>
           </div>
         )}

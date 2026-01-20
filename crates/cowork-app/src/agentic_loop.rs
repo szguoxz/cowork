@@ -12,6 +12,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, RwLock};
+use ts_rs::TS;
 
 use cowork_core::context::{
     CompactConfig, CompactResult, ContextMonitor, ContextUsage, ConversationSummarizer,
@@ -24,7 +25,8 @@ use cowork_core::ToolApprovalConfig;
 use crate::chat::{ChatMessage, ChatSession, ToolCallInfo, ToolCallStatus};
 
 /// Loop states for the agentic execution
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../frontend/src/bindings/")]
 #[serde(rename_all = "snake_case")]
 pub enum LoopState {
     /// Loop is not running
@@ -46,14 +48,16 @@ pub enum LoopState {
 }
 
 /// A question option for user interaction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../frontend/src/bindings/")]
 pub struct QuestionOption {
     pub label: String,
     pub description: String,
 }
 
 /// A question to ask the user
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../frontend/src/bindings/")]
 pub struct UserQuestion {
     pub question: String,
     pub header: String,
@@ -62,6 +66,9 @@ pub struct UserQuestion {
 }
 
 /// Events emitted by the agentic loop to the frontend
+///
+/// Note: TS derive skipped due to ContextUsage from cowork-core.
+/// See frontend/src/bindings/LoopEvent.ts for manual TypeScript definition.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LoopEvent {
