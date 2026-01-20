@@ -196,11 +196,23 @@ impl Default for ApprovalConfig {
     fn default() -> Self {
         // Default: auto-approve read-only tools
         let mut auto_approve = HashSet::new();
+        // File system read operations
         auto_approve.insert("read_file".to_string());
         auto_approve.insert("list_directory".to_string());
         auto_approve.insert("search_files".to_string());
         auto_approve.insert("glob".to_string());
         auto_approve.insert("grep".to_string());
+        // Document parsing (read-only)
+        auto_approve.insert("read_pdf".to_string());
+        auto_approve.insert("read_office_doc".to_string());
+        // Web operations (read-only)
+        auto_approve.insert("web_fetch".to_string());
+        auto_approve.insert("web_search".to_string());
+        // Task/planning tools
+        auto_approve.insert("todo_write".to_string());
+        auto_approve.insert("task_output".to_string());
+        // LSP operations (read-only)
+        auto_approve.insert("lsp".to_string());
         // User interaction tools - handled specially but don't need approval
         auto_approve.insert("ask_user_question".to_string());
 

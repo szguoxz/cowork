@@ -110,12 +110,18 @@ export default function Chat() {
       request_id?: string
       tool_call_id?: string
       questions?: UserQuestion[]
+      result?: string
+      success?: boolean
     }>(
       `loop:${sessionId}`,
       (event) => {
         if (event.payload.type === 'state_changed') {
           const state = event.payload.state || ''
           setIsLoopActive(!['idle', 'completed', 'cancelled', 'error'].includes(state))
+        }
+        // Refresh messages when tools complete to show results
+        if (event.payload.type === 'tool_execution_completed') {
+          refreshMessages()
         }
         if (event.payload.type === 'loop_completed' || event.payload.type === 'loop_error') {
           setIsLoopActive(false)
