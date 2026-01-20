@@ -49,13 +49,20 @@ impl SimpleLoop {
         workspace_path: std::path::PathBuf,
         approval_config: ToolApprovalConfig,
     ) -> Self {
+        // Build system prompt with workspace info
+        let system_prompt = format!(
+            "{}\n\nWorkspace Information:\n- Current working directory: {:?}\n- All file operations are relative to this directory.\n- When user asks for 'root folder', use \".\" to refer to the workspace root.",
+            SystemPrompt::new().build(),
+            workspace_path
+        );
+
         Self {
             input_rx,
             app,
             event_name,
             provider,
             messages: Vec::new(),
-            system_prompt: SystemPrompt::new().build(),
+            system_prompt,
             tools: standard_tool_definitions(&workspace_path),
             approval_config,
             workspace_path,
