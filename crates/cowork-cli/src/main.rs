@@ -331,17 +331,17 @@ async fn run_chat(
         }
 
         match input {
-            "exit" | "quit" | "q" | "/exit" | "/quit" | "/q" => {
+            "/exit" | "/quit" | "/q" => {
                 println!("{}", style("Goodbye!").green());
                 break;
             }
-            "help" | "?" | "/help" | "/?" => {
+            "/help" | "/?" => {
                 print_help();
             }
-            "tools" | "/tools" => {
+            "/tools" => {
                 show_tools();
             }
-            "clear" | "/clear" => {
+            "/clear" => {
                 messages.clear();
                 println!("{}", style("Conversation cleared.").green());
             }
