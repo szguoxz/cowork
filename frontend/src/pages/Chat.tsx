@@ -27,11 +27,13 @@ export default function Chat() {
   const messages = session?.messages || []
   const isIdle = session?.isIdle ?? false
   const isReady = session?.isReady ?? false
+  const isThinking = session?.isThinking ?? false
+  const thinkingContent = session?.thinkingContent
 
-  // Scroll to bottom on new messages
+  // Scroll to bottom on new messages or thinking content
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, thinkingContent])
 
   // Sync session error to local error state
   useEffect(() => {
@@ -195,24 +197,35 @@ export default function Chat() {
                   {JSON.stringify(msg.tool.arguments, null, 2)}
                 </div>
 
-                {msg.tool.output && (
-                  <div className="px-3 py-2 border-t border-border bg-background">
-                    <pre className="whitespace-pre-wrap text-xs font-mono max-h-48 overflow-auto">
-                      {msg.tool.output}
-                    </pre>
-                  </div>
-                )}
+    {/* Tool output hidden from frontend */}
               </div>
             )}
           </div>
         ))}
 
-        {/* Loading indicator when not idle */}
-        {isReady && !isIdle && (
+        {/* Thinking indicator with actual content */}
+        {isReady && !isIdle && isThinking && (
+          <div className="flex justify-start">
+            <div className="max-w-[80%] bg-card border border-border rounded-xl px-4 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                <span className="text-sm font-medium text-muted-foreground">Thinking</span>
+              </div>
+              {thinkingContent && (
+                <pre className="whitespace-pre-wrap font-sans text-sm text-muted-foreground/80 max-h-64 overflow-auto">
+                  {thinkingContent}
+                </pre>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Loading indicator when processing but not thinking */}
+        {isReady && !isIdle && !isThinking && (
           <div className="flex justify-start">
             <div className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin text-primary" />
-              <span className="text-sm text-muted-foreground">Thinking...</span>
+              <span className="text-sm text-muted-foreground">Working...</span>
             </div>
           </div>
         )}

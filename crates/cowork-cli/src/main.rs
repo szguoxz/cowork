@@ -320,12 +320,12 @@ async fn run_one_shot(
             SessionOutput::ToolStart { name, .. } => {
                 println!("  {} {}", style("[Executing:").dim(), style(&name).yellow());
             }
-            SessionOutput::ToolDone { name, success, output, .. } => {
+            SessionOutput::ToolDone { name, success, .. } => {
+                // Only show status, not the full result
                 if success {
-                    let truncated = truncate_output(&output, 500);
-                    println!("  {} {} {}", style("[Done:").dim(), style(&name).green(), style(truncated).dim());
+                    println!("  {} {}", style("✓").green(), style(format!("{} completed", name)).dim());
                 } else {
-                    println!("  {} {} {}", style("[Failed:").dim(), style(&name).red(), style(&output).red());
+                    println!("  {} {}", style("✗").red(), style(format!("{} failed", name)).dim());
                 }
             }
             SessionOutput::ToolPending { id, name, arguments, .. } => {
@@ -358,15 +358,6 @@ async fn run_one_shot(
     session_manager.stop_session(session_id).await?;
 
     Ok(())
-}
-
-/// Truncate output for display
-fn truncate_output(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len])
-    }
 }
 
 async fn run_chat(
@@ -492,8 +483,34 @@ async fn run_chat(
                                 SessionOutput::UserMessage { .. } => {
                                     // User message echo - we already printed it
                                 }
-                                SessionOutput::Thinking { .. } => {
-                                    // Show spinner
+                                SessionOutput::Thinking { content } => {
+                                    // Clear previous spinner if any
+                                    if let Some(s) = spinner.take() {
+                                        s.finish_and_clear();
+                                    }
+
+                                    // Display thinking content if available
+                                    if !content.is_empty() {
+                                        println!();
+                                        println!("{}", style("┌─ Thinking ──────────────────────────────────────").dim().blue());
+                                        // Truncate thinking content for display
+                                        let max_lines = 20;
+                                        let lines: Vec<&str> = content.lines().collect();
+                                        let display_lines = if lines.len() > max_lines {
+                                            &lines[..max_lines]
+                                        } else {
+                                            &lines[..]
+                                        };
+                                        for line in display_lines {
+                                            println!("│ {}", style(line).dim());
+                                        }
+                                        if lines.len() > max_lines {
+                                            println!("│ {}", style(format!("... ({} more lines)", lines.len() - max_lines)).dim().italic());
+                                        }
+                                        println!("{}", style("└─────────────────────────────────────────────────").dim().blue());
+                                    }
+
+                                    // Show spinner for ongoing thinking
                                     let s = ProgressBar::new_spinner();
                                     s.set_style(
                                         ProgressStyle::default_spinner()
@@ -631,18 +648,15 @@ async fn run_chat(
                                         }
                                     }
                                 }
-                                SessionOutput::ToolDone { name, success, output, .. } => {
+                                SessionOutput::ToolDone { name, success, .. } => {
                                     if let Some(s) = spinner.take() {
                                         s.finish_and_clear();
                                     }
+                                    // Only show status indicator, not the full result
                                     if success {
-                                        let formatted = format_tool_result_cli(&name, &output);
-                                        println!("  {}", style("Result:").bold().green());
-                                        for line in formatted.lines() {
-                                            println!("    {}", line);
-                                        }
+                                        println!("  {} {}", style("✓").green(), style(format!("{} completed", name)).dim());
                                     } else {
-                                        println!("  {}", style(format!("Error: {}", output)).red());
+                                        println!("  {} {}", style("✗").red(), style(format!("{} failed", name)).dim());
                                     }
                                 }
                                 SessionOutput::Question { request_id, questions } => {
@@ -886,18 +900,6 @@ fn handle_questions_interactive(
     Ok(answers)
 }
 
-/// Format tool result for CLI display
-#[allow(dead_code)]
-fn format_tool_result_cli(_tool_name: &str, result: &str) -> String {
-    // Truncate long results
-    let max_len = 2000;
-    if result.len() > max_len {
-        format!("{}... (truncated, {} total chars)", &result[..max_len], result.len())
-    } else {
-        result.to_string()
-    }
-}
-
 /// Handle slash commands
 async fn handle_slash_command(cmd: &str, workspace: &Path, registry: &SkillRegistry) {
     let result = registry.execute_command(cmd, workspace.to_path_buf()).await;
@@ -974,20 +976,16 @@ async fn run_command(workspace: &Path, command: &str) -> anyhow::Result<()> {
     match result {
         Ok(output) => {
             if output.success {
-                if let Some(stdout) = output.content.get("stdout") {
-                    if let Some(s) = stdout.as_str() {
-                        if !s.is_empty() {
+                if let Some(stdout) = output.content.get("stdout")
+                    && let Some(s) = stdout.as_str()
+                        && !s.is_empty() {
                             println!("{}", s);
                         }
-                    }
-                }
-                if let Some(stderr) = output.content.get("stderr") {
-                    if let Some(s) = stderr.as_str() {
-                        if !s.is_empty() {
+                if let Some(stderr) = output.content.get("stderr")
+                    && let Some(s) = stderr.as_str()
+                        && !s.is_empty() {
                             eprintln!("{}", style(s).yellow());
                         }
-                    }
-                }
             } else {
                 println!("{}", style("Command failed").red());
                 if let Some(err) = output.error {
@@ -1014,8 +1012,8 @@ async fn list_files(workspace: &Path, path: &str) -> anyhow::Result<()> {
 
     match result {
         Ok(output) => {
-            if let Some(entries) = output.content.get("entries") {
-                if let Some(arr) = entries.as_array() {
+            if let Some(entries) = output.content.get("entries")
+                && let Some(arr) = entries.as_array() {
                     for entry in arr {
                         let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
                         let is_dir = entry.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -1031,7 +1029,6 @@ async fn list_files(workspace: &Path, path: &str) -> anyhow::Result<()> {
                         }
                     }
                 }
-            }
         }
         Err(e) => {
             println!("{}", style(format!("Error: {}", e)).red());
@@ -1051,11 +1048,10 @@ async fn read_file(workspace: &Path, path: &str) -> anyhow::Result<()> {
 
     match result {
         Ok(output) => {
-            if let Some(content) = output.content.get("content") {
-                if let Some(s) = content.as_str() {
+            if let Some(content) = output.content.get("content")
+                && let Some(s) = content.as_str() {
                     println!("{}", s);
                 }
-            }
         }
         Err(e) => {
             println!("{}", style(format!("Error: {}", e)).red());
@@ -1092,8 +1088,8 @@ async fn search_files(workspace: &Path, pattern: &str, in_content: bool) -> anyh
 
     match result {
         Ok(output) => {
-            if let Some(results) = output.content.get("results") {
-                if let Some(arr) = results.as_array() {
+            if let Some(results) = output.content.get("results")
+                && let Some(arr) = results.as_array() {
                     if arr.is_empty() {
                         println!("{}", style("No matches found").yellow());
                     } else {
@@ -1105,7 +1101,6 @@ async fn search_files(workspace: &Path, pattern: &str, in_content: bool) -> anyh
                         println!("{}", style(format!("Found {} matches", arr.len())).dim());
                     }
                 }
-            }
         }
         Err(e) => {
             println!("{}", style(format!("Error: {}", e)).red());
