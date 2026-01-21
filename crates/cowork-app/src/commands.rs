@@ -75,26 +75,50 @@ pub async fn check_api_key(state: State<'_, AppState>) -> Result<bool, String> {
     Ok(cm.has_api_key())
 }
 
+/// API test result matching frontend expectations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiTestResult {
+    pub success: bool,
+    pub message: String,
+}
+
 /// Test the API connection with current settings
 #[tauri::command]
 pub async fn test_api_connection(
     provider_type: String,
     api_key: String,
     model: String,
-) -> Result<String, String> {
-    let ptype: ProviderType = provider_type
-        .parse()
-        .map_err(|e: String| e)?;
+) -> Result<ApiTestResult, String> {
+    let ptype: ProviderType = match provider_type.parse() {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(ApiTestResult {
+                success: false,
+                message: e,
+            });
+        }
+    };
 
     let provider = create_provider_with_settings(ptype, &api_key, &model);
 
     // Try a simple completion
-    let request = LlmRequest::new(vec![cowork_core::provider::LlmMessage::user("Say 'hello' and nothing else.")])
+    let request = LlmRequest::new(vec![cowork_core::provider::LlmMessage::user(
+        "Say 'hello' and nothing else.",
+    )])
     .with_max_tokens(10);
 
-    let response = provider.complete(request).await.map_err(|e| e.to_string())?;
-
-    Ok(response.content.unwrap_or_else(|| "No response".to_string()))
+    match provider.complete(request).await {
+        Ok(response) => Ok(ApiTestResult {
+            success: true,
+            message: response
+                .content
+                .unwrap_or_else(|| "Connected successfully".to_string()),
+        }),
+        Err(e) => Ok(ApiTestResult {
+            success: false,
+            message: e.to_string(),
+        }),
+    }
 }
 
 /// Check if initial setup is complete
