@@ -205,14 +205,13 @@ impl OnboardingWizard {
                 .await?;
 
             // Step 4: Connection test (skip for Ollama)
-            if let Some(ref key) = api_key {
-                if !self.test_connection(provider_type, key, &model).await? {
+            if let Some(ref key) = api_key
+                && !self.test_connection(provider_type, key, &model).await? {
                     // User chose to try again - loop back to step 2
                     println!("{}", style("Let's try again...").dim());
                     println!();
                     continue;
                 }
-            }
 
             // Step 5: Save configuration
             self.save_config(provider_type, &provider_info, api_key.as_deref(), &model)?;

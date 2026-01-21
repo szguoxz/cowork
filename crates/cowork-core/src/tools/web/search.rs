@@ -1,12 +1,14 @@
 //! WebSearch tool - Search the web for information
 //!
-//! Provides web search capability using search APIs.
-
+//! Provides web search capability with support for multiple search providers.
+//! For providers with native web search (Anthropic, OpenAI, Groq, xAI, Gemini, Cohere),
+//! native search is preferred. For others, falls back to external search APIs.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::approval::ApprovalLevel;
+use crate::config::WebSearchConfig;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
@@ -18,69 +20,82 @@ pub struct SearchResult {
     pub snippet: String,
 }
 
-/// Configuration for web search
-#[derive(Debug, Clone)]
-pub struct WebSearchConfig {
-    /// API endpoint for search (e.g., SearXNG, Brave, etc.)
-    pub api_endpoint: Option<String>,
-    /// API key if required
-    pub api_key: Option<String>,
-    /// Maximum results to return
-    pub max_results: usize,
-}
+/// Providers that support native web search
+pub const NATIVE_SEARCH_PROVIDERS: &[&str] = &[
+    "anthropic",
+    "openai",
+    "perplexity",
+    "gemini",
+    "google",
+    "cohere",
+    "groq",
+    "xai",
+    "grok",
+];
 
-impl Default for WebSearchConfig {
-    fn default() -> Self {
-        Self {
-            api_endpoint: None,
-            api_key: None,
-            max_results: 10,
-        }
-    }
+/// Check if a provider supports native web search
+pub fn supports_native_search(provider_type: &str) -> bool {
+    NATIVE_SEARCH_PROVIDERS.contains(&provider_type.to_lowercase().as_str())
 }
 
 /// Tool for searching the web
 pub struct WebSearch {
     config: WebSearchConfig,
+    provider_type: Option<String>,
 }
 
 impl WebSearch {
     pub fn new() -> Self {
         Self {
             config: WebSearchConfig::default(),
+            provider_type: None,
         }
     }
 
     pub fn with_config(config: WebSearchConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            provider_type: None,
+        }
     }
 
-    /// Perform the actual search
-    async fn search(
+    pub fn with_provider(mut self, provider_type: impl Into<String>) -> Self {
+        self.provider_type = Some(provider_type.into());
+        self
+    }
+
+    /// Check if this instance should use native search
+    pub fn should_use_native(&self) -> bool {
+        self.provider_type
+            .as_ref()
+            .map(|p| supports_native_search(p))
+            .unwrap_or(false)
+    }
+
+    /// Perform search using fallback provider
+    async fn search_fallback(
         &self,
         query: &str,
         allowed_domains: &[String],
         blocked_domains: &[String],
     ) -> Result<Vec<SearchResult>, String> {
-        // If no API endpoint configured, return a helpful message
-        if self.config.api_endpoint.is_none() {
-            return Ok(vec![SearchResult {
-                title: "Web Search Not Configured".to_string(),
-                url: "".to_string(),
-                snippet: format!(
-                    "Web search is not configured. To enable, set up a search API endpoint. \
-                     Query was: {}",
-                    query
-                ),
-            }]);
+        let endpoint = self.config.get_fallback_endpoint()
+            .ok_or_else(|| "No search endpoint configured. Set fallback_endpoint in web_search config.".to_string())?;
+
+        let api_key = self.config.get_fallback_api_key();
+
+        // Check if API key is required but missing
+        if self.config.fallback_provider != "searxng" && api_key.is_none() {
+            return Err(format!(
+                "No API key configured for {} search. Set fallback_api_key or {} environment variable.",
+                self.config.fallback_provider,
+                self.config.fallback_api_key_env.as_deref().unwrap_or("BRAVE_API_KEY")
+            ));
         }
 
-        let endpoint = self.config.api_endpoint.as_ref().unwrap();
-
-        // Build search URL with domain filters
+        // Build search query with domain filters
         let mut search_query = query.to_string();
 
-        // Add site restrictions for allowed domains
         if !allowed_domains.is_empty() {
             let site_filter = allowed_domains
                 .iter()
@@ -90,69 +105,184 @@ impl WebSearch {
             search_query = format!("({}) {}", site_filter, search_query);
         }
 
-        // Add negative site filters for blocked domains
         for domain in blocked_domains {
             search_query = format!("{} -site:{}", search_query, domain);
         }
 
-        // Make HTTP request to search API
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-        let mut request = client.get(endpoint).query(&[
-            ("q", search_query.as_str()),
-            ("format", "json"),
-            ("count", &self.config.max_results.to_string()),
-        ]);
+        // Build request based on provider
+        let response = match self.config.fallback_provider.as_str() {
+            "brave" => self.search_brave(&client, &endpoint, &search_query, api_key.as_deref()).await?,
+            "serper" => self.search_serper(&client, &endpoint, &search_query, api_key.as_deref()).await?,
+            "tavily" => self.search_tavily(&client, &endpoint, &search_query, api_key.as_deref()).await?,
+            "searxng" => self.search_searxng(&client, &endpoint, &search_query).await?,
+            _ => return Err(format!("Unknown search provider: {}", self.config.fallback_provider)),
+        };
 
-        // Add API key if configured
-        if let Some(api_key) = &self.config.api_key {
-            request = request.header("Authorization", format!("Bearer {}", api_key));
-        }
+        Ok(response)
+    }
 
-        let response = request
+    async fn search_brave(
+        &self,
+        client: &reqwest::Client,
+        endpoint: &str,
+        query: &str,
+        api_key: Option<&str>,
+    ) -> Result<Vec<SearchResult>, String> {
+        let api_key = api_key.ok_or("Brave API key required")?;
+
+        let response = client
+            .get(endpoint)
+            .header("X-Subscription-Token", api_key)
+            .query(&[
+                ("q", query),
+                ("count", &self.config.max_results.to_string()),
+            ])
             .send()
             .await
-            .map_err(|e| format!("Search request failed: {}", e))?;
+            .map_err(|e| format!("Brave search failed: {}", e))?;
 
         if !response.status().is_success() {
-            return Err(format!("Search API returned error: {}", response.status()));
+            return Err(format!("Brave API error: {}", response.status()));
         }
 
-        // Parse response - this depends on the search API format
-        // For SearXNG-style response:
-        let body: Value = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse search response: {}", e))?;
+        let body: Value = response.json().await
+            .map_err(|e| format!("Failed to parse Brave response: {}", e))?;
 
         let mut results = Vec::new();
+        if let Some(web) = body.get("web").and_then(|w| w.get("results")).and_then(|r| r.as_array()) {
+            for item in web.iter().take(self.config.max_results) {
+                results.push(SearchResult {
+                    title: item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                    url: item.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
+                    snippet: item.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+                });
+            }
+        }
 
+        Ok(results)
+    }
+
+    async fn search_serper(
+        &self,
+        client: &reqwest::Client,
+        endpoint: &str,
+        query: &str,
+        api_key: Option<&str>,
+    ) -> Result<Vec<SearchResult>, String> {
+        let api_key = api_key.ok_or("Serper API key required")?;
+
+        let response = client
+            .post(endpoint)
+            .header("X-API-KEY", api_key)
+            .header("Content-Type", "application/json")
+            .json(&json!({
+                "q": query,
+                "num": self.config.max_results
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Serper search failed: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Serper API error: {}", response.status()));
+        }
+
+        let body: Value = response.json().await
+            .map_err(|e| format!("Failed to parse Serper response: {}", e))?;
+
+        let mut results = Vec::new();
+        if let Some(organic) = body.get("organic").and_then(|o| o.as_array()) {
+            for item in organic.iter().take(self.config.max_results) {
+                results.push(SearchResult {
+                    title: item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                    url: item.get("link").and_then(|l| l.as_str()).unwrap_or("").to_string(),
+                    snippet: item.get("snippet").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn search_tavily(
+        &self,
+        client: &reqwest::Client,
+        endpoint: &str,
+        query: &str,
+        api_key: Option<&str>,
+    ) -> Result<Vec<SearchResult>, String> {
+        let api_key = api_key.ok_or("Tavily API key required")?;
+
+        let response = client
+            .post(endpoint)
+            .header("Content-Type", "application/json")
+            .json(&json!({
+                "api_key": api_key,
+                "query": query,
+                "max_results": self.config.max_results,
+                "include_answer": false
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Tavily search failed: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Tavily API error: {}", response.status()));
+        }
+
+        let body: Value = response.json().await
+            .map_err(|e| format!("Failed to parse Tavily response: {}", e))?;
+
+        let mut results = Vec::new();
         if let Some(items) = body.get("results").and_then(|r| r.as_array()) {
             for item in items.iter().take(self.config.max_results) {
-                let title = item
-                    .get("title")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("No title")
-                    .to_string();
-                let url = item
-                    .get("url")
-                    .and_then(|u| u.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let snippet = item
-                    .get("content")
-                    .or_else(|| item.get("snippet"))
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
                 results.push(SearchResult {
-                    title,
-                    url,
-                    snippet,
+                    title: item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                    url: item.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
+                    snippet: item.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string(),
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn search_searxng(
+        &self,
+        client: &reqwest::Client,
+        endpoint: &str,
+        query: &str,
+    ) -> Result<Vec<SearchResult>, String> {
+        let response = client
+            .get(endpoint)
+            .query(&[
+                ("q", query),
+                ("format", "json"),
+                ("categories", "general"),
+            ])
+            .send()
+            .await
+            .map_err(|e| format!("SearXNG search failed: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("SearXNG error: {}", response.status()));
+        }
+
+        let body: Value = response.json().await
+            .map_err(|e| format!("Failed to parse SearXNG response: {}", e))?;
+
+        let mut results = Vec::new();
+        if let Some(items) = body.get("results").and_then(|r| r.as_array()) {
+            for item in items.iter().take(self.config.max_results) {
+                results.push(SearchResult {
+                    title: item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                    url: item.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
+                    snippet: item.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string(),
                 });
             }
         }
@@ -167,19 +297,17 @@ impl Default for WebSearch {
     }
 }
 
-
 impl Tool for WebSearch {
     fn name(&self) -> &str {
         "WebSearch"
     }
 
     fn description(&self) -> &str {
-        "Allows Claude to search the web and use the results to inform responses.\n\n\
-         - Provides up-to-date information for current events and recent data\n\
-         - Returns search result information with links as markdown hyperlinks\n\
-         - Use this tool for accessing information beyond the knowledge cutoff\n\
-         - Domain filtering is supported to include or block specific websites\n\
-         - IMPORTANT: After answering the user's question, include a \"Sources:\" section at the end with relevant URLs"
+        "Search the web for up-to-date information.\n\n\
+         - Provides current information beyond the knowledge cutoff\n\
+         - Returns search results with titles, URLs, and snippets\n\
+         - Domain filtering supported via allowed_domains and blocked_domains\n\
+         - IMPORTANT: Include a \"Sources:\" section with URLs in your response"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -188,22 +316,18 @@ impl Tool for WebSearch {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The search query to use",
+                    "description": "The search query",
                     "minLength": 2
                 },
                 "allowed_domains": {
                     "type": "array",
                     "description": "Only include results from these domains",
-                    "items": {
-                        "type": "string"
-                    }
+                    "items": { "type": "string" }
                 },
                 "blocked_domains": {
                     "type": "array",
-                    "description": "Never include results from these domains",
-                    "items": {
-                        "type": "string"
-                    }
+                    "description": "Exclude results from these domains",
+                    "items": { "type": "string" }
                 }
             },
             "required": ["query"]
@@ -212,48 +336,73 @@ impl Tool for WebSearch {
 
     fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
-        let query = params["query"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidParams("query is required".into()))?;
+            let query = params["query"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidParams("query is required".into()))?;
 
-        if query.len() < 2 {
-            return Err(ToolError::InvalidParams(
-                "query must be at least 2 characters".into(),
-            ));
-        }
+            if query.len() < 2 {
+                return Err(ToolError::InvalidParams(
+                    "query must be at least 2 characters".into(),
+                ));
+            }
 
-        let allowed_domains: Vec<String> = params
-            .get("allowed_domains")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+            let allowed_domains: Vec<String> = params
+                .get("allowed_domains")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
 
-        let blocked_domains: Vec<String> = params
-            .get("blocked_domains")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+            let blocked_domains: Vec<String> = params
+                .get("blocked_domains")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
 
-        match self.search(query, &allowed_domains, &blocked_domains).await {
-            Ok(results) => Ok(ToolOutput::success(json!({
-                "query": query,
-                "results": results,
-                "count": results.len()
-            }))),
-            Err(e) => Err(ToolError::ExecutionFailed(e)),
-        }
-            })
+            // For now, always use fallback search
+            // Native search integration will be handled at the provider level
+            match self.search_fallback(query, &allowed_domains, &blocked_domains).await {
+                Ok(results) => {
+                    let count = results.len();
+                    Ok(ToolOutput::success(json!({
+                        "query": query,
+                        "results": results,
+                        "count": count,
+                        "provider": self.config.fallback_provider
+                    })))
+                }
+                Err(e) => Err(ToolError::ExecutionFailed(e)),
+            }
+        })
     }
 
     fn approval_level(&self) -> ApprovalLevel {
         ApprovalLevel::Low
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_native_search_providers() {
+        assert!(supports_native_search("anthropic"));
+        assert!(supports_native_search("openai"));
+        assert!(supports_native_search("groq"));
+        assert!(supports_native_search("xai"));
+        assert!(supports_native_search("gemini"));
+        assert!(supports_native_search("cohere"));
+        assert!(supports_native_search("perplexity"));
+
+        assert!(!supports_native_search("deepseek"));
+        assert!(!supports_native_search("ollama"));
+        assert!(!supports_native_search("together"));
+    }
+
+    #[test]
+    fn test_default_endpoints() {
+        let config = WebSearchConfig::default();
+        assert!(config.get_fallback_endpoint().is_some());
+        assert!(config.get_fallback_endpoint().unwrap().contains("brave"));
     }
 }

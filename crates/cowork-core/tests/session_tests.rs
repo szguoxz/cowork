@@ -21,6 +21,7 @@ fn test_config() -> SessionConfig {
         provider_type: ProviderType::Anthropic,
         model: None,
         api_key: None,
+        web_search_config: None,
     }
 }
 
@@ -385,7 +386,7 @@ mod session_output_tests {
         match deserialized {
             SessionOutput::Question { request_id, questions } => {
                 assert_eq!(request_id, "req-1");
-                assert_eq!(questions[0].multi_select, true);
+                assert!(questions[0].multi_select);
             }
             _ => panic!("Deserialization failed"),
         }
@@ -618,6 +619,250 @@ mod question_types_tests {
         assert_eq!(cloned.header, question.header);
         assert_eq!(cloned.multi_select, question.multi_select);
         assert_eq!(cloned.options.len(), question.options.len());
+    }
+}
+
+mod tool_result_format_tests {
+    use cowork_core::orchestration::ChatSession;
+    use cowork_core::provider::{ContentBlock, MessageContent};
+
+    /// Test that single tool result creates proper content block format
+    #[test]
+    fn test_single_tool_result_format() {
+        let mut session = ChatSession::new();
+
+        // Add a user message
+        session.add_user_message("Read the file");
+
+        // Add assistant message with tool call
+        let tool_calls = vec![
+            cowork_core::orchestration::ToolCallInfo::new(
+                "call_123",
+                "Read",
+                serde_json::json!({"file_path": "/test.txt"})
+            )
+        ];
+        session.add_assistant_message("I'll read that file", tool_calls);
+
+        // Add tool result
+        session.add_tool_result("call_123", "File contents here");
+
+        // Convert to LLM messages
+        let llm_messages = session.to_llm_messages();
+
+        // Find the tool result message
+        let tool_result_msg = llm_messages.iter()
+            .find(|m| m.role == "user" && matches!(&m.content, MessageContent::Blocks(_)))
+            .expect("Should have tool result message");
+
+        // Verify it's a USER message with content blocks
+        assert_eq!(tool_result_msg.role, "user");
+        if let MessageContent::Blocks(blocks) = &tool_result_msg.content {
+            assert_eq!(blocks.len(), 1);
+            match &blocks[0] {
+                ContentBlock::ToolResult { tool_use_id, content, is_error } => {
+                    assert_eq!(tool_use_id, "call_123");
+                    assert_eq!(content, "File contents here");
+                    assert!(is_error.is_none()); // Not an error
+                }
+                _ => panic!("Expected ToolResult block"),
+            }
+        } else {
+            panic!("Expected Blocks content");
+        }
+    }
+
+    /// Test that tool error results include is_error flag
+    #[test]
+    fn test_tool_error_result_format() {
+        let mut session = ChatSession::new();
+
+        session.add_user_message("Delete the file");
+        let tool_calls = vec![
+            cowork_core::orchestration::ToolCallInfo::new(
+                "call_456",
+                "delete_file",
+                serde_json::json!({"path": "/protected.txt"})
+            )
+        ];
+        session.add_assistant_message("I'll delete that file", tool_calls);
+
+        // Add tool result with error
+        session.add_tool_result_with_error("call_456", "Permission denied", true);
+
+        let llm_messages = session.to_llm_messages();
+
+        let tool_result_msg = llm_messages.last().expect("Should have messages");
+        if let MessageContent::Blocks(blocks) = &tool_result_msg.content {
+            match &blocks[0] {
+                ContentBlock::ToolResult { tool_use_id, content, is_error } => {
+                    assert_eq!(tool_use_id, "call_456");
+                    assert_eq!(content, "Permission denied");
+                    assert_eq!(*is_error, Some(true)); // Error flag set
+                }
+                _ => panic!("Expected ToolResult block"),
+            }
+        } else {
+            panic!("Expected Blocks content");
+        }
+    }
+
+    /// Test that multiple tool results are batched into single message
+    #[test]
+    fn test_batched_tool_results_format() {
+        let mut session = ChatSession::new();
+
+        session.add_user_message("Read two files");
+        let tool_calls = vec![
+            cowork_core::orchestration::ToolCallInfo::new(
+                "call_1",
+                "Read",
+                serde_json::json!({"file_path": "/file1.txt"})
+            ),
+            cowork_core::orchestration::ToolCallInfo::new(
+                "call_2",
+                "Read",
+                serde_json::json!({"file_path": "/file2.txt"})
+            ),
+        ];
+        session.add_assistant_message("I'll read both files", tool_calls);
+
+        // Add batched tool results
+        session.add_tool_results(vec![
+            ("call_1".to_string(), "Contents of file 1".to_string(), false),
+            ("call_2".to_string(), "Contents of file 2".to_string(), false),
+        ]);
+
+        let llm_messages = session.to_llm_messages();
+
+        // Should be 3 messages: user, assistant (with tool calls), user (tool results)
+        assert_eq!(llm_messages.len(), 3);
+
+        let tool_result_msg = &llm_messages[2];
+        assert_eq!(tool_result_msg.role, "user");
+
+        if let MessageContent::Blocks(blocks) = &tool_result_msg.content {
+            // Should have 2 tool results in a single message
+            assert_eq!(blocks.len(), 2);
+
+            // Verify first result
+            match &blocks[0] {
+                ContentBlock::ToolResult { tool_use_id, content, .. } => {
+                    assert_eq!(tool_use_id, "call_1");
+                    assert_eq!(content, "Contents of file 1");
+                }
+                _ => panic!("Expected ToolResult block"),
+            }
+
+            // Verify second result
+            match &blocks[1] {
+                ContentBlock::ToolResult { tool_use_id, content, .. } => {
+                    assert_eq!(tool_use_id, "call_2");
+                    assert_eq!(content, "Contents of file 2");
+                }
+                _ => panic!("Expected ToolResult block"),
+            }
+        } else {
+            panic!("Expected Blocks content");
+        }
+    }
+
+    /// Test that batched results can include both success and error
+    #[test]
+    fn test_batched_mixed_results() {
+        let mut session = ChatSession::new();
+
+        session.add_user_message("Try two operations");
+        let tool_calls = vec![
+            cowork_core::orchestration::ToolCallInfo::new(
+                "op_1",
+                "Read",
+                serde_json::json!({"file_path": "/exists.txt"})
+            ),
+            cowork_core::orchestration::ToolCallInfo::new(
+                "op_2",
+                "Read",
+                serde_json::json!({"file_path": "/missing.txt"})
+            ),
+        ];
+        session.add_assistant_message("Trying both", tool_calls);
+
+        // Add batched results with mixed success/failure
+        session.add_tool_results(vec![
+            ("op_1".to_string(), "File contents".to_string(), false), // Success
+            ("op_2".to_string(), "File not found".to_string(), true), // Error
+        ]);
+
+        let llm_messages = session.to_llm_messages();
+        let tool_result_msg = llm_messages.last().expect("Should have messages");
+
+        if let MessageContent::Blocks(blocks) = &tool_result_msg.content {
+            assert_eq!(blocks.len(), 2);
+
+            // First should be success (no is_error)
+            match &blocks[0] {
+                ContentBlock::ToolResult { is_error, .. } => {
+                    assert!(is_error.is_none() || *is_error == Some(false));
+                }
+                _ => panic!("Expected ToolResult"),
+            }
+
+            // Second should be error
+            match &blocks[1] {
+                ContentBlock::ToolResult { is_error, .. } => {
+                    assert_eq!(*is_error, Some(true));
+                }
+                _ => panic!("Expected ToolResult"),
+            }
+        } else {
+            panic!("Expected Blocks content");
+        }
+    }
+
+    /// Test assistant message with tool calls creates proper content blocks
+    #[test]
+    fn test_assistant_tool_use_format() {
+        let mut session = ChatSession::new();
+
+        session.add_user_message("Search for foo");
+        let tool_calls = vec![
+            cowork_core::orchestration::ToolCallInfo::new(
+                "grep_1",
+                "Grep",
+                serde_json::json!({"pattern": "foo", "path": "."})
+            ),
+        ];
+        session.add_assistant_message("Let me search for that", tool_calls);
+
+        let llm_messages = session.to_llm_messages();
+        let assistant_msg = &llm_messages[1];
+
+        assert_eq!(assistant_msg.role, "assistant");
+
+        if let MessageContent::Blocks(blocks) = &assistant_msg.content {
+            // Should have text + tool_use blocks
+            assert!(blocks.len() >= 2);
+
+            // First block should be text
+            match &blocks[0] {
+                ContentBlock::Text { text } => {
+                    assert_eq!(text, "Let me search for that");
+                }
+                _ => panic!("Expected Text block first"),
+            }
+
+            // Second block should be tool_use
+            match &blocks[1] {
+                ContentBlock::ToolUse { id, name, input } => {
+                    assert_eq!(id, "grep_1");
+                    assert_eq!(name, "Grep");
+                    assert_eq!(input["pattern"], "foo");
+                }
+                _ => panic!("Expected ToolUse block"),
+            }
+        } else {
+            panic!("Expected Blocks content");
+        }
     }
 }
 

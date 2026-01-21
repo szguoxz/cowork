@@ -100,11 +100,10 @@ impl TaskExecutor {
                     })
                     .await;
 
-                    if !result.output.success {
-                        if let Some(err) = result.output.error {
+                    if !result.output.success
+                        && let Some(err) = result.output.error {
                             errors.push(err);
                         }
-                    }
                 }
                 Err(e) => {
                     errors.push(e.to_string());

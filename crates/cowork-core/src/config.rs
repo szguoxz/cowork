@@ -167,6 +167,9 @@ pub struct Config {
     /// General application settings
     #[serde(default)]
     pub general: GeneralConfig,
+    /// Web search settings
+    #[serde(default)]
+    pub web_search: WebSearchConfig,
 }
 
 fn default_provider_name() -> String {
@@ -191,6 +194,7 @@ impl Default for Config {
             approval: ApprovalConfig::default(),
             browser: BrowserConfig::default(),
             general: GeneralConfig::default(),
+            web_search: WebSearchConfig::default(),
         }
     }
 }
@@ -615,20 +619,17 @@ impl ProviderConfig {
     /// Get the API key, checking environment variable if not set directly
     pub fn get_api_key(&self) -> Option<String> {
         // First check direct API key
-        if let Some(key) = &self.api_key {
-            if !key.is_empty() {
+        if let Some(key) = &self.api_key
+            && !key.is_empty() {
                 return Some(key.clone());
             }
-        }
 
         // Then check environment variable
-        if let Some(env_name) = &self.api_key_env {
-            if let Ok(key) = std::env::var(env_name) {
-                if !key.is_empty() {
+        if let Some(env_name) = &self.api_key_env
+            && let Ok(key) = std::env::var(env_name)
+                && !key.is_empty() {
                     return Some(key);
                 }
-            }
-        }
 
         // Try default environment variables based on provider
         match self.provider_type.as_str() {
@@ -713,6 +714,98 @@ impl Default for GeneralConfig {
             log_level: "info".to_string(),
             telemetry: false,
         }
+    }
+}
+
+/// Web search configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSearchConfig {
+    /// Fallback search provider when native search is not available
+    /// Options: "brave", "searxng", "serper", "tavily"
+    #[serde(default = "default_fallback_provider")]
+    pub fallback_provider: String,
+    /// API endpoint for fallback search (e.g., SearXNG instance URL)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_endpoint: Option<String>,
+    /// API key for fallback search provider
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_api_key: Option<String>,
+    /// Environment variable name for fallback API key
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_api_key_env: Option<String>,
+    /// Maximum results to return
+    #[serde(default = "default_max_results")]
+    pub max_results: usize,
+}
+
+fn default_fallback_provider() -> String {
+    "brave".to_string()
+}
+
+fn default_max_results() -> usize {
+    10
+}
+
+impl Default for WebSearchConfig {
+    fn default() -> Self {
+        Self {
+            fallback_provider: default_fallback_provider(),
+            fallback_endpoint: None,
+            fallback_api_key: None,
+            fallback_api_key_env: Some("BRAVE_API_KEY".to_string()),
+            max_results: default_max_results(),
+        }
+    }
+}
+
+impl WebSearchConfig {
+    /// Get the fallback API key, checking environment variable if not set directly
+    pub fn get_fallback_api_key(&self) -> Option<String> {
+        // First check direct API key
+        if let Some(key) = &self.fallback_api_key {
+            if !key.is_empty() {
+                return Some(key.clone());
+            }
+        }
+
+        // Then check environment variable
+        if let Some(env_name) = &self.fallback_api_key_env {
+            if let Ok(key) = std::env::var(env_name) {
+                if !key.is_empty() {
+                    return Some(key);
+                }
+            }
+        }
+
+        // Try default environment variables based on provider
+        match self.fallback_provider.as_str() {
+            "brave" => std::env::var("BRAVE_API_KEY").ok(),
+            "serper" => std::env::var("SERPER_API_KEY").ok(),
+            "tavily" => std::env::var("TAVILY_API_KEY").ok(),
+            "searxng" => None, // SearXNG typically doesn't need an API key
+            _ => None,
+        }
+    }
+
+    /// Get the default endpoint for the fallback provider
+    pub fn get_fallback_endpoint(&self) -> Option<String> {
+        if self.fallback_endpoint.is_some() {
+            return self.fallback_endpoint.clone();
+        }
+
+        // Default endpoints for known providers
+        match self.fallback_provider.as_str() {
+            "brave" => Some("https://api.search.brave.com/res/v1/web/search".to_string()),
+            "serper" => Some("https://google.serper.dev/search".to_string()),
+            "tavily" => Some("https://api.tavily.com/search".to_string()),
+            _ => None,
+        }
+    }
+
+    /// Check if fallback search is configured
+    pub fn is_fallback_configured(&self) -> bool {
+        self.get_fallback_endpoint().is_some() &&
+        (self.fallback_provider == "searxng" || self.get_fallback_api_key().is_some())
     }
 }
 

@@ -216,14 +216,13 @@ impl Tool for AskUserQuestion {
     fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
         // Check if answers are already provided (from UI callback)
-        if let Some(answers) = params.get("answers") {
-            if answers.is_object() && !answers.as_object().unwrap().is_empty() {
+        if let Some(answers) = params.get("answers")
+            && answers.is_object() && !answers.as_object().unwrap().is_empty() {
                 return Ok(ToolOutput::success(json!({
                     "answered": true,
                     "answers": answers
                 })));
             }
-        }
 
         // Parse questions
         let questions_value = params

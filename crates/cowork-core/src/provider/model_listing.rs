@@ -816,11 +816,10 @@ fn ensure_model_exists_with_context(
         }
     } else {
         // Update existing model's context window if not set
-        if let Some(model) = models.iter_mut().find(|m| m.id == id) {
-            if model.context_window.is_none() {
+        if let Some(model) = models.iter_mut().find(|m| m.id == id)
+            && model.context_window.is_none() {
                 model.context_window = Some(context_window);
             }
-        }
     }
 }
 

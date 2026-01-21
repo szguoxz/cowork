@@ -509,8 +509,8 @@ impl McpServerManager {
         };
 
         // Parse tools from response
-        if let Some(result) = response_result {
-            if let Some(tools) = result.get("tools").and_then(|t: &Value| t.as_array()) {
+        if let Some(result) = response_result
+            && let Some(tools) = result.get("tools").and_then(|t: &Value| t.as_array()) {
                 instance.tools = tools.iter()
                     .filter_map(|t: &Value| {
                         Some(McpToolInfo {
@@ -527,7 +527,6 @@ impl McpServerManager {
                     })
                     .collect();
             }
-        }
 
         Ok(())
     }

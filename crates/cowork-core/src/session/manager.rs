@@ -201,6 +201,7 @@ mod tests {
             provider_type: crate::provider::ProviderType::Anthropic,
             model: None,
             api_key: None,
+            web_search_config: None,
         }
     }
 

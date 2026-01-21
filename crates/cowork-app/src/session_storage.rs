@@ -98,11 +98,10 @@ impl SessionStorage {
             let path = entry.path();
             if path.extension().map(|e| e == "json").unwrap_or(false) {
                 // Check if filename contains the ID
-                if let Some(filename) = path.file_stem().and_then(|f| f.to_str()) {
-                    if filename.contains(&id[..8.min(id.len())]) {
+                if let Some(filename) = path.file_stem().and_then(|f| f.to_str())
+                    && filename.contains(&id[..8.min(id.len())]) {
                         return self.load_from_path(&path);
                     }
-                }
             }
         }
 
@@ -128,11 +127,10 @@ impl SessionStorage {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map(|e| e == "json").unwrap_or(false) {
-                if let Ok(metadata) = self.load_metadata(&path) {
+            if path.extension().map(|e| e == "json").unwrap_or(false)
+                && let Ok(metadata) = self.load_metadata(&path) {
                     sessions.push(metadata);
                 }
-            }
         }
 
         // Sort by updated_at descending (most recent first)
@@ -167,13 +165,11 @@ impl SessionStorage {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map(|e| e == "json").unwrap_or(false) {
-                if let Some(filename) = path.file_stem().and_then(|f| f.to_str()) {
-                    if filename.contains(&id[..8.min(id.len())]) {
+            if path.extension().map(|e| e == "json").unwrap_or(false)
+                && let Some(filename) = path.file_stem().and_then(|f| f.to_str())
+                    && filename.contains(&id[..8.min(id.len())]) {
                         return std::fs::remove_file(&path);
                     }
-                }
-            }
         }
 
         Err(std::io::Error::new(
@@ -261,6 +257,7 @@ mod tests {
                 id: "msg-1".to_string(),
                 role: "user".to_string(),
                 content: "Hello".to_string(),
+                content_blocks: vec![],
                 tool_calls: vec![],
                 timestamp: Utc::now(),
             }],

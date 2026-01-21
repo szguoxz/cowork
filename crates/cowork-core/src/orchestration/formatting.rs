@@ -163,17 +163,15 @@ pub fn format_command_result(json: &Value) -> String {
         lines.push(format!("{} Exit code: {}", status, exit_code));
     }
 
-    if let Some(stdout) = json.get("stdout").and_then(|s| s.as_str()) {
-        if !stdout.is_empty() {
+    if let Some(stdout) = json.get("stdout").and_then(|s| s.as_str())
+        && !stdout.is_empty() {
             lines.push(truncate_result(stdout, 400));
         }
-    }
 
-    if let Some(stderr) = json.get("stderr").and_then(|s| s.as_str()) {
-        if !stderr.is_empty() {
+    if let Some(stderr) = json.get("stderr").and_then(|s| s.as_str())
+        && !stderr.is_empty() {
             lines.push(format!("stderr: {}", truncate_result(stderr, 200)));
         }
-    }
 
     if lines.is_empty() {
         "Command executed".to_string()

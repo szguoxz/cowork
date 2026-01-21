@@ -82,11 +82,10 @@ impl Tool for SearchFiles {
                 let file_name = entry.file_name().to_string_lossy();
 
                 // Check filename pattern
-                if let Some(ref glob) = glob_pattern {
-                    if !glob.matches(&file_name) {
+                if let Some(ref glob) = glob_pattern
+                    && !glob.matches(&file_name) {
                         continue;
                     }
-                }
 
                 // Check content
                 if let Some(ref regex) = content_regex {

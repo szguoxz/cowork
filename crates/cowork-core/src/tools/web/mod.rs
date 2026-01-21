@@ -4,4 +4,4 @@ mod fetch;
 mod search;
 
 pub use fetch::WebFetch;
-pub use search::{SearchResult, WebSearch, WebSearchConfig};
+pub use search::{supports_native_search, SearchResult, WebSearch, NATIVE_SEARCH_PROVIDERS};

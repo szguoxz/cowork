@@ -12,6 +12,10 @@ use tokio::io::AsyncWriteExt;
 use crate::config::ModelTiers;
 use crate::error::Result;
 use crate::provider::{create_provider, CompletionResult, LlmMessage, ProviderType};
+
+/// Maximum result size for subagent output (to prevent context bloat)
+/// Results exceeding this will be truncated with a note
+const MAX_RESULT_SIZE: usize = 10000;
 use crate::tools::filesystem::{
     EditFile, GlobFiles, GrepFiles, ListDirectory, ReadFile, SearchFiles, WriteFile,
 };
@@ -172,6 +176,30 @@ pub fn get_system_prompt(agent_type: &AgentType) -> &'static str {
         AgentType::Plan => PLAN_SYSTEM_PROMPT,
         AgentType::GeneralPurpose => GENERAL_PURPOSE_SYSTEM_PROMPT,
     }
+}
+
+/// Truncate a result string if it exceeds the maximum size
+///
+/// This prevents subagent results from bloating the main conversation context.
+/// When truncated, a note is appended indicating the original size.
+fn truncate_result(result: &str, max_size: usize) -> String {
+    if result.len() <= max_size {
+        return result.to_string();
+    }
+
+    // Find a safe truncation point (avoid cutting mid-character)
+    let truncate_at = result
+        .char_indices()
+        .take_while(|(i, _)| *i < max_size)
+        .last()
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(max_size);
+
+    format!(
+        "{}...\n\n[Result truncated - {} chars total]",
+        &result[..truncate_at],
+        result.len()
+    )
 }
 
 /// Get the model string for a model tier using config-driven tiers
@@ -343,12 +371,15 @@ pub async fn execute_agent_loop(
         }
     }
 
+    // Truncate result if too large (prevents context bloat in main conversation)
+    let truncated_result = truncate_result(&final_result, MAX_RESULT_SIZE);
+
     // Update registry with completed status
     registry
-        .update_status(agent_id, AgentStatus::Completed, Some(final_result.clone()))
+        .update_status(agent_id, AgentStatus::Completed, Some(truncated_result.clone()))
         .await;
 
-    Ok(final_result)
+    Ok(truncated_result)
 }
 
 /// Execute an agent in the background
@@ -426,6 +457,38 @@ pub fn execute_agent_background(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_truncate_result_small() {
+        let small = "Hello, world!";
+        assert_eq!(truncate_result(small, 100), small);
+    }
+
+    #[test]
+    fn test_truncate_result_exact() {
+        let exact = "Hello";
+        assert_eq!(truncate_result(exact, 5), exact);
+    }
+
+    #[test]
+    fn test_truncate_result_large() {
+        let large = "A".repeat(1000);
+        let result = truncate_result(&large, 100);
+        assert!(result.len() < 200); // Truncated plus message
+        assert!(result.contains("..."));
+        assert!(result.contains("[Result truncated - 1000 chars total]"));
+    }
+
+    #[test]
+    fn test_truncate_result_unicode() {
+        // Test with multi-byte characters
+        let unicode = "こんにちは世界"; // Hello world in Japanese
+        let result = truncate_result(unicode, 10);
+        // Should truncate safely without cutting mid-character
+        assert!(result.contains("..."));
+        // Verify the truncated part is valid UTF-8 (this will panic if not)
+        let _ = result.as_str();
+    }
 
     #[test]
     fn test_get_system_prompt() {

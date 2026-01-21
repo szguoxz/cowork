@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use crate::error::{Error, Result};
 use crate::tools::ToolDefinition;
 
-use super::{LlmMessage, LlmProvider, LlmRequest, LlmResponse, TokenUsage};
+use super::{ContentBlock, LlmMessage, LlmProvider, LlmRequest, LlmResponse, MessageContent, TokenUsage};
 
 /// Supported LLM provider types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +141,27 @@ impl ProviderType {
             ProviderType::Ollama => None, // Local, no API key needed
         }
     }
+
+    /// Get the provider type as a string
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProviderType::OpenAI => "openai",
+            ProviderType::Anthropic => "anthropic",
+            ProviderType::Gemini => "gemini",
+            ProviderType::Cohere => "cohere",
+            ProviderType::Perplexity => "perplexity",
+            ProviderType::Groq => "groq",
+            ProviderType::XAI => "xai",
+            ProviderType::DeepSeek => "deepseek",
+            ProviderType::Together => "together",
+            ProviderType::Fireworks => "fireworks",
+            ProviderType::Zai => "zai",
+            ProviderType::Nebius => "nebius",
+            ProviderType::MIMO => "mimo",
+            ProviderType::BigModel => "bigmodel",
+            ProviderType::Ollama => "ollama",
+        }
+    }
 }
 
 /// Tool call from the LLM that needs approval
@@ -242,8 +263,6 @@ impl GenAIProvider {
 
     /// Convert a user message (possibly with tool results) to genai format
     fn convert_user_message(&self, msg: &LlmMessage, chat_req: ChatRequest) -> ChatRequest {
-        use super::{ContentBlock, MessageContent};
-
         match &msg.content {
             MessageContent::Text(text) => {
                 chat_req.append_message(ChatMessage::user(text))
@@ -273,8 +292,6 @@ impl GenAIProvider {
 
     /// Convert an assistant message (possibly with tool calls) to genai format
     fn convert_assistant_message(&self, msg: &LlmMessage, chat_req: ChatRequest) -> ChatRequest {
-        use super::{ContentBlock, MessageContent};
-
         // Check if this assistant message has tool calls (via tool_calls field or content blocks)
         let has_tool_calls = msg.tool_calls.as_ref().map(|tc| !tc.is_empty()).unwrap_or(false);
 
@@ -689,7 +706,7 @@ impl LlmProvider for GenAIProvider {
                 0,
                 LlmMessage {
                     role: "system".to_string(),
-                    content: super::MessageContent::Text(system.clone()),
+                    content: MessageContent::Text(system.clone()),
                     tool_calls: None,
                     tool_call_id: None,
                 },

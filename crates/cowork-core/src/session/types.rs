@@ -220,6 +220,8 @@ pub struct SessionConfig {
     pub model: Option<String>,
     /// Optional API key (if not using env var)
     pub api_key: Option<String>,
+    /// Web search configuration
+    pub web_search_config: Option<crate::config::WebSearchConfig>,
 }
 
 impl Default for SessionConfig {
@@ -231,6 +233,7 @@ impl Default for SessionConfig {
             provider_type: crate::provider::ProviderType::Anthropic,
             model: None,
             api_key: None,
+            web_search_config: None,
         }
     }
 }
@@ -271,6 +274,12 @@ impl SessionConfig {
     /// Set the approval config
     pub fn with_approval_config(mut self, config: crate::approval::ToolApprovalConfig) -> Self {
         self.approval_config = config;
+        self
+    }
+
+    /// Set the web search config
+    pub fn with_web_search_config(mut self, config: crate::config::WebSearchConfig) -> Self {
+        self.web_search_config = Some(config);
         self
     }
 }

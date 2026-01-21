@@ -19,18 +19,16 @@ pub fn get_api_key(config_manager: &ConfigManager, provider_type: ProviderType) 
     let provider_name = provider_type.to_string();
 
     // Try config first
-    if let Some(provider_config) = config_manager.config().providers.get(&provider_name) {
-        if let Some(key) = provider_config.get_api_key() {
+    if let Some(provider_config) = config_manager.config().providers.get(&provider_name)
+        && let Some(key) = provider_config.get_api_key() {
             return Some(key);
         }
-    }
 
     // Fall back to environment variable
-    if let Some(env_var) = provider_type.api_key_env() {
-        if let Ok(key) = std::env::var(env_var) {
+    if let Some(env_var) = provider_type.api_key_env()
+        && let Ok(key) = std::env::var(env_var) {
             return Some(key);
         }
-    }
 
     None
 }
@@ -110,15 +108,14 @@ pub fn create_provider_from_config(
     }
 
     // No config for this provider, try environment variable
-    if let Some(env_var) = provider_type.api_key_env() {
-        if let Ok(api_key) = std::env::var(env_var) {
+    if let Some(env_var) = provider_type.api_key_env()
+        && let Ok(api_key) = std::env::var(env_var) {
             return Ok(GenAIProvider::with_api_key(
                 provider_type,
                 &api_key,
                 model_override,
             ));
         }
-    }
 
     Err(Error::Config(format!(
         "No configuration found for provider '{}'. Add it to config file or set {}",

@@ -2,7 +2,7 @@
 //!
 //! Tests for ConfigManager and Config structures.
 
-use cowork_core::config::{Config, ConfigManager, ProviderConfig, ApprovalConfig, BrowserConfig, GeneralConfig};
+use cowork_core::config::{Config, ConfigManager, ProviderConfig, ApprovalConfig, BrowserConfig, GeneralConfig, WebSearchConfig};
 use tempfile::TempDir;
 use std::fs;
 use std::path::PathBuf;
@@ -231,6 +231,7 @@ timeout_secs = 600
                 log_level: "warn".to_string(),
                 telemetry: false,
             },
+            web_search: WebSearchConfig::default(),
         };
 
         // Serialize

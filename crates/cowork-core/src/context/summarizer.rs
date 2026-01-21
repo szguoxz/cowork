@@ -199,7 +199,9 @@ impl ConversationSummarizer {
         let request = LlmRequest::new(vec![
             LlmMessage {
                 role: "system".to_string(),
-                content: "You are a helpful assistant that summarizes conversations accurately and concisely.".to_string(),
+                content: crate::provider::MessageContent::Text(
+                    "You are a helpful assistant that summarizes conversations accurately and concisely.".to_string()
+                ),
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -266,11 +268,10 @@ impl ConversationSummarizer {
             }
 
             // Look for commands
-            if msg.content.contains("```") || msg.content.starts_with("$ ") {
-                if let Some(cmd) = msg.content.lines().find(|l| l.starts_with("$ ")) {
+            if (msg.content.contains("```") || msg.content.starts_with("$ "))
+                && let Some(cmd) = msg.content.lines().find(|l| l.starts_with("$ ")) {
                     commands_run.push(cmd.trim_start_matches("$ ").to_string());
                 }
-            }
 
             // Extract topic from user messages
             if msg.role == MessageRole::User && msg.content.len() > 10 {
@@ -445,29 +446,25 @@ impl ConversationSummarizer {
             }
 
             // Extract commands
-            if msg.content.starts_with("$ ") {
-                if let Some(cmd) = msg.content.lines().next() {
+            if msg.content.starts_with("$ ")
+                && let Some(cmd) = msg.content.lines().next() {
                     commands_run.push(cmd.trim_start_matches("$ ").to_string());
                 }
-            }
 
             // Look for key action indicators
             if msg.role == MessageRole::Assistant {
-                if msg.content.contains("created") || msg.content.contains("Created") {
-                    if let Some(action) = extract_action_summary(&msg.content, "created") {
+                if (msg.content.contains("created") || msg.content.contains("Created"))
+                    && let Some(action) = extract_action_summary(&msg.content, "created") {
                         key_actions.push(action);
                     }
-                }
-                if msg.content.contains("modified") || msg.content.contains("Modified") {
-                    if let Some(action) = extract_action_summary(&msg.content, "modified") {
+                if (msg.content.contains("modified") || msg.content.contains("Modified"))
+                    && let Some(action) = extract_action_summary(&msg.content, "modified") {
                         key_actions.push(action);
                     }
-                }
-                if msg.content.contains("fixed") || msg.content.contains("Fixed") {
-                    if let Some(action) = extract_action_summary(&msg.content, "fixed") {
+                if (msg.content.contains("fixed") || msg.content.contains("Fixed"))
+                    && let Some(action) = extract_action_summary(&msg.content, "fixed") {
                         key_actions.push(action);
                     }
-                }
             }
 
             // Look for decisions/conclusions

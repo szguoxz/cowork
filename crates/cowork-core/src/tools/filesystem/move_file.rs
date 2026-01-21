@@ -81,11 +81,10 @@ impl Tool for MoveFile {
             }
 
             // For destination, validate parent exists and is in workspace
-            if let Some(parent) = dest.parent() {
-                if parent.exists() {
+            if let Some(parent) = dest.parent()
+                && parent.exists() {
                     validate_path(parent, &self.workspace)?;
                 }
-            }
 
             if dest.exists() && !overwrite {
                 return Err(ToolError::ExecutionFailed(format!(

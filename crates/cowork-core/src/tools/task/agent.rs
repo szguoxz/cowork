@@ -476,15 +476,14 @@ impl Tool for TaskOutputTool {
                 loop {
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-                    if let Some(updated) = self.registry.get(task_id).await {
-                        if updated.status != AgentStatus::Running {
+                    if let Some(updated) = self.registry.get(task_id).await
+                        && updated.status != AgentStatus::Running {
                             return Ok(ToolOutput::success(json!({
                                 "task_id": task_id,
                                 "status": updated.status,
                                 "output": updated.output
                             })));
                         }
-                    }
 
                     if start.elapsed().as_millis() as u64 > timeout_ms {
                         return Ok(ToolOutput::success(json!({

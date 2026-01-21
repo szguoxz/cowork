@@ -44,15 +44,14 @@ impl Workspace {
 
     /// Check if a path is within the workspace
     pub fn contains(&self, path: &std::path::Path) -> bool {
-        if let Ok(canonical) = path.canonicalize() {
-            if let Ok(root) = self.root.canonicalize() {
+        if let Ok(canonical) = path.canonicalize()
+            && let Ok(root) = self.root.canonicalize() {
                 // Check blocked directories first
                 for blocked in &self.blocked_dirs {
-                    if let Ok(blocked_canonical) = blocked.canonicalize() {
-                        if canonical.starts_with(&blocked_canonical) {
+                    if let Ok(blocked_canonical) = blocked.canonicalize()
+                        && canonical.starts_with(&blocked_canonical) {
                             return false;
                         }
-                    }
                 }
 
                 // Check if in root
@@ -62,14 +61,12 @@ impl Workspace {
 
                 // Check allowed directories
                 for allowed in &self.allowed_dirs {
-                    if let Ok(allowed_canonical) = allowed.canonicalize() {
-                        if canonical.starts_with(&allowed_canonical) {
+                    if let Ok(allowed_canonical) = allowed.canonicalize()
+                        && canonical.starts_with(&allowed_canonical) {
                             return true;
                         }
-                    }
                 }
             }
-        }
         false
     }
 }

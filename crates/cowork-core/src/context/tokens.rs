@@ -145,11 +145,10 @@ impl TokenCounter {
         use crate::provider::model_listing::get_model_context_limit;
 
         // Check model-specific limits first using centralized function
-        if let Some(ref model) = self.model {
-            if let Some(limit) = get_model_context_limit(self.provider, model) {
+        if let Some(ref model) = self.model
+            && let Some(limit) = get_model_context_limit(self.provider, model) {
                 return limit;
             }
-        }
 
         // Fall back to provider defaults
         Self::provider_default_limit(self.provider)

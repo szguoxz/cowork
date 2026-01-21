@@ -303,11 +303,10 @@ impl SkillInstaller {
         let mut skills = Vec::new();
 
         // List global skills
-        if let Ok(global_dir) = Self::global_skills_dir() {
-            if global_dir.exists() {
+        if let Ok(global_dir) = Self::global_skills_dir()
+            && global_dir.exists() {
                 skills.extend(self.list_in_dir(&global_dir, InstallLocation::Global));
             }
-        }
 
         // List project skills
         let project_dir = self.project_skills_dir();

@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::config::ModelTiers;
+use crate::config::{ModelTiers, WebSearchConfig};
 use crate::provider::ProviderType;
 use crate::tools::browser::BrowserController;
 use crate::tools::document::{ReadOfficeDoc, ReadPdf};
@@ -20,7 +20,7 @@ use crate::tools::notebook::NotebookEdit;
 use crate::tools::planning::{EnterPlanMode, ExitPlanMode, PlanModeState};
 use crate::tools::shell::{ExecuteCommand, KillShell, ShellProcessRegistry};
 use crate::tools::task::{AgentInstanceRegistry, TaskOutputTool, TaskTool, TodoWrite};
-use crate::tools::web::{WebFetch, WebSearch};
+use crate::tools::web::{supports_native_search, WebFetch, WebSearch};
 use crate::tools::ToolRegistry;
 
 /// Builder for creating a tool registry with customizable options
@@ -29,6 +29,7 @@ pub struct ToolRegistryBuilder {
     provider_type: Option<ProviderType>,
     api_key: Option<String>,
     model_tiers: Option<ModelTiers>,
+    web_search_config: Option<WebSearchConfig>,
     include_filesystem: bool,
     include_shell: bool,
     include_web: bool,
@@ -49,6 +50,7 @@ impl ToolRegistryBuilder {
             provider_type: None,
             api_key: None,
             model_tiers: None,
+            web_search_config: None,
             include_filesystem: true,
             include_shell: true,
             include_web: true,
@@ -77,6 +79,12 @@ impl ToolRegistryBuilder {
     /// Set the model tiers for task tools
     pub fn with_model_tiers(mut self, tiers: ModelTiers) -> Self {
         self.model_tiers = Some(tiers);
+        self
+    }
+
+    /// Set the web search configuration
+    pub fn with_web_search_config(mut self, config: WebSearchConfig) -> Self {
+        self.web_search_config = Some(config);
         self
     }
 
@@ -170,7 +178,33 @@ impl ToolRegistryBuilder {
         // Web tools
         if self.include_web {
             registry.register(Arc::new(WebFetch::new()));
-            registry.register(Arc::new(WebSearch::new()));
+
+            // Only include WebSearch fallback tool when provider doesn't support native search
+            // Providers with native search (Anthropic, OpenAI, Gemini, etc.) handle search
+            // through their own API capabilities
+            let provider_has_native = self
+                .provider_type
+                .as_ref()
+                .map(|p| supports_native_search(p.as_str()))
+                .unwrap_or(false);
+
+            if !provider_has_native {
+                // Create WebSearch with config and provider type for fallback
+                let web_search = if let Some(config) = self.web_search_config.clone() {
+                    let mut ws = WebSearch::with_config(config);
+                    if let Some(ref provider_type) = self.provider_type {
+                        ws = ws.with_provider(provider_type.as_str());
+                    }
+                    ws
+                } else {
+                    let mut ws = WebSearch::new();
+                    if let Some(ref provider_type) = self.provider_type {
+                        ws = ws.with_provider(provider_type.as_str());
+                    }
+                    ws
+                };
+                registry.register(Arc::new(web_search));
+            }
         }
 
         // Notebook tools
@@ -214,8 +248,8 @@ impl ToolRegistryBuilder {
         }
 
         // Agent/Task tools - require provider_type for full functionality
-        if self.include_task {
-            if let Some(provider_type) = self.provider_type {
+        if self.include_task
+            && let Some(provider_type) = self.provider_type {
                 let agent_registry = Arc::new(AgentInstanceRegistry::new());
                 let mut task_tool =
                     TaskTool::new(agent_registry.clone(), self.workspace.clone())
@@ -231,7 +265,6 @@ impl ToolRegistryBuilder {
                 registry.register(Arc::new(task_tool));
                 registry.register(Arc::new(TaskOutputTool::new(agent_registry)));
             }
-        }
 
         registry
     }
@@ -245,6 +278,7 @@ impl ToolRegistryBuilder {
 ///     .with_provider(provider_type)
 ///     .with_api_key(api_key.unwrap_or_default())
 ///     .with_model_tiers(model_tiers.unwrap_or_default())
+///     .with_web_search_config(web_search_config.unwrap_or_default())
 ///     .build()
 /// ```
 pub fn create_standard_tool_registry(
@@ -252,6 +286,7 @@ pub fn create_standard_tool_registry(
     provider_type: ProviderType,
     api_key: Option<&str>,
     model_tiers: Option<ModelTiers>,
+    web_search_config: Option<WebSearchConfig>,
 ) -> ToolRegistry {
     let mut builder = ToolRegistryBuilder::new(workspace.to_path_buf())
         .with_provider(provider_type);
@@ -261,6 +296,9 @@ pub fn create_standard_tool_registry(
     }
     if let Some(tiers) = model_tiers {
         builder = builder.with_model_tiers(tiers);
+    }
+    if let Some(ws_config) = web_search_config {
+        builder = builder.with_web_search_config(ws_config);
     }
 
     builder.build()
@@ -330,6 +368,7 @@ mod tests {
             ProviderType::Anthropic,
             Some("test-key"),
             Some(ModelTiers::anthropic()),
+            None, // web_search_config
         );
 
         // Should have task tools since provider was specified (PascalCase names)

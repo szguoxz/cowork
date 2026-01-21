@@ -419,21 +419,19 @@ impl SkillLoader {
         // Check project directory first
         if let Some(ref dir) = self.project_dir {
             let skill_dir = dir.join(name);
-            if skill_dir.exists() {
-                if let Ok(skill) = DynamicSkill::load(&skill_dir, SkillSource::Project) {
+            if skill_dir.exists()
+                && let Ok(skill) = DynamicSkill::load(&skill_dir, SkillSource::Project) {
                     return Some(Arc::new(skill));
                 }
-            }
         }
 
         // Check user directory
         if let Some(ref dir) = self.user_dir {
             let skill_dir = dir.join(name);
-            if skill_dir.exists() {
-                if let Ok(skill) = DynamicSkill::load(&skill_dir, SkillSource::User) {
+            if skill_dir.exists()
+                && let Ok(skill) = DynamicSkill::load(&skill_dir, SkillSource::User) {
                     return Some(Arc::new(skill));
                 }
-            }
         }
 
         None

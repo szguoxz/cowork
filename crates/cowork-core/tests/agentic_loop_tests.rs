@@ -423,6 +423,116 @@ mod message_conversion_tests {
     }
 }
 
+mod parallel_tool_execution_tests {
+    use super::*;
+
+    /// Test that multiple tools can be executed in parallel and results batched
+    #[tokio::test]
+    async fn test_parallel_read_operations() {
+        let dir = setup_workspace();
+        let registry = create_tool_registry(dir.path());
+
+        // Execute multiple read operations in parallel
+        let read_tool = registry.get("Read").unwrap();
+
+        let (result1, result2) = tokio::join!(
+            read_tool.execute(json!({"file_path": "README.md"})),
+            read_tool.execute(json!({"file_path": "src/main.rs"}))
+        );
+
+        // Both should succeed
+        assert!(result1.is_ok(), "First read failed: {:?}", result1.err());
+        assert!(result2.is_ok(), "Second read failed: {:?}", result2.err());
+
+        let output1 = result1.unwrap();
+        let output2 = result2.unwrap();
+        assert!(output1.success);
+        assert!(output2.success);
+    }
+
+    /// Test that different tools can be executed in parallel
+    #[tokio::test]
+    async fn test_parallel_different_tools() {
+        let dir = setup_workspace();
+        let registry = create_tool_registry(dir.path());
+
+        let read_tool = registry.get("Read").unwrap();
+        let glob_tool = registry.get("Glob").unwrap();
+        let grep_tool = registry.get("Grep").unwrap();
+
+        // Execute Read, Glob, and Grep in parallel
+        let (read_result, glob_result, grep_result) = tokio::join!(
+            read_tool.execute(json!({"file_path": "README.md"})),
+            glob_tool.execute(json!({"pattern": "**/*.rs"})),
+            grep_tool.execute(json!({"pattern": "fn main"}))
+        );
+
+        // All should succeed
+        assert!(read_result.is_ok());
+        assert!(glob_result.is_ok());
+        assert!(grep_result.is_ok());
+    }
+
+    /// Test that parallel execution handles mixed success/failure
+    #[tokio::test]
+    async fn test_parallel_mixed_results() {
+        let dir = setup_workspace();
+        let registry = create_tool_registry(dir.path());
+
+        let read_tool = registry.get("Read").unwrap();
+
+        // Execute one valid and one invalid read in parallel
+        let (good_result, bad_result) = tokio::join!(
+            read_tool.execute(json!({"file_path": "README.md"})),
+            read_tool.execute(json!({"file_path": "nonexistent.txt"}))
+        );
+
+        // First should succeed
+        assert!(good_result.is_ok());
+        assert!(good_result.unwrap().success);
+
+        // Second should fail
+        assert!(bad_result.is_err());
+    }
+
+    /// Test that results can be collected for batching
+    #[tokio::test]
+    async fn test_collect_parallel_results_for_batching() {
+        let dir = setup_workspace();
+        let registry = create_tool_registry(dir.path());
+
+        let read_tool = registry.get("Read").unwrap();
+
+        // Simulate what execute_tools_batched does
+        let tool_calls = vec![
+            ("call_1", json!({"file_path": "README.md"})),
+            ("call_2", json!({"file_path": "src/main.rs"})),
+        ];
+
+        let mut results: Vec<(String, String, bool)> = Vec::new();
+
+        for (id, params) in tool_calls {
+            let result = read_tool.execute(params).await;
+            let (output, is_error) = match result {
+                Ok(output) => (output.content.to_string(), !output.success),
+                Err(e) => (format!("Error: {}", e), true),
+            };
+            results.push((id.to_string(), output, is_error));
+        }
+
+        // Should have 2 results
+        assert_eq!(results.len(), 2);
+
+        // Both should be successful
+        assert!(!results[0].2, "First result should not be an error");
+        assert!(!results[1].2, "Second result should not be an error");
+
+        // IDs should be preserved
+        assert_eq!(results[0].0, "call_1");
+        assert_eq!(results[1].0, "call_2");
+    }
+}
+
 mod question_parsing_tests {
     use cowork_core::tools::interaction::{
         parse_questions, parse_questions_lenient, validate_questions,

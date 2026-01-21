@@ -229,8 +229,8 @@ impl ContextGatherer {
         ];
 
         for rules_dir in &rules_dirs {
-            if rules_dir.exists() {
-                if let Ok(mut entries) = tokio::fs::read_dir(rules_dir).await {
+            if rules_dir.exists()
+                && let Ok(mut entries) = tokio::fs::read_dir(rules_dir).await {
                     let mut rule_paths = Vec::new();
 
                     while let Ok(Some(entry)) = entries.next_entry().await {
@@ -255,7 +255,6 @@ impl ContextGatherer {
                         }
                     }
                 }
-            }
         }
 
         // Tier 4: User
@@ -319,11 +318,10 @@ impl ContextGatherer {
             }
 
             // Add file header for rules tier (multiple files)
-            if file.tier == MemoryTier::Rules {
-                if let Some(filename) = file.path.file_name() {
+            if file.tier == MemoryTier::Rules
+                && let Some(filename) = file.path.file_name() {
                     sections.push(format!("\n--- {} ---", filename.to_string_lossy()));
                 }
-            }
 
             sections.push(file.content.clone());
         }
@@ -365,11 +363,9 @@ impl ContextGatherer {
             .current_dir(&self.workspace)
             .output()
             .await
-        {
-            if output.status.success() {
+            && output.status.success() {
                 info.branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
             }
-        }
 
         // Get git status (short format)
         if let Ok(output) = tokio::process::Command::new("git")
@@ -377,8 +373,7 @@ impl ContextGatherer {
             .current_dir(&self.workspace)
             .output()
             .await
-        {
-            if output.status.success() {
+            && output.status.success() {
                 let status = String::from_utf8_lossy(&output.stdout).to_string();
                 let lines: Vec<&str> = status.lines().collect();
 
@@ -396,7 +391,6 @@ impl ContextGatherer {
                     info.status = "Clean".to_string();
                 }
             }
-        }
 
         // Get recent commits
         if let Ok(output) = tokio::process::Command::new("git")
@@ -404,14 +398,12 @@ impl ContextGatherer {
             .current_dir(&self.workspace)
             .output()
             .await
-        {
-            if output.status.success() {
+            && output.status.success() {
                 info.commits = String::from_utf8_lossy(&output.stdout)
                     .lines()
                     .map(|l| l.to_string())
                     .collect();
             }
-        }
 
         Some(info)
     }

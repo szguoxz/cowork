@@ -126,9 +126,15 @@ impl AgentLoop {
         };
 
         // Create tool registry
-        let tool_registry = ToolRegistryBuilder::new(config.workspace_path.clone())
-            .with_provider(config.provider_type)
-            .build();
+        let mut tool_builder = ToolRegistryBuilder::new(config.workspace_path.clone())
+            .with_provider(config.provider_type);
+
+        // Add web search config if available
+        if let Some(ws_config) = config.web_search_config.clone() {
+            tool_builder = tool_builder.with_web_search_config(ws_config);
+        }
+
+        let tool_registry = tool_builder.build();
 
         let tool_definitions = tool_registry.list();
 
@@ -292,11 +298,14 @@ impl AgentLoop {
                 break;
             }
 
-            // Execute auto-approved tools
-            for tool_call in &tool_calls {
-                if auto_approved.contains(&tool_call.id) {
-                    self.execute_tool(tool_call).await;
-                }
+            // Execute auto-approved tools and batch results
+            let auto_approved_tools: Vec<_> = tool_calls
+                .iter()
+                .filter(|tc| auto_approved.contains(&tc.id))
+                .collect();
+
+            if !auto_approved_tools.is_empty() {
+                self.execute_tools_batched(&auto_approved_tools).await;
             }
 
             // If there are tools needing approval, pause and wait
@@ -369,7 +378,59 @@ impl AgentLoop {
         (auto_approved, needs_approval)
     }
 
-    /// Execute a single tool
+    /// Execute multiple tools and batch results into a single message
+    /// This is more efficient for the LLM as it sees all results together
+    async fn execute_tools_batched(&mut self, tool_calls: &[&ToolCallInfo]) {
+        let mut results: Vec<(String, String, bool)> = Vec::new();
+
+        for tool_call in tool_calls {
+            // Emit tool start
+            self.emit(SessionOutput::tool_start(
+                &tool_call.id,
+                &tool_call.name,
+                tool_call.arguments.clone(),
+            ))
+            .await;
+
+            // Find and execute the tool
+            let (success, output) = if let Some(tool) = self.tool_registry.get(&tool_call.name) {
+                match tool.execute(tool_call.arguments.clone()).await {
+                    Ok(output) => {
+                        let output_str = output.content.to_string();
+                        debug!(
+                            "Tool {} completed: {} chars",
+                            tool_call.name,
+                            output_str.len()
+                        );
+                        (true, output_str)
+                    }
+                    Err(e) => {
+                        warn!("Tool {} failed: {}", tool_call.name, e);
+                        (false, format!("Error: {}", e))
+                    }
+                }
+            } else {
+                (false, format!("Unknown tool: {}", tool_call.name))
+            };
+
+            // Emit tool done
+            self.emit(SessionOutput::tool_done(
+                &tool_call.id,
+                &tool_call.name,
+                success,
+                output.clone(),
+            ))
+            .await;
+
+            // Collect result for batching
+            results.push((tool_call.id.clone(), output, !success));
+        }
+
+        // Add all tool results as a single batched message
+        self.session.add_tool_results(results);
+    }
+
+    /// Execute a single tool (used for individual tool approvals)
     async fn execute_tool(&mut self, tool_call: &ToolCallInfo) {
         // Emit tool start
         self.emit(SessionOutput::tool_start(
@@ -400,8 +461,9 @@ impl AgentLoop {
             (false, format!("Unknown tool: {}", tool_call.name))
         };
 
-        // Add tool result to session
-        self.session.add_tool_result(&tool_call.id, &result.1);
+        // Add tool result to session with proper error flag
+        let is_error = !result.0;
+        self.session.add_tool_result_with_error(&tool_call.id, &result.1, is_error);
 
         // Emit tool done
         self.emit(SessionOutput::tool_done(
@@ -483,9 +545,9 @@ impl AgentLoop {
         // Mark as rejected in session
         self.session.reject_tool(tool_call_id);
 
-        // Add rejection result
+        // Add rejection result (with is_error=true since it was rejected)
         let result = reason.unwrap_or_else(|| "Rejected by user".to_string());
-        self.session.add_tool_result(tool_call_id, &result);
+        self.session.add_tool_result_with_error(tool_call_id, &result, true);
 
         // Emit done with rejection
         self.emit(SessionOutput::tool_done(tool_call_id, "", false, result))
@@ -745,7 +807,7 @@ pub fn list_saved_sessions() -> Result<Vec<SavedSession>> {
     for entry in std::fs::read_dir(&sessions_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().map_or(false, |ext| ext == "json") {
+        if path.extension().is_some_and(|ext| ext == "json") {
             match std::fs::read_to_string(&path) {
                 Ok(json) => match serde_json::from_str::<SavedSession>(&json) {
                     Ok(session) => sessions.push(session),
