@@ -10,7 +10,17 @@
 //! name: skill-name
 //! description: What the skill does
 //! allowed-tools: Read, Bash, Write
+//! denied-tools: Write, Edit          # Optional: explicitly deny tools
 //! user-invocable: true
+//! auto-triggers:                      # Optional: patterns for auto-invocation
+//!   - "build the project"
+//!   - "compile"
+//! disable-model-invocation: false     # Optional: prevent model from auto-invoking
+//! context: fork                       # Optional: fork or inherit
+//! agent: Bash                         # Optional: run in specific agent
+//! argument-hint:                      # Optional: CLI autocomplete hints
+//!   - "<file>"
+//!   - "--verbose"
 //! ---
 //!
 //! # Skill Name
@@ -18,12 +28,69 @@
 //! Instructions for Claude...
 //! ```
 
+use crate::prompt::agents::ContextMode;
+use crate::prompt::types::{ToolRestrictions, ToolSpec};
 use crate::skills::{BoxFuture, Skill, SkillContext, SkillInfo, SkillResult};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, warn};
+
+/// Tool list that can be a comma-separated string or a list
+#[derive(Debug, Clone, Default)]
+pub struct ToolList(pub Vec<String>);
+
+impl<'de> Deserialize<'de> for ToolList {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+
+        struct ToolListVisitor;
+
+        impl<'de> Visitor<'de> for ToolListVisitor {
+            type Value = ToolList;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a string or list of tool names")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let tools: Vec<String> = value
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                Ok(ToolList(tools))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                let mut tools = Vec::new();
+                while let Some(tool) = seq.next_element::<String>()? {
+                    tools.push(tool);
+                }
+                Ok(ToolList(tools))
+            }
+        }
+
+        deserializer.deserialize_any(ToolListVisitor)
+    }
+}
+
+/// Type alias for backward compatibility
+pub type AllowedTools = ToolList;
+
+fn default_true() -> bool {
+    true
+}
 
 /// Frontmatter parsed from SKILL.md
 #[derive(Debug, Clone, Deserialize)]
@@ -37,7 +104,11 @@ pub struct SkillFrontmatter {
 
     /// Allowed tools (comma-separated string or list)
     #[serde(default)]
-    pub allowed_tools: AllowedTools,
+    pub allowed_tools: ToolList,
+
+    /// Denied tools (comma-separated string or list)
+    #[serde(default)]
+    pub denied_tools: ToolList,
 
     /// Can users invoke via /command?
     #[serde(default = "default_true")]
@@ -59,60 +130,61 @@ pub struct SkillFrontmatter {
     #[serde(default)]
     pub usage: Option<String>,
 
+    /// Prevent the model from auto-invoking this skill
+    #[serde(default)]
+    pub disable_model_invocation: bool,
+
+    /// Patterns that trigger auto-invocation of this skill
+    #[serde(default)]
+    pub auto_triggers: Vec<String>,
+
+    /// Argument hints for CLI autocomplete
+    #[serde(default)]
+    pub argument_hint: Vec<String>,
+
     /// Custom metadata
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-fn default_true() -> bool {
-    true
-}
+impl SkillFrontmatter {
+    /// Get the context mode for this skill
+    pub fn context_mode(&self) -> ContextMode {
+        self.context
+            .as_deref()
+            .map(ContextMode::parse)
+            .unwrap_or_default()
+    }
 
-/// Allowed tools can be a comma-separated string or a list
-#[derive(Debug, Clone, Default)]
-pub struct AllowedTools(pub Vec<String>);
+    /// Get tool restrictions based on allowed and denied tools
+    pub fn tool_restrictions(&self) -> ToolRestrictions {
+        let allowed: Vec<ToolSpec> = self
+            .allowed_tools
+            .0
+            .iter()
+            .map(|t| ToolSpec::parse(t))
+            .collect();
 
-impl<'de> Deserialize<'de> for AllowedTools {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de::{self, Visitor};
+        let denied: Vec<ToolSpec> = self
+            .denied_tools
+            .0
+            .iter()
+            .map(|t| ToolSpec::parse(t))
+            .collect();
 
-        struct AllowedToolsVisitor;
+        ToolRestrictions { allowed, denied }
+    }
 
-        impl<'de> Visitor<'de> for AllowedToolsVisitor {
-            type Value = AllowedTools;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a string or list of tool names")
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                let tools: Vec<String> = value
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                Ok(AllowedTools(tools))
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::SeqAccess<'de>,
-            {
-                let mut tools = Vec::new();
-                while let Some(tool) = seq.next_element::<String>()? {
-                    tools.push(tool);
-                }
-                Ok(AllowedTools(tools))
-            }
+    /// Check if this skill can be auto-triggered by user input
+    pub fn matches_auto_trigger(&self, user_input: &str) -> bool {
+        if self.disable_model_invocation {
+            return false;
         }
 
-        deserializer.deserialize_any(AllowedToolsVisitor)
+        let input_lower = user_input.to_lowercase();
+        self.auto_triggers
+            .iter()
+            .any(|trigger| input_lower.contains(&trigger.to_lowercase()))
     }
 }
 
@@ -624,5 +696,259 @@ Echo: $ARGUMENTS
         let result = skill.execute(ctx).await;
         assert!(result.success);
         assert!(result.response.contains("Echo: hello world"));
+    }
+
+    // Tests for new enhanced skill features
+
+    #[test]
+    fn test_parse_skill_with_denied_tools() {
+        let content = r#"---
+name: read-only
+description: Read-only skill
+allowed-tools: Read, Glob, Grep
+denied-tools: Write, Edit, Bash
+---
+
+This skill cannot modify files.
+"#;
+
+        let skill =
+            DynamicSkill::parse(content, PathBuf::from("/test"), SkillSource::User).unwrap();
+
+        assert_eq!(skill.frontmatter.allowed_tools.0, vec!["Read", "Glob", "Grep"]);
+        assert_eq!(skill.frontmatter.denied_tools.0, vec!["Write", "Edit", "Bash"]);
+    }
+
+    #[test]
+    fn test_tool_restrictions() {
+        let content = r#"---
+name: restricted
+description: Restricted skill
+allowed-tools: Read, Bash(git:*)
+denied-tools: Write
+---
+
+Restricted tools.
+"#;
+
+        let skill =
+            DynamicSkill::parse(content, PathBuf::from("/test"), SkillSource::User).unwrap();
+
+        let restrictions = skill.frontmatter.tool_restrictions();
+
+        // Read should be allowed
+        assert!(restrictions.is_allowed("Read", &serde_json::json!({})));
+
+        // Write should be denied
+        assert!(!restrictions.is_allowed("Write", &serde_json::json!({})));
+
+        // Bash with git should be allowed
+        assert!(restrictions.is_allowed("Bash", &serde_json::json!({"command": "git status"})));
+
+        // Bash with other commands should not be allowed (not in allowed list)
+        assert!(!restrictions.is_allowed("Bash", &serde_json::json!({"command": "rm -rf /"})));
+
+        // Edit is neither allowed nor denied, so it's not allowed (because allowed list is non-empty)
+        assert!(!restrictions.is_allowed("Edit", &serde_json::json!({})));
+    }
+
+    #[test]
+    fn test_parse_skill_with_auto_triggers() {
+        let content = r#"---
+name: build
+description: Build the project
+auto-triggers:
+  - "build the project"
+  - "compile"
+  - "run build"
+---
+
+Build instructions.
+"#;
+
+        let skill =
+            DynamicSkill::parse(content, PathBuf::from("/test"), SkillSource::User).unwrap();
+
+        assert_eq!(skill.frontmatter.auto_triggers.len(), 3);
+        assert!(skill.frontmatter.auto_triggers.contains(&"build the project".to_string()));
+        assert!(skill.frontmatter.auto_triggers.contains(&"compile".to_string()));
+    }
+
+    #[test]
+    fn test_matches_auto_trigger() {
+        let content = r#"---
+name: build
+description: Build the project
+auto-triggers:
+  - "build the project"
+  - "compile"
+---
+
+Build instructions.
+"#;
+
+        let skill =
+            DynamicSkill::parse(content, PathBuf::from("/test"), SkillSource::User).unwrap();
+
+        // Should match triggers (case-insensitive)
+        assert!(skill.frontmatter.matches_auto_trigger("please build the project"));
+        assert!(skill.frontmatter.matches_auto_trigger("COMPILE the code"));
+
+        // Should not match unrelated input
+        assert!(!skill.frontmatter.matches_auto_trigger("run tests"));
+        assert!(!skill.frontmatter.matches_auto_trigger("deploy"));
+    }
+
+    #[test]
+    fn test_disable_model_invocation() {
+        let content = r#"---
+name: dangerous
+description: A dangerous skill
+auto-triggers:
+  - "delete everything"
+disable-model-invocation: true
+---
+
+Dangerous operations.
+"#;
+
+        let skill =
+            DynamicSkill::parse(content, PathBuf::from("/test"), SkillSource::User).unwrap();
+
+        assert!(skill.frontmatter.disable_model_invocation);
+
+        // Even if trigger matches, should not auto-trigger when disabled
+        assert!(!skill.frontmatter.matches_auto_trigger("delete everything"));
+    }
+
+    #[test]
+    fn test_context_mode() {
+        let content = r#"---
+name: forked
+description: A forked skill
+context: fork
+agent: Bash
+---
+
+Forked context.
+"#;
+
+        let skill =
+            DynamicSkill::parse(content, PathBuf::from("/test"), SkillSource::User).unwrap();
+
+        assert_eq!(skill.frontmatter.context_mode(), ContextMode::Fork);
+        assert_eq!(skill.frontmatter.agent, Some("Bash".to_string()));
+    }
+
+    #[test]
+    fn test_context_mode_inherit() {
+        let content = r#"---
+name: inherited
+description: An inherited skill
+context: inherit
+---
+
+Inherited context.
+"#;
+
+        let skill =
+            DynamicSkill::parse(content, PathBuf::from("/test"), SkillSource::User).unwrap();
+
+        assert_eq!(skill.frontmatter.context_mode(), ContextMode::Inherit);
+    }
+
+    #[test]
+    fn test_argument_hints() {
+        let content = r#"---
+name: edit-file
+description: Edit a file
+argument-hint:
+  - "<file>"
+  - "--line <num>"
+  - "--force"
+---
+
+Edit instructions.
+"#;
+
+        let skill =
+            DynamicSkill::parse(content, PathBuf::from("/test"), SkillSource::User).unwrap();
+
+        assert_eq!(skill.frontmatter.argument_hint.len(), 3);
+        assert!(skill.frontmatter.argument_hint.contains(&"<file>".to_string()));
+        assert!(skill.frontmatter.argument_hint.contains(&"--force".to_string()));
+    }
+
+    #[test]
+    fn test_backward_compatibility() {
+        // Test that old-style skills still work
+        let content = r#"---
+name: old-skill
+description: An old skill without new fields
+allowed-tools: Bash, Read
+user-invocable: true
+---
+
+Old skill body.
+"#;
+
+        let skill =
+            DynamicSkill::parse(content, PathBuf::from("/test"), SkillSource::User).unwrap();
+
+        // Default values for new fields
+        assert!(skill.frontmatter.denied_tools.0.is_empty());
+        assert!(!skill.frontmatter.disable_model_invocation);
+        assert!(skill.frontmatter.auto_triggers.is_empty());
+        assert!(skill.frontmatter.argument_hint.is_empty());
+        assert_eq!(skill.frontmatter.context_mode(), ContextMode::Fork); // Default
+    }
+
+    #[test]
+    fn test_full_enhanced_skill() {
+        let content = r#"---
+name: enhanced-skill
+description: A fully enhanced skill
+allowed-tools:
+  - Read
+  - Glob
+  - Bash(git:*)
+denied-tools:
+  - Write
+  - Edit
+user-invocable: true
+model: haiku
+context: fork
+agent: Explore
+disable-model-invocation: false
+auto-triggers:
+  - "explore the codebase"
+  - "find files"
+argument-hint:
+  - "<pattern>"
+  - "--depth <num>"
+usage: /enhanced-skill <pattern>
+metadata:
+  version: "1.0"
+  author: test
+---
+
+# Enhanced Skill
+
+This is a fully configured enhanced skill.
+"#;
+
+        let skill =
+            DynamicSkill::parse(content, PathBuf::from("/test"), SkillSource::Project).unwrap();
+
+        assert_eq!(skill.frontmatter.name, "enhanced-skill");
+        assert_eq!(skill.frontmatter.allowed_tools.0.len(), 3);
+        assert_eq!(skill.frontmatter.denied_tools.0.len(), 2);
+        assert_eq!(skill.frontmatter.model, Some("haiku".to_string()));
+        assert_eq!(skill.frontmatter.context_mode(), ContextMode::Fork);
+        assert_eq!(skill.frontmatter.agent, Some("Explore".to_string()));
+        assert!(!skill.frontmatter.disable_model_invocation);
+        assert_eq!(skill.frontmatter.auto_triggers.len(), 2);
+        assert_eq!(skill.frontmatter.argument_hint.len(), 2);
+        assert!(skill.frontmatter.matches_auto_trigger("can you explore the codebase?"));
     }
 }

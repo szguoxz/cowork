@@ -22,7 +22,7 @@ impl MoveFile {
 
 impl Tool for MoveFile {
     fn name(&self) -> &str {
-        "move_file"
+        "MoveFile"
     }
 
     fn description(&self) -> &str {

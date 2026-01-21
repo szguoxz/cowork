@@ -202,6 +202,8 @@ mod tests {
             model: None,
             api_key: None,
             web_search_config: None,
+            prompt_config: Default::default(),
+            component_registry: None,
         }
     }
 

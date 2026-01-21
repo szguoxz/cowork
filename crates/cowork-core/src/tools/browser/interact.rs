@@ -25,7 +25,7 @@ impl ClickElement {
 
 impl Tool for ClickElement {
     fn name(&self) -> &str {
-        "browser_click"
+        "BrowserClick"
     }
 
     fn description(&self) -> &str {
@@ -134,7 +134,7 @@ impl TypeText {
 
 impl Tool for TypeText {
     fn name(&self) -> &str {
-        "browser_type"
+        "BrowserType"
     }
 
     fn description(&self) -> &str {
@@ -236,7 +236,7 @@ impl GetPageContent {
 
 impl Tool for GetPageContent {
     fn name(&self) -> &str {
-        "browser_get_content"
+        "BrowserGetContent"
     }
 
     fn description(&self) -> &str {

@@ -13,6 +13,9 @@ use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 use super::DocumentFormat;
 
+/// Maximum output size in bytes to prevent DoS from very large documents
+const MAX_OUTPUT_SIZE: usize = 512 * 1024; // 512 KB
+
 /// Tool for reading Office documents (Word, Excel, PowerPoint)
 pub struct ReadOfficeDoc {
     workspace: PathBuf,
@@ -26,7 +29,7 @@ impl ReadOfficeDoc {
 
 impl Tool for ReadOfficeDoc {
     fn name(&self) -> &str {
-        "read_office_doc"
+        "ReadOfficeDoc"
     }
 
     fn description(&self) -> &str {
@@ -113,6 +116,12 @@ fn extract_word_text(path: &std::path::Path) -> Result<String, ToolError> {
         .read_to_string(&mut text)
         .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read DOCX content: {}", e)))?;
 
+    // Truncate if too large
+    if text.len() > MAX_OUTPUT_SIZE {
+        text.truncate(MAX_OUTPUT_SIZE);
+        text.push_str("\n\n... [Content truncated due to size limit]");
+    }
+
     Ok(text)
 }
 
@@ -125,12 +134,19 @@ fn extract_excel_text(path: &std::path::Path) -> Result<String, ToolError> {
 
     let mut output = String::new();
     let sheet_names: Vec<String> = workbook.sheet_names().to_vec();
+    let mut truncated = false;
 
-    for sheet_name in sheet_names {
+    'outer: for sheet_name in sheet_names {
         if let Ok(range) = workbook.worksheet_range(&sheet_name) {
             output.push_str(&format!("=== Sheet: {} ===\n", sheet_name));
 
             for row in range.rows() {
+                // Check size limit before processing more rows
+                if output.len() >= MAX_OUTPUT_SIZE {
+                    truncated = true;
+                    break 'outer;
+                }
+
                 let cells: Vec<String> = row
                     .iter()
                     .map(|cell| match cell {
@@ -158,6 +174,10 @@ fn extract_excel_text(path: &std::path::Path) -> Result<String, ToolError> {
         }
     }
 
+    if truncated {
+        output.push_str("\n... [Content truncated due to size limit]");
+    }
+
     Ok(output)
 }
 
@@ -172,9 +192,16 @@ fn extract_pptx_text(path: &std::path::Path) -> Result<String, ToolError> {
 
     let mut output = String::new();
     let mut slide_num = 1;
+    let mut truncated = false;
 
     // PPTX files store slides in ppt/slides/slide1.xml, slide2.xml, etc.
     loop {
+        // Check size limit before processing more slides
+        if output.len() >= MAX_OUTPUT_SIZE {
+            truncated = true;
+            break;
+        }
+
         let slide_path = format!("ppt/slides/slide{}.xml", slide_num);
 
         match archive.by_name(&slide_path) {
@@ -204,6 +231,8 @@ fn extract_pptx_text(path: &std::path::Path) -> Result<String, ToolError> {
 
     if output.is_empty() {
         output = "(No text content found in presentation)".to_string();
+    } else if truncated {
+        output.push_str("\n... [Content truncated due to size limit]");
     }
 
     Ok(output)

@@ -22,7 +22,7 @@ mod read_pdf_tests {
         let tool = ReadPdf::new(dir.path().to_path_buf());
 
         // Verify tool name and description
-        assert_eq!(tool.name(), "read_pdf");
+        assert_eq!(tool.name(), "ReadPdf");
         assert!(tool.description().contains("PDF"));
     }
 
@@ -98,7 +98,7 @@ mod read_office_tests {
         let tool = ReadOfficeDoc::new(dir.path().to_path_buf());
 
         // Verify tool name and description
-        assert_eq!(tool.name(), "read_office_doc");
+        assert_eq!(tool.name(), "ReadOfficeDoc");
         assert!(tool.description().contains("Office"));
     }
 

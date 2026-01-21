@@ -14,6 +14,7 @@ pub mod context;
 pub mod error;
 pub mod mcp_manager;
 pub mod orchestration;
+pub mod prompt;
 pub mod provider;
 pub mod session;
 pub mod skills;
@@ -33,6 +34,13 @@ pub use provider::{
 pub use skills::{Skill, SkillContext, SkillRegistry, SkillResult};
 pub use task::{Task, TaskExecutor, TaskPlanner, TaskStatus, TaskStep};
 pub use tools::{standard_tool_definitions, Tool, ToolDefinition, ToolOutput, ToolRegistry};
+
+// Prompt system exports
+pub use prompt::{
+    builtin, extract_commands, has_substitutions, parse_frontmatter, parse_tool_list,
+    substitute_commands, ModelPreference, ParseError, ParsedDocument, Scope, TemplateVars,
+    ToolRestrictions, ToolSpec,
+};
 
 // Orchestration exports
 pub use orchestration::{

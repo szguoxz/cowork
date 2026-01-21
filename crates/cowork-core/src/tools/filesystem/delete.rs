@@ -22,7 +22,7 @@ impl DeleteFile {
 
 impl Tool for DeleteFile {
     fn name(&self) -> &str {
-        "delete_file"
+        "DeleteFile"
     }
 
     fn description(&self) -> &str {

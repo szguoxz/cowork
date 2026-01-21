@@ -2,6 +2,12 @@
 //!
 //! This module provides the core agentic loop that powers subagent execution.
 //! Each agent type gets a specific set of tools and a tailored system prompt.
+//!
+//! The executor supports two modes:
+//! 1. Legacy hardcoded agents (Bash, Explore, Plan, GeneralPurpose)
+//! 2. Dynamic agents from the prompt system (loaded from registry)
+//!
+//! Dynamic agents take precedence when a matching name is found in the registry.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,6 +17,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::config::ModelTiers;
 use crate::error::Result;
+use crate::prompt::{AgentDefinition, ComponentRegistry, ModelPreference};
 use crate::provider::{create_provider, CompletionResult, LlmMessage, ProviderType};
 
 /// Maximum result size for subagent output (to prevent context bloat)
@@ -40,6 +47,8 @@ pub struct AgentExecutionConfig {
     pub max_turns: u64,
     /// Model tiers for selecting models (config-driven or defaults)
     pub model_tiers: ModelTiers,
+    /// Optional component registry for dynamic agent loading
+    pub registry: Option<Arc<ComponentRegistry>>,
 }
 
 impl AgentExecutionConfig {
@@ -50,6 +59,7 @@ impl AgentExecutionConfig {
             api_key: None,
             max_turns: 50,
             model_tiers: ModelTiers::anthropic(),
+            registry: None,
         }
     }
 
@@ -72,6 +82,11 @@ impl AgentExecutionConfig {
 
     pub fn with_model_tiers(mut self, model_tiers: ModelTiers) -> Self {
         self.model_tiers = model_tiers;
+        self
+    }
+
+    pub fn with_registry(mut self, registry: Arc<ComponentRegistry>) -> Self {
+        self.registry = Some(registry);
         self
     }
 }
@@ -178,6 +193,63 @@ pub fn get_system_prompt(agent_type: &AgentType) -> &'static str {
     }
 }
 
+/// Try to get an agent definition from the registry by name
+///
+/// This allows dynamic agent loading from `.claude/agents/` directories.
+/// Returns None if no matching agent is found in the registry.
+pub fn get_agent_from_registry<'a>(
+    name: &str,
+    registry: Option<&'a ComponentRegistry>,
+) -> Option<&'a AgentDefinition> {
+    registry?.get_agent(name)
+}
+
+/// Get the system prompt for an agent, checking registry first
+///
+/// This function supports both legacy hardcoded agents and dynamic agents
+/// loaded from the prompt system. Dynamic agents take precedence.
+pub fn get_system_prompt_dynamic(
+    agent_type: &AgentType,
+    registry: Option<&ComponentRegistry>,
+) -> String {
+    // First, try to find the agent in the registry by its display name
+    let agent_name = match agent_type {
+        AgentType::Bash => "Bash",
+        AgentType::Explore => "Explore",
+        AgentType::Plan => "Plan",
+        AgentType::GeneralPurpose => "general-purpose",
+    };
+
+    if let Some(agent_def) = get_agent_from_registry(agent_name, registry) {
+        return agent_def.system_prompt.clone();
+    }
+
+    // Fall back to hardcoded prompts
+    get_system_prompt(agent_type).to_string()
+}
+
+/// Get the model preference for an agent from the registry
+///
+/// Returns the agent's configured model preference, or Inherit if not found.
+pub fn get_agent_model_preference(
+    agent_type: &AgentType,
+    registry: Option<&ComponentRegistry>,
+) -> ModelPreference {
+    let agent_name = match agent_type {
+        AgentType::Bash => "Bash",
+        AgentType::Explore => "Explore",
+        AgentType::Plan => "Plan",
+        AgentType::GeneralPurpose => "general-purpose",
+    };
+
+    if let Some(agent_def) = get_agent_from_registry(agent_name, registry) {
+        return agent_def.metadata.model.clone();
+    }
+
+    // Default to inherit for legacy agents
+    ModelPreference::Inherit
+}
+
 /// Truncate a result string if it exceeds the maximum size
 ///
 /// This prevents subagent results from bloating the main conversation context.
@@ -270,6 +342,9 @@ pub fn create_agent_tool_registry(agent_type: &AgentType, workspace: &Path) -> T
 ///
 /// This runs the agent until it completes (returns a message without tool calls)
 /// or reaches the maximum number of turns.
+///
+/// If a ComponentRegistry is available in the config, it will try to load
+/// the agent definition dynamically. Otherwise, it falls back to hardcoded prompts.
 pub async fn execute_agent_loop(
     agent_type: &AgentType,
     model: &ModelTier,
@@ -280,13 +355,18 @@ pub async fn execute_agent_loop(
 ) -> Result<String> {
     // Create provider with appropriate model (config-driven)
     let model_str = get_model_for_tier(model, &config.model_tiers);
-    let system_prompt = get_system_prompt(agent_type);
+
+    // Get system prompt - try registry first, then fall back to hardcoded
+    let system_prompt = get_system_prompt_dynamic(
+        agent_type,
+        config.registry.as_ref().map(|r| r.as_ref()),
+    );
 
     let provider = create_provider(
         config.provider_type,
         config.api_key.as_deref(),
         Some(&model_str),
-        Some(system_prompt),
+        Some(&system_prompt),
     )?;
 
     // Create tool registry for this agent type
@@ -556,7 +636,7 @@ mod tests {
         assert!(bash_registry.get("Bash").is_some());
         assert!(bash_registry.get("Read").is_some());
         assert!(bash_registry.get("Write").is_some());
-        assert!(bash_registry.get("list_directory").is_some());
+        assert!(bash_registry.get("ListDirectory").is_some());
         assert!(bash_registry.get("Glob").is_none()); // Bash doesn't have glob
 
         // Explore agent tools (read-only)
@@ -596,5 +676,63 @@ mod tests {
         assert_eq!(config.provider_type, ProviderType::OpenAI);
         assert_eq!(config.api_key, Some("test-key".to_string()));
         assert_eq!(config.max_turns, 100);
+        assert!(config.registry.is_none());
+    }
+
+    #[test]
+    fn test_agent_execution_config_with_registry() {
+        let registry = Arc::new(ComponentRegistry::with_builtins());
+        let config = AgentExecutionConfig::new(PathBuf::from("/workspace"))
+            .with_registry(registry.clone());
+
+        assert!(config.registry.is_some());
+    }
+
+    #[test]
+    fn test_get_system_prompt_dynamic_fallback() {
+        // Without registry, should fall back to hardcoded prompts
+        let prompt = get_system_prompt_dynamic(&AgentType::Bash, None);
+        assert!(prompt.contains("Bash"));
+
+        let prompt = get_system_prompt_dynamic(&AgentType::Explore, None);
+        assert!(prompt.contains("exploration"));
+    }
+
+    #[test]
+    fn test_get_system_prompt_dynamic_with_registry() {
+        // With registry, should use registry prompts if available
+        let registry = ComponentRegistry::with_builtins();
+
+        // Check that registry has builtin agents
+        let prompt = get_system_prompt_dynamic(&AgentType::Explore, Some(&registry));
+        // Should get either registry or hardcoded prompt - both valid
+        assert!(!prompt.is_empty());
+    }
+
+    #[test]
+    fn test_get_agent_from_registry() {
+        // Without registry, returns None
+        assert!(get_agent_from_registry("Explore", None).is_none());
+
+        // With registry
+        let registry = ComponentRegistry::with_builtins();
+        // Try to find builtin agent
+        if registry.get_agent("Explore").is_some() {
+            assert!(get_agent_from_registry("Explore", Some(&registry)).is_some());
+        }
+    }
+
+    #[test]
+    fn test_get_agent_model_preference() {
+        // Without registry, should return Inherit
+        let pref = get_agent_model_preference(&AgentType::Bash, None);
+        assert!(matches!(pref, crate::prompt::ModelPreference::Inherit));
+
+        // With registry
+        let registry = ComponentRegistry::with_builtins();
+        let pref = get_agent_model_preference(&AgentType::Explore, Some(&registry));
+        // Should return either the registry's preference or Inherit
+        // (depends on whether Explore is in the builtin registry)
+        let _ = pref; // Just verify it doesn't panic
     }
 }

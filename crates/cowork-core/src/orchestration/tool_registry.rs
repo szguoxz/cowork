@@ -233,7 +233,7 @@ impl ToolRegistryBuilder {
 
         // Browser tools (headless by default)
         if self.include_browser {
-            let browser_controller = BrowserController::default();
+            let browser_controller = BrowserController::new(true, self.workspace.clone());
             for tool in browser_controller.create_tools() {
                 registry.register(tool);
             }

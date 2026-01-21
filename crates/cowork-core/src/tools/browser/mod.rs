@@ -12,6 +12,7 @@ pub use navigate::NavigateTo;
 pub use screenshot::TakeScreenshot;
 pub use interact::{ClickElement, TypeText, GetPageContent};
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -131,12 +132,14 @@ impl BrowserSession {
 /// Browser controller for managing browser instances
 pub struct BrowserController {
     session: Arc<Mutex<BrowserSession>>,
+    workspace: PathBuf,
 }
 
 impl BrowserController {
-    pub fn new(headless: bool) -> Self {
+    pub fn new(headless: bool, workspace: PathBuf) -> Self {
         Self {
             session: Arc::new(Mutex::new(BrowserSession::new(headless))),
+            workspace,
         }
     }
 
@@ -148,16 +151,10 @@ impl BrowserController {
     pub fn create_tools(&self) -> Vec<Arc<dyn crate::tools::Tool>> {
         vec![
             Arc::new(NavigateTo::new(self.session())),
-            Arc::new(TakeScreenshot::new(self.session())),
+            Arc::new(TakeScreenshot::new(self.session(), self.workspace.clone())),
             Arc::new(ClickElement::new(self.session())),
             Arc::new(TypeText::new(self.session())),
             Arc::new(GetPageContent::new(self.session())),
         ]
-    }
-}
-
-impl Default for BrowserController {
-    fn default() -> Self {
-        Self::new(true)
     }
 }

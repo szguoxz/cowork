@@ -1,12 +1,13 @@
 //! Screenshot tool
 
-
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
+use crate::tools::filesystem::{normalize_path, validate_path};
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 use super::BrowserSession;
@@ -14,18 +15,19 @@ use super::BrowserSession;
 /// Tool for taking screenshots
 pub struct TakeScreenshot {
     session: Arc<Mutex<BrowserSession>>,
+    workspace: PathBuf,
 }
 
 impl TakeScreenshot {
-    pub fn new(session: Arc<Mutex<BrowserSession>>) -> Self {
-        Self { session }
+    pub fn new(session: Arc<Mutex<BrowserSession>>, workspace: PathBuf) -> Self {
+        Self { session, workspace }
     }
 }
 
 
 impl Tool for TakeScreenshot {
     fn name(&self) -> &str {
-        "browser_screenshot"
+        "BrowserScreenshot"
     }
 
     fn description(&self) -> &str {
@@ -56,11 +58,30 @@ impl Tool for TakeScreenshot {
 
     fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
-        let output_path = params["path"]
+        let output_path_str = params["path"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidParams("path is required".into()))?;
         let full_page = params["full_page"].as_bool().unwrap_or(false);
         let selector = params["selector"].as_str();
+
+        // Validate output path is within workspace
+        let output_path = self.workspace.join(output_path_str);
+        let normalized_path = normalize_path(&output_path);
+        let normalized_workspace = normalize_path(&self.workspace);
+
+        if !normalized_path.starts_with(&normalized_workspace) {
+            return Err(ToolError::PermissionDenied(format!(
+                "Screenshot path {} is outside workspace",
+                output_path_str
+            )));
+        }
+
+        // Validate parent directory exists and is within workspace
+        if let Some(parent) = output_path.parent()
+            && parent.exists()
+        {
+            validate_path(parent, &self.workspace)?;
+        }
 
         let mut session = self.session.lock().await;
 
@@ -107,13 +128,13 @@ impl Tool for TakeScreenshot {
                 .map_err(|e| ToolError::ExecutionFailed(format!("Screenshot failed: {}", e)))?
             };
 
-            // Write to file
+            // Write to file (output_path already validated above)
             tokio::fs::write(&output_path, &screenshot_data)
                 .await
                 .map_err(|e| ToolError::ExecutionFailed(format!("Failed to save screenshot: {}", e)))?;
 
             Ok(ToolOutput::success(json!({
-                "path": output_path,
+                "path": output_path.display().to_string(),
                 "size_bytes": screenshot_data.len(),
                 "status": "captured"
             })))
@@ -123,7 +144,7 @@ impl Tool for TakeScreenshot {
         {
             // Fallback without browser feature
             Ok(ToolOutput::success(json!({
-                "path": output_path,
+                "path": output_path.display().to_string(),
                 "status": "simulated",
                 "note": "Browser feature not enabled - simulation only"
             })))

@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -20,6 +21,7 @@ use crate::context::{
 };
 use crate::error::Result;
 use crate::orchestration::{ChatMessage, ChatSession, ToolCallInfo, ToolRegistryBuilder};
+use crate::prompt::{ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig};
 use crate::provider::{CompletionResult, GenAIProvider};
 use crate::tools::{ToolDefinition, ToolRegistry};
 
@@ -93,6 +95,17 @@ pub struct AgentLoop {
     context_monitor: ContextMonitor,
     /// Conversation summarizer for auto-compaction
     summarizer: ConversationSummarizer,
+    /// Hook executor for running hooks at lifecycle points
+    hook_executor: HookExecutor,
+    /// Hooks configuration
+    hooks_config: HooksConfig,
+    /// Whether hooks are enabled
+    hooks_enabled: bool,
+    /// Component registry for agents, commands, skills
+    #[allow(dead_code)]
+    component_registry: Option<Arc<ComponentRegistry>>,
+    /// When the session was created
+    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl AgentLoop {
@@ -147,6 +160,15 @@ impl AgentLoop {
         // Initialize summarizer with default config
         let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
 
+        // Initialize hook executor and configuration
+        let hook_executor = HookExecutor::new(config.workspace_path.clone());
+        let hooks_config = config
+            .component_registry
+            .as_ref()
+            .map(|r| r.get_hooks().clone())
+            .unwrap_or_default();
+        let hooks_enabled = config.prompt_config.enable_hooks;
+
         Ok(Self {
             session_id,
             input_rx,
@@ -156,16 +178,31 @@ impl AgentLoop {
             tool_registry,
             tool_definitions,
             approval_config: config.approval_config,
-            workspace_path: config.workspace_path,
+            workspace_path: config.workspace_path.clone(),
             pending_approvals: Vec::new(),
             context_monitor,
             summarizer,
+            hook_executor,
+            hooks_config,
+            hooks_enabled,
+            component_registry: config.component_registry.clone(),
+            created_at: chrono::Utc::now(),
         })
     }
 
     /// Run the agent loop until Stop is received or channel closes
     pub async fn run(mut self) {
         info!("Agent loop starting for session: {}", self.session_id);
+
+        // Execute SessionStart hooks
+        if self.hooks_enabled {
+            let context = HookContext::session_start(&self.session_id);
+            if let Ok(Some(additional_context)) = self.execute_hooks(HookEvent::SessionStart, &context) {
+                // Add hook context as a system reminder to the first message
+                debug!("SessionStart hook added context: {} chars", additional_context.len());
+                self.session.add_user_message(format!("<session-start-hook>\n{}\n</session-start-hook>", additional_context));
+            }
+        }
 
         loop {
             // Wait for input
@@ -211,15 +248,31 @@ impl AgentLoop {
 
     /// Handle a user message - run the agentic loop
     async fn handle_user_message(&mut self, content: String) -> Result<()> {
+        // Execute UserPromptSubmit hooks
+        let mut content_with_hooks = content.clone();
+        if self.hooks_enabled {
+            match self.run_user_prompt_hook(&content) {
+                Ok(Some(additional_context)) => {
+                    // Append hook context to the message
+                    content_with_hooks = format!("{}\n\n<user-prompt-submit-hook>\n{}\n</user-prompt-submit-hook>", content, additional_context);
+                }
+                Err(block_reason) => {
+                    // Hook blocked the message
+                    return Err(crate::error::Error::Agent(format!("Message blocked: {}", block_reason)));
+                }
+                Ok(None) => {}
+            }
+        }
+
         // Generate message ID
         let msg_id = uuid::Uuid::new_v4().to_string();
 
-        // Echo the user message
+        // Echo the user message (original content, not with hooks)
         self.emit(SessionOutput::user_message(&msg_id, &content))
             .await;
 
-        // Add to session
-        self.session.add_user_message(&content);
+        // Add to session (with hook context if any)
+        self.session.add_user_message(&content_with_hooks);
 
         // Run the agentic loop
         self.run_agentic_loop().await
@@ -384,6 +437,24 @@ impl AgentLoop {
         let mut results: Vec<(String, String, bool)> = Vec::new();
 
         for tool_call in tool_calls {
+            // Execute PreToolUse hooks
+            if self.hooks_enabled
+                && let Err(block_reason) = self.run_pre_tool_hook(&tool_call.name, &tool_call.arguments)
+            {
+                // Hook blocked the tool execution
+                warn!("Tool {} blocked by hook: {}", tool_call.name, block_reason);
+                let error_msg = format!("Tool blocked: {}", block_reason);
+                self.emit(SessionOutput::tool_done(
+                    &tool_call.id,
+                    &tool_call.name,
+                    false,
+                    error_msg.clone(),
+                ))
+                .await;
+                results.push((tool_call.id.clone(), error_msg, true));
+                continue;
+            }
+
             // Emit tool start
             self.emit(SessionOutput::tool_start(
                 &tool_call.id,
@@ -413,17 +484,28 @@ impl AgentLoop {
                 (false, format!("Unknown tool: {}", tool_call.name))
             };
 
+            // Execute PostToolUse hooks
+            let final_output = if self.hooks_enabled {
+                if let Some(additional_context) = self.run_post_tool_hook(&tool_call.name, &tool_call.arguments, &output) {
+                    format!("{}\n\n<post-tool-hook>\n{}\n</post-tool-hook>", output, additional_context)
+                } else {
+                    output
+                }
+            } else {
+                output
+            };
+
             // Emit tool done
             self.emit(SessionOutput::tool_done(
                 &tool_call.id,
                 &tool_call.name,
                 success,
-                output.clone(),
+                final_output.clone(),
             ))
             .await;
 
             // Collect result for batching
-            results.push((tool_call.id.clone(), output, !success));
+            results.push((tool_call.id.clone(), final_output, !success));
         }
 
         // Add all tool results as a single batched message
@@ -432,6 +514,30 @@ impl AgentLoop {
 
     /// Execute a single tool (used for individual tool approvals)
     async fn execute_tool(&mut self, tool_call: &ToolCallInfo) {
+        // Execute PreToolUse hooks
+        if self.hooks_enabled {
+            match self.run_pre_tool_hook(&tool_call.name, &tool_call.arguments) {
+                Err(block_reason) => {
+                    // Hook blocked the tool execution
+                    warn!("Tool {} blocked by hook: {}", tool_call.name, block_reason);
+                    let error_msg = format!("Tool blocked: {}", block_reason);
+                    self.session.add_tool_result_with_error(&tool_call.id, &error_msg, true);
+                    self.emit(SessionOutput::tool_done(
+                        &tool_call.id,
+                        &tool_call.name,
+                        false,
+                        error_msg,
+                    ))
+                    .await;
+                    return;
+                }
+                Ok(Some(ctx)) => {
+                    debug!("PreToolUse hook added context for {}: {} chars", tool_call.name, ctx.len());
+                }
+                Ok(None) => {}
+            }
+        }
+
         // Emit tool start
         self.emit(SessionOutput::tool_start(
             &tool_call.id,
@@ -461,16 +567,25 @@ impl AgentLoop {
             (false, format!("Unknown tool: {}", tool_call.name))
         };
 
+        // Execute PostToolUse hooks
+        let mut final_result = result.clone();
+        if self.hooks_enabled
+            && let Some(additional_context) = self.run_post_tool_hook(&tool_call.name, &tool_call.arguments, &result.1)
+        {
+            // Append hook context to the tool result
+            final_result.1 = format!("{}\n\n<post-tool-hook>\n{}\n</post-tool-hook>", result.1, additional_context);
+        }
+
         // Add tool result to session with proper error flag
-        let is_error = !result.0;
-        self.session.add_tool_result_with_error(&tool_call.id, &result.1, is_error);
+        let is_error = !final_result.0;
+        self.session.add_tool_result_with_error(&tool_call.id, &final_result.1, is_error);
 
         // Emit tool done
         self.emit(SessionOutput::tool_done(
             &tool_call.id,
             &tool_call.name,
-            result.0,
-            result.1,
+            final_result.0,
+            final_result.1,
         ))
         .await;
     }
@@ -714,6 +829,72 @@ impl AgentLoop {
         self.session.messages.push(ChatMessage::user(&result.summary.content));
     }
 
+    // ========================================================================
+    // Hook Execution
+    // ========================================================================
+
+    /// Execute hooks for a given event
+    ///
+    /// Returns any additional context from hooks to inject into the conversation.
+    /// Returns an error if a hook blocks the action.
+    fn execute_hooks(&self, event: HookEvent, context: &HookContext) -> std::result::Result<Option<String>, String> {
+        if !self.hooks_enabled || self.hooks_config.is_empty() {
+            return Ok(None);
+        }
+
+        let results = self.hook_executor.execute(event, &self.hooks_config, context);
+
+        let mut additional_context = Vec::new();
+
+        for result in results {
+            match result {
+                Ok(hook_result) => {
+                    // Check for block action
+                    if hook_result.block {
+                        return Err(hook_result.block_reason.unwrap_or_else(|| "Blocked by hook".to_string()));
+                    }
+
+                    // Collect additional context
+                    if let Some(ctx) = hook_result.additional_context {
+                        additional_context.push(ctx);
+                    }
+                }
+                Err(e) => {
+                    // Log but don't fail on hook errors
+                    warn!("Hook execution failed: {}", e);
+                }
+            }
+        }
+
+        if additional_context.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(additional_context.join("\n\n")))
+        }
+    }
+
+    /// Execute PreToolUse hooks
+    ///
+    /// Returns Ok(Some(ctx)) if additional context should be added
+    /// Returns Ok(None) if no context
+    /// Returns Err if the tool should be blocked
+    fn run_pre_tool_hook(&self, tool_name: &str, args: &serde_json::Value) -> std::result::Result<Option<String>, String> {
+        let context = HookContext::pre_tool_use(&self.session_id, tool_name, args.clone());
+        self.execute_hooks(HookEvent::PreToolUse, &context)
+    }
+
+    /// Execute PostToolUse hooks
+    fn run_post_tool_hook(&self, tool_name: &str, args: &serde_json::Value, result: &str) -> Option<String> {
+        let context = HookContext::post_tool_use(&self.session_id, tool_name, args.clone(), result);
+        self.execute_hooks(HookEvent::PostToolUse, &context).ok().flatten()
+    }
+
+    /// Execute UserPromptSubmit hooks
+    fn run_user_prompt_hook(&self, prompt: &str) -> std::result::Result<Option<String>, String> {
+        let context = HookContext::user_prompt(&self.session_id, prompt);
+        self.execute_hooks(HookEvent::UserPromptSubmit, &context)
+    }
+
     /// Emit an output
     async fn emit(&self, output: SessionOutput) {
         if let Err(e) = self
@@ -757,13 +938,12 @@ impl AgentLoop {
             })
             .collect();
 
-        let now = chrono::Utc::now();
         let saved = SavedSession {
             id: self.session_id.clone(),
             name: format!("Session {}", self.session_id),
             messages,
-            created_at: now, // TODO: track actual creation time
-            updated_at: now,
+            created_at: self.created_at,
+            updated_at: chrono::Utc::now(),
         };
 
         // Write to file

@@ -29,6 +29,7 @@ use cowork_core::provider::{
     has_api_key_configured, ProviderType,
 };
 use cowork_core::orchestration::format_size;
+use cowork_core::prompt::{ComponentPaths, ComponentRegistry};
 use cowork_core::session::{SessionConfig, SessionInput, SessionManager, SessionOutput};
 use cowork_core::ToolApprovalConfig;
 use cowork_core::skills::SkillRegistry;
@@ -198,6 +199,53 @@ enum Commands {
 
     /// Show configuration
     Config,
+
+    /// Manage plugins
+    #[command(subcommand)]
+    Plugin(PluginCommands),
+
+    /// List prompt system components (agents, commands, skills)
+    #[command(subcommand)]
+    Components(ComponentCommands),
+}
+
+#[derive(Subcommand)]
+enum PluginCommands {
+    /// List installed plugins
+    List,
+
+    /// Show plugin details
+    Info {
+        /// Plugin name
+        name: String,
+    },
+
+    /// Enable a plugin
+    Enable {
+        /// Plugin name
+        name: String,
+    },
+
+    /// Disable a plugin
+    Disable {
+        /// Plugin name
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ComponentCommands {
+    /// List all available agents
+    Agents,
+
+    /// List all available commands
+    Commands,
+
+    /// List all available skills
+    Skills,
+
+    /// Show all components summary
+    All,
 }
 
 /// Parse provider name string to ProviderType
@@ -263,6 +311,8 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Tools) => show_tools(),
         Some(Commands::Config) => show_config(&workspace),
+        Some(Commands::Plugin(cmd)) => handle_plugin_command(&workspace, cmd)?,
+        Some(Commands::Components(cmd)) => handle_component_command(&workspace, cmd)?,
         None => run_chat(&workspace, provider_type, cli.model.as_deref(), cli.auto_approve).await?,
     }
 
@@ -1184,6 +1234,240 @@ fn show_config(workspace: &Path) {
         )
         .dim()
     );
+}
+
+/// Handle plugin management commands
+fn handle_plugin_command(workspace: &Path, cmd: PluginCommands) -> anyhow::Result<()> {
+    // Initialize component registry with builtins and load from paths
+    let paths = ComponentPaths::for_project(workspace);
+    let mut registry = ComponentRegistry::with_builtins();
+    if let Err(e) = registry.load_from_paths(&paths) {
+        eprintln!("{}", style(format!("Warning: Failed to load some components: {}", e)).yellow());
+    }
+
+    match cmd {
+        PluginCommands::List => {
+            println!("{}", style("Installed Plugins:").bold());
+            println!();
+
+            let plugins: Vec<_> = registry.list_plugins().collect();
+            if plugins.is_empty() {
+                println!("  {}", style("No plugins installed").dim());
+                println!();
+                println!("  Plugins can be installed to:");
+                println!("    • {}", style(".claude/plugins/").cyan());
+                println!("    • {}", style("~/.claude/plugins/").cyan());
+            } else {
+                for plugin in plugins {
+                    let status = if plugin.is_enabled() {
+                        style("enabled").green()
+                    } else {
+                        style("disabled").red()
+                    };
+                    println!(
+                        "  {} {} - {} [{}]",
+                        style("•").cyan(),
+                        style(plugin.name()).bold(),
+                        plugin.version(),
+                        status
+                    );
+                    let desc = plugin.description();
+                    if !desc.is_empty() {
+                        println!("    {}", style(desc).dim());
+                    }
+                    println!(
+                        "    Components: {} agents, {} commands, {} skills",
+                        plugin.agents.len(),
+                        plugin.commands.len(),
+                        plugin.skills.len()
+                    );
+                }
+            }
+        }
+
+        PluginCommands::Info { name } => {
+            match registry.get_plugin(&name) {
+                Some(plugin) => {
+                    println!("{}", style(format!("Plugin: {}", plugin.name())).bold());
+                    println!();
+                    println!("  Version: {}", plugin.version());
+                    let desc = plugin.description();
+                    if !desc.is_empty() {
+                        println!("  Description: {}", desc);
+                    }
+                    let author = &plugin.manifest.author;
+                    if !author.is_empty() {
+                        println!("  Author: {}", author);
+                    }
+                    println!("  Status: {}", if plugin.is_enabled() { "enabled" } else { "disabled" });
+                    println!("  Path: {}", plugin.base_path.display());
+                    println!();
+
+                    if !plugin.agents.is_empty() {
+                        println!("  {}:", style("Agents").bold());
+                        for agent in &plugin.agents {
+                            println!("    • {} - {}", agent.name(), agent.description());
+                        }
+                    }
+                    if !plugin.commands.is_empty() {
+                        println!("  {}:", style("Commands").bold());
+                        for cmd in &plugin.commands {
+                            println!("    • /{} - {}", cmd.name(), cmd.description());
+                        }
+                    }
+                    if !plugin.skills.is_empty() {
+                        println!("  {}:", style("Skills").bold());
+                        for skill in &plugin.skills {
+                            println!("    • {} - {}", skill.frontmatter.name, skill.frontmatter.description);
+                        }
+                    }
+                }
+                None => {
+                    println!("{}", style(format!("Plugin '{}' not found", name)).red());
+                }
+            }
+        }
+
+        PluginCommands::Enable { name } => {
+            match registry.plugins_mut().enable(&name) {
+                Ok(_) => println!("{}", style(format!("Plugin '{}' enabled", name)).green()),
+                Err(e) => println!("{}", style(format!("Failed to enable plugin: {}", e)).red()),
+            }
+        }
+
+        PluginCommands::Disable { name } => {
+            match registry.plugins_mut().disable(&name, "Disabled by user") {
+                Ok(_) => println!("{}", style(format!("Plugin '{}' disabled", name)).green()),
+                Err(e) => println!("{}", style(format!("Failed to disable plugin: {}", e)).red()),
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle component listing commands
+fn handle_component_command(workspace: &Path, cmd: ComponentCommands) -> anyhow::Result<()> {
+    // Initialize component registry with builtins and load from paths
+    let paths = ComponentPaths::for_project(workspace);
+    let mut registry = ComponentRegistry::with_builtins();
+    if let Err(e) = registry.load_from_paths(&paths) {
+        eprintln!("{}", style(format!("Warning: Failed to load some components: {}", e)).yellow());
+    }
+
+    match cmd {
+        ComponentCommands::Agents => {
+            println!("{}", style("Available Agents:").bold());
+            println!();
+
+            let mut agents: Vec<_> = registry.list_agents().collect();
+            agents.sort_by_key(|a| a.name());
+
+            for agent in agents {
+                println!(
+                    "  {} {} - {}",
+                    style("•").cyan(),
+                    style(agent.name()).bold(),
+                    agent.description()
+                );
+                let model = agent.model();
+                if !matches!(model, cowork_core::ModelPreference::Inherit) {
+                    println!("    Model: {}", style(format!("{:?}", model)).dim());
+                }
+                let restrictions = agent.tool_restrictions();
+                if !restrictions.allowed.is_empty() {
+                    let tool_names: Vec<_> = restrictions.allowed.iter().map(|t| t.to_string()).collect();
+                    println!("    Tools: {}", style(tool_names.join(", ")).dim());
+                }
+            }
+        }
+
+        ComponentCommands::Commands => {
+            println!("{}", style("Available Commands:").bold());
+            println!();
+
+            let mut commands: Vec<_> = registry.list_commands().collect();
+            commands.sort_by_key(|c| c.name());
+
+            for cmd in commands {
+                println!(
+                    "  {} /{} - {}",
+                    style("•").cyan(),
+                    style(cmd.name()).bold(),
+                    cmd.description()
+                );
+            }
+        }
+
+        ComponentCommands::Skills => {
+            println!("{}", style("Available Skills:").bold());
+            println!();
+
+            let mut skills: Vec<_> = registry.list_skills().collect();
+            skills.sort_by_key(|s| s.frontmatter.name.as_str());
+
+            if skills.is_empty() {
+                println!("  {}", style("No custom skills installed").dim());
+                println!();
+                println!("  Skills can be added to:");
+                println!("    • {}", style(".claude/skills/*/SKILL.md").cyan());
+                println!("    • {}", style("~/.claude/skills/*/SKILL.md").cyan());
+            } else {
+                for skill in skills {
+                    let invocable = if skill.frontmatter.user_invocable {
+                        style("[user-invocable]").green()
+                    } else {
+                        style("[auto-only]").dim()
+                    };
+                    println!(
+                        "  {} {} - {} {}",
+                        style("•").cyan(),
+                        style(&skill.frontmatter.name).bold(),
+                        skill.frontmatter.description,
+                        invocable
+                    );
+                }
+            }
+        }
+
+        ComponentCommands::All => {
+            // Show summary of all components
+            println!("{}", style("Component Registry Summary:").bold());
+            println!();
+
+            println!("  {} {} agents", style("•").cyan(), registry.agent_count());
+            println!("  {} {} commands", style("•").cyan(), registry.command_count());
+            println!("  {} {} skills", style("•").cyan(), registry.skill_count());
+            println!("  {} {} plugins", style("•").cyan(), registry.plugin_count());
+            println!();
+
+            // Show source breakdown
+            println!("{}", style("Agents:").bold());
+            for agent in registry.list_agents() {
+                println!("  {} [{}]", style(agent.name()).green(), format!("{:?}", agent.scope).to_lowercase());
+            }
+            println!();
+
+            println!("{}", style("Commands:").bold());
+            for cmd in registry.list_commands() {
+                println!("  /{} [{}]", style(cmd.name()).green(), format!("{:?}", cmd.scope).to_lowercase());
+            }
+
+            if registry.skill_count() > 0 {
+                println!();
+                println!("{}", style("Skills:").bold());
+                for skill in registry.list_skills() {
+                    let source = match skill.source {
+                        cowork_core::skills::loader::SkillSource::Project => "project",
+                        cowork_core::skills::loader::SkillSource::User => "user",
+                    };
+                    println!("  {} [{}]", style(&skill.frontmatter.name).green(), source);
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Show setup instructions when no API key is configured

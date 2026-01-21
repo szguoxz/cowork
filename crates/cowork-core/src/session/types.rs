@@ -5,6 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::config::PromptSystemConfig;
+use crate::prompt::ComponentRegistry;
 
 /// Unique identifier for a session
 pub type SessionId = String;
@@ -222,6 +226,10 @@ pub struct SessionConfig {
     pub api_key: Option<String>,
     /// Web search configuration
     pub web_search_config: Option<crate::config::WebSearchConfig>,
+    /// Prompt system configuration
+    pub prompt_config: PromptSystemConfig,
+    /// Component registry (agents, commands, skills, hooks)
+    pub component_registry: Option<Arc<ComponentRegistry>>,
 }
 
 impl Default for SessionConfig {
@@ -234,6 +242,8 @@ impl Default for SessionConfig {
             model: None,
             api_key: None,
             web_search_config: None,
+            prompt_config: PromptSystemConfig::default(),
+            component_registry: None,
         }
     }
 }
@@ -280,6 +290,18 @@ impl SessionConfig {
     /// Set the web search config
     pub fn with_web_search_config(mut self, config: crate::config::WebSearchConfig) -> Self {
         self.web_search_config = Some(config);
+        self
+    }
+
+    /// Set the prompt system config
+    pub fn with_prompt_config(mut self, config: PromptSystemConfig) -> Self {
+        self.prompt_config = config;
+        self
+    }
+
+    /// Set the component registry
+    pub fn with_component_registry(mut self, registry: Arc<ComponentRegistry>) -> Self {
+        self.component_registry = Some(registry);
         self
     }
 }

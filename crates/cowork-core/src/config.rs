@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
+use crate::prompt::ComponentPaths;
+
 use crate::error::{Error, Result};
 
 /// Default constants used throughout the application
@@ -170,6 +172,9 @@ pub struct Config {
     /// Web search settings
     #[serde(default)]
     pub web_search: WebSearchConfig,
+    /// Prompt system settings
+    #[serde(default)]
+    pub prompt: PromptSystemConfig,
 }
 
 fn default_provider_name() -> String {
@@ -195,6 +200,7 @@ impl Default for Config {
             browser: BrowserConfig::default(),
             general: GeneralConfig::default(),
             web_search: WebSearchConfig::default(),
+            prompt: PromptSystemConfig::default(),
         }
     }
 }
@@ -717,6 +723,78 @@ impl Default for GeneralConfig {
     }
 }
 
+/// Prompt system configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptSystemConfig {
+    /// Enable hook execution
+    #[serde(default = "default_true")]
+    pub enable_hooks: bool,
+    /// Enable plugin system
+    #[serde(default = "default_true")]
+    pub enable_plugins: bool,
+    /// Enterprise config directory (highest priority)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enterprise_config: Option<PathBuf>,
+    /// Custom project config directory (overrides .claude/)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_config: Option<PathBuf>,
+    /// Custom user config directory (overrides ~/.claude/)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_config: Option<PathBuf>,
+    /// Hook execution timeout in milliseconds
+    #[serde(default = "default_hook_timeout_ms")]
+    pub hook_timeout_ms: u64,
+    /// Enable auto-invocation of skills
+    #[serde(default = "default_true")]
+    pub enable_skill_auto_invoke: bool,
+    /// Base system prompt (if not using default)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_system_prompt: Option<String>,
+}
+
+fn default_hook_timeout_ms() -> u64 {
+    30_000 // 30 seconds
+}
+
+impl Default for PromptSystemConfig {
+    fn default() -> Self {
+        Self {
+            enable_hooks: true,
+            enable_plugins: true,
+            enterprise_config: None,
+            project_config: None,
+            user_config: None,
+            hook_timeout_ms: default_hook_timeout_ms(),
+            enable_skill_auto_invoke: true,
+            base_system_prompt: None,
+        }
+    }
+}
+
+impl PromptSystemConfig {
+    /// Build ComponentPaths from this configuration
+    pub fn to_component_paths(&self, workspace_dir: &Path) -> ComponentPaths {
+        let project_path = Some(self.project_config
+            .clone()
+            .unwrap_or_else(|| workspace_dir.join(".claude")));
+
+        let user_path = Some(self.user_config
+            .clone()
+            .unwrap_or_else(|| {
+                dirs::home_dir()
+                    .map(|h| h.join(".claude"))
+                    .unwrap_or_else(|| PathBuf::from(".claude"))
+            }));
+
+        ComponentPaths {
+            enterprise_path: self.enterprise_config.clone(),
+            project_path,
+            user_path,
+            plugin_paths: Vec::new(), // Plugins discovered separately
+        }
+    }
+}
+
 /// Web search configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSearchConfig {
@@ -762,26 +840,25 @@ impl WebSearchConfig {
     /// Get the fallback API key, checking environment variable if not set directly
     pub fn get_fallback_api_key(&self) -> Option<String> {
         // First check direct API key
-        if let Some(key) = &self.fallback_api_key {
-            if !key.is_empty() {
-                return Some(key.clone());
-            }
+        if let Some(key) = &self.fallback_api_key
+            && !key.is_empty()
+        {
+            return Some(key.clone());
         }
 
         // Then check environment variable
-        if let Some(env_name) = &self.fallback_api_key_env {
-            if let Ok(key) = std::env::var(env_name) {
-                if !key.is_empty() {
-                    return Some(key);
-                }
-            }
+        if let Some(env_name) = &self.fallback_api_key_env
+            && let Ok(key) = std::env::var(env_name)
+            && !key.is_empty()
+        {
+            return Some(key);
         }
 
         // Try default environment variables based on provider
         match self.fallback_provider.as_str() {
-            "brave" => std::env::var("BRAVE_API_KEY").ok(),
-            "serper" => std::env::var("SERPER_API_KEY").ok(),
-            "tavily" => std::env::var("TAVILY_API_KEY").ok(),
+            "brave" => std::env::var("BRAVE_API_KEY").ok().filter(|k| !k.is_empty()),
+            "serper" => std::env::var("SERPER_API_KEY").ok().filter(|k| !k.is_empty()),
+            "tavily" => std::env::var("TAVILY_API_KEY").ok().filter(|k| !k.is_empty()),
             "searxng" => None, // SearXNG typically doesn't need an API key
             _ => None,
         }

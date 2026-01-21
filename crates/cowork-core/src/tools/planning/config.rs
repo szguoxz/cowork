@@ -26,7 +26,7 @@ impl ConfigTool {
 
 impl Tool for ConfigTool {
     fn name(&self) -> &str {
-        "config"
+        "Config"
     }
 
     fn description(&self) -> &str {

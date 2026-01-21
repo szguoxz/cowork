@@ -25,7 +25,7 @@ impl NavigateTo {
 
 impl Tool for NavigateTo {
     fn name(&self) -> &str {
-        "browser_navigate"
+        "BrowserNavigate"
     }
 
     fn description(&self) -> &str {

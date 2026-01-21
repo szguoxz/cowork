@@ -1,0 +1,1034 @@
+//! Command System for Cowork
+//!
+//! This module implements user-triggered workflow orchestration via slash commands.
+//! Commands are defined via markdown files with YAML frontmatter and can be loaded from:
+//! - Built-in commands (hardcoded in the binary)
+//! - Project-level commands (`.claude/commands/`)
+//! - User-level commands (`~/.claude/commands/`)
+//!
+//! # Command Definition Format
+//!
+//! ```markdown
+//! ---
+//! name: commit
+//! description: "Create a git commit with AI-generated message"
+//! allowed_tools: Bash, Read
+//! denied_tools: Write, Edit
+//! argument_hint:
+//!   - "<message>"
+//!   - "--amend"
+//! ---
+//!
+//! # Commit Command
+//!
+//! Create a commit following the project's conventions...
+//! ```
+//!
+//! # Shell Substitutions
+//!
+//! Commands support shell substitutions using the `!` backtick syntax `` syntax:
+//! - `` `git status` `` - replaced with command output
+//! - `$ARGUMENTS` or `${ARGUMENTS}` - replaced with user-provided arguments
+//!
+//! # Usage
+//!
+//! Users invoke commands via `/command` or `/command args`:
+//! ```text
+//! /commit
+//! /pr --draft
+//! /review-pr 123
+//! ```
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::prompt::parser::{parse_frontmatter, parse_tool_list, ParseError, ParsedDocument};
+use crate::prompt::types::{Scope, ToolRestrictions, ToolSpec};
+use crate::prompt::builtin;
+
+/// Command metadata from YAML frontmatter
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandMetadata {
+    /// Command name (used for invocation, e.g., "commit" for /commit)
+    pub name: String,
+    /// Human-readable description
+    #[serde(default)]
+    pub description: String,
+    /// List of allowed tools (empty = all tools)
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    /// List of denied tools
+    #[serde(default)]
+    pub denied_tools: Vec<String>,
+    /// Argument hints for CLI autocomplete and help
+    #[serde(default)]
+    pub argument_hint: Vec<String>,
+}
+
+impl CommandMetadata {
+    /// Create tool restrictions based on the command's tool lists
+    pub fn tool_restrictions(&self) -> ToolRestrictions {
+        let allowed: Vec<ToolSpec> = self.allowed_tools.iter().map(|t| ToolSpec::parse(t)).collect();
+        let denied: Vec<ToolSpec> = self.denied_tools.iter().map(|t| ToolSpec::parse(t)).collect();
+
+        ToolRestrictions { allowed, denied }
+    }
+}
+
+/// Complete command definition including metadata, content, and source
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandDefinition {
+    /// Command metadata from frontmatter
+    pub metadata: CommandMetadata,
+    /// Command content (markdown with shell substitution placeholders)
+    pub content: String,
+    /// Source path (if loaded from filesystem)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<PathBuf>,
+    /// Scope of this definition
+    #[serde(default)]
+    pub scope: Scope,
+}
+
+impl CommandDefinition {
+    /// Get the command name
+    pub fn name(&self) -> &str {
+        &self.metadata.name
+    }
+
+    /// Get the command description
+    pub fn description(&self) -> &str {
+        &self.metadata.description
+    }
+
+    /// Get the argument hints
+    pub fn argument_hints(&self) -> &[String] {
+        &self.metadata.argument_hint
+    }
+
+    /// Get tool restrictions for this command
+    pub fn tool_restrictions(&self) -> ToolRestrictions {
+        self.metadata.tool_restrictions()
+    }
+
+    /// Check if a tool is allowed by this command
+    pub fn is_tool_allowed(&self, tool_name: &str, args: &serde_json::Value) -> bool {
+        self.tool_restrictions().is_allowed(tool_name, args)
+    }
+
+    /// Apply argument substitution to the command content
+    pub fn substitute_arguments(&self, arguments: &str) -> String {
+        self.content
+            .replace("$ARGUMENTS", arguments)
+            .replace("${ARGUMENTS}", arguments)
+    }
+
+    /// Get the command invocation string (e.g., "/commit")
+    pub fn invocation(&self) -> String {
+        format!("/{}", self.metadata.name)
+    }
+
+    /// Get help text for this command
+    pub fn help_text(&self) -> String {
+        let mut help = format!("/{}", self.metadata.name);
+
+        if !self.metadata.argument_hint.is_empty() {
+            help.push(' ');
+            help.push_str(&self.metadata.argument_hint.join(" "));
+        }
+
+        if !self.metadata.description.is_empty() {
+            help.push_str(" - ");
+            help.push_str(&self.metadata.description);
+        }
+
+        help
+    }
+}
+
+/// Error type for command parsing and loading
+#[derive(Debug, thiserror::Error)]
+pub enum CommandError {
+    #[error("Failed to parse command file: {0}")]
+    ParseError(#[from] ParseError),
+
+    #[error("Missing required field: {0}")]
+    MissingField(String),
+
+    #[error("Failed to read command file: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Command not found: {0}")]
+    NotFound(String),
+
+    #[error("Invalid command name '{0}': must be lowercase with hyphens, max 64 chars")]
+    InvalidName(String),
+}
+
+/// Parse a command definition from markdown content
+///
+/// # Arguments
+/// * `content` - The full markdown file content
+/// * `source_path` - Optional path where the file was loaded from
+/// * `scope` - The scope of this command definition
+///
+/// # Returns
+/// * `Ok(CommandDefinition)` - Successfully parsed command
+/// * `Err(CommandError)` - Parse or validation error
+pub fn parse_command(
+    content: &str,
+    source_path: Option<PathBuf>,
+    scope: Scope,
+) -> Result<CommandDefinition, CommandError> {
+    let doc = parse_frontmatter(content)?;
+    parse_command_from_document(doc, source_path, scope)
+}
+
+/// Parse a command definition from a parsed document
+fn parse_command_from_document(
+    doc: ParsedDocument,
+    source_path: Option<PathBuf>,
+    scope: Scope,
+) -> Result<CommandDefinition, CommandError> {
+    // Extract required fields
+    let name = doc
+        .get_string("name")
+        .ok_or_else(|| CommandError::MissingField("name".to_string()))?
+        .to_string();
+
+    // Validate name
+    if !is_valid_command_name(&name) {
+        return Err(CommandError::InvalidName(name));
+    }
+
+    let description = doc
+        .get_string("description")
+        .unwrap_or("")
+        .to_string();
+
+    // Extract optional fields
+    let allowed_tools = doc
+        .metadata
+        .get("allowed_tools")
+        .map(parse_tool_list)
+        .unwrap_or_default();
+
+    let denied_tools = doc
+        .metadata
+        .get("denied_tools")
+        .map(parse_tool_list)
+        .unwrap_or_default();
+
+    let argument_hint = doc
+        .metadata
+        .get("argument_hint")
+        .map(parse_string_list)
+        .unwrap_or_default();
+
+    let metadata = CommandMetadata {
+        name,
+        description,
+        allowed_tools,
+        denied_tools,
+        argument_hint,
+    };
+
+    Ok(CommandDefinition {
+        metadata,
+        content: doc.content,
+        source_path,
+        scope,
+    })
+}
+
+/// Parse a YAML value as a list of strings
+fn parse_string_list(value: &serde_json::Value) -> Vec<String> {
+    match value {
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect(),
+        serde_json::Value::String(s) => s.split(',').map(|s| s.trim().to_string()).collect(),
+        _ => vec![],
+    }
+}
+
+/// Check if command name is valid (lowercase, hyphens, digits, max 64 chars)
+fn is_valid_command_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Load a command from a file path
+pub fn load_command_from_file(path: &Path, scope: Scope) -> Result<CommandDefinition, CommandError> {
+    let content = std::fs::read_to_string(path)?;
+    parse_command(&content, Some(path.to_path_buf()), scope)
+}
+
+/// Registry for managing command definitions
+#[derive(Debug, Default)]
+pub struct CommandRegistry {
+    /// Registered commands by name
+    commands: HashMap<String, CommandDefinition>,
+}
+
+impl CommandRegistry {
+    /// Create a new empty registry
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a new registry with built-in commands loaded
+    pub fn with_builtins() -> Self {
+        let mut registry = Self::new();
+        registry.load_builtins();
+        registry
+    }
+
+    /// Load all built-in commands
+    pub fn load_builtins(&mut self) {
+        // Load commit command
+        if let Ok(cmd) = parse_command(builtin::commands::COMMIT, None, Scope::Builtin) {
+            self.register(cmd);
+        }
+
+        // Load pr command
+        if let Ok(cmd) = parse_command(builtin::commands::PR, None, Scope::Builtin) {
+            self.register(cmd);
+        }
+
+        // Load review-pr command
+        if let Ok(cmd) = parse_command(builtin::commands::REVIEW_PR, None, Scope::Builtin) {
+            self.register(cmd);
+        }
+    }
+
+    /// Register a command definition
+    ///
+    /// If a command with the same name exists, it will be replaced only if
+    /// the new command has higher priority (lower scope value).
+    pub fn register(&mut self, command: CommandDefinition) {
+        let name = command.name().to_string();
+
+        // Check if we should replace existing
+        if let Some(existing) = self.commands.get(&name) {
+            // Only replace if new command has higher priority
+            if !command.scope.overrides(&existing.scope) {
+                return;
+            }
+        }
+
+        self.commands.insert(name, command);
+    }
+
+    /// Get a command by name
+    pub fn get(&self, name: &str) -> Option<&CommandDefinition> {
+        // Support both with and without leading slash
+        let name = name.trim_start_matches('/');
+        self.commands.get(name)
+    }
+
+    /// List all registered commands
+    pub fn list(&self) -> impl Iterator<Item = &CommandDefinition> {
+        self.commands.values()
+    }
+
+    /// List command names
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.commands.keys().map(|s| s.as_str())
+    }
+
+    /// Get the number of registered commands
+    pub fn len(&self) -> usize {
+        self.commands.len()
+    }
+
+    /// Check if the registry is empty
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+
+    /// Load commands from a directory
+    ///
+    /// Scans the directory for `.md` files and attempts to parse each as a command.
+    /// Invalid files are logged and skipped.
+    pub fn load_from_directory(&mut self, dir: &Path, scope: Scope) -> std::io::Result<usize> {
+        if !dir.exists() {
+            return Ok(0);
+        }
+
+        let mut loaded = 0;
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            // Only process .md files
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+
+            match load_command_from_file(&path, scope) {
+                Ok(command) => {
+                    self.register(command);
+                    loaded += 1;
+                }
+                Err(e) => {
+                    // Log but don't fail on individual command errors
+                    tracing::warn!("Failed to load command from {}: {}", path.display(), e);
+                }
+            }
+        }
+
+        Ok(loaded)
+    }
+
+    /// Discover and load commands from standard locations
+    ///
+    /// Loads from:
+    /// 1. Built-in commands (if not already loaded)
+    /// 2. User commands from `~/.claude/commands/`
+    /// 3. Project commands from `.claude/commands/`
+    ///
+    /// Higher priority sources override lower priority ones.
+    pub fn discover(&mut self, project_root: Option<&Path>) -> std::io::Result<()> {
+        // Load built-ins first (lowest priority)
+        if self.is_empty() {
+            self.load_builtins();
+        }
+
+        // Load user commands
+        if let Some(home) = dirs::home_dir() {
+            let user_commands_dir = home.join(".claude").join("commands");
+            let _ = self.load_from_directory(&user_commands_dir, Scope::User);
+        }
+
+        // Load project commands (highest priority among filesystem)
+        if let Some(root) = project_root {
+            let project_commands_dir = root.join(".claude").join("commands");
+            let _ = self.load_from_directory(&project_commands_dir, Scope::Project);
+        }
+
+        Ok(())
+    }
+
+    /// Parse a user input to extract command and arguments
+    ///
+    /// Returns `Some((command_name, arguments))` if input starts with `/`,
+    /// otherwise returns `None`.
+    pub fn parse_invocation(input: &str) -> Option<(&str, &str)> {
+        let input = input.trim();
+        if !input.starts_with('/') {
+            return None;
+        }
+
+        let input = &input[1..]; // Remove leading /
+
+        // Split on first whitespace
+        if let Some(space_idx) = input.find(char::is_whitespace) {
+            let command = &input[..space_idx];
+            let args = input[space_idx..].trim();
+            Some((command, args))
+        } else {
+            Some((input, ""))
+        }
+    }
+
+    /// Execute a command invocation, returning the expanded prompt
+    ///
+    /// # Arguments
+    /// * `input` - User input (e.g., "/commit -m 'Fix bug'")
+    ///
+    /// # Returns
+    /// * `Ok(Some(expanded_content))` - Command found and expanded
+    /// * `Ok(None)` - Input is not a command invocation
+    /// * `Err(CommandError)` - Command not found or execution error
+    pub fn execute(&self, input: &str) -> Result<Option<String>, CommandError> {
+        let (command_name, arguments) = match Self::parse_invocation(input) {
+            Some(parsed) => parsed,
+            None => return Ok(None),
+        };
+
+        let command = self
+            .get(command_name)
+            .ok_or_else(|| CommandError::NotFound(command_name.to_string()))?;
+
+        let expanded = command.substitute_arguments(arguments);
+        Ok(Some(expanded))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    mod command_metadata_tests {
+        use super::*;
+
+        #[test]
+        fn test_empty_tool_restrictions() {
+            let meta = CommandMetadata {
+                name: "test".to_string(),
+                description: "Test command".to_string(),
+                allowed_tools: vec![],
+                denied_tools: vec![],
+                argument_hint: vec![],
+            };
+
+            let restrictions = meta.tool_restrictions();
+            assert!(restrictions.is_empty());
+            assert!(restrictions.is_allowed("AnyTool", &json!({})));
+        }
+
+        #[test]
+        fn test_allowed_tools_restrictions() {
+            let meta = CommandMetadata {
+                name: "test".to_string(),
+                description: "Test command".to_string(),
+                allowed_tools: vec!["Bash".to_string(), "Read".to_string()],
+                denied_tools: vec![],
+                argument_hint: vec![],
+            };
+
+            let restrictions = meta.tool_restrictions();
+            assert!(restrictions.is_allowed("Bash", &json!({})));
+            assert!(restrictions.is_allowed("Read", &json!({})));
+            assert!(!restrictions.is_allowed("Write", &json!({})));
+        }
+
+        #[test]
+        fn test_denied_tools_restrictions() {
+            let meta = CommandMetadata {
+                name: "test".to_string(),
+                description: "Test command".to_string(),
+                allowed_tools: vec![],
+                denied_tools: vec!["Write".to_string(), "Edit".to_string()],
+                argument_hint: vec![],
+            };
+
+            let restrictions = meta.tool_restrictions();
+            assert!(restrictions.is_allowed("Bash", &json!({})));
+            assert!(!restrictions.is_allowed("Write", &json!({})));
+            assert!(!restrictions.is_allowed("Edit", &json!({})));
+        }
+    }
+
+    mod command_definition_tests {
+        use super::*;
+
+        #[test]
+        fn test_substitute_arguments() {
+            let cmd = CommandDefinition {
+                metadata: CommandMetadata {
+                    name: "test".to_string(),
+                    description: "Test".to_string(),
+                    allowed_tools: vec![],
+                    denied_tools: vec![],
+                    argument_hint: vec![],
+                },
+                content: "Run with: $ARGUMENTS and also ${ARGUMENTS}".to_string(),
+                source_path: None,
+                scope: Scope::Builtin,
+            };
+
+            let result = cmd.substitute_arguments("hello world");
+            assert_eq!(result, "Run with: hello world and also hello world");
+        }
+
+        #[test]
+        fn test_invocation() {
+            let cmd = CommandDefinition {
+                metadata: CommandMetadata {
+                    name: "commit".to_string(),
+                    description: "".to_string(),
+                    allowed_tools: vec![],
+                    denied_tools: vec![],
+                    argument_hint: vec![],
+                },
+                content: "".to_string(),
+                source_path: None,
+                scope: Scope::Builtin,
+            };
+
+            assert_eq!(cmd.invocation(), "/commit");
+        }
+
+        #[test]
+        fn test_help_text() {
+            let cmd = CommandDefinition {
+                metadata: CommandMetadata {
+                    name: "pr".to_string(),
+                    description: "Create a pull request".to_string(),
+                    allowed_tools: vec![],
+                    denied_tools: vec![],
+                    argument_hint: vec!["<title>".to_string(), "--draft".to_string()],
+                },
+                content: "".to_string(),
+                source_path: None,
+                scope: Scope::Builtin,
+            };
+
+            let help = cmd.help_text();
+            assert!(help.contains("/pr"));
+            assert!(help.contains("<title>"));
+            assert!(help.contains("--draft"));
+            assert!(help.contains("Create a pull request"));
+        }
+    }
+
+    mod parse_command_tests {
+        use super::*;
+
+        #[test]
+        fn test_parse_minimal_command() {
+            let content = r#"---
+name: minimal
+---
+
+Just some content.
+"#;
+
+            let cmd = parse_command(content, None, Scope::Builtin).unwrap();
+            assert_eq!(cmd.name(), "minimal");
+            assert_eq!(cmd.description(), "");
+            assert!(cmd.metadata.allowed_tools.is_empty());
+            assert!(cmd.content.contains("Just some content"));
+        }
+
+        #[test]
+        fn test_parse_full_command() {
+            let content = r#"---
+name: full-command
+description: "A fully configured command"
+allowed_tools: Bash, Read, Glob
+denied_tools: Write
+argument_hint:
+  - "<file>"
+  - "--force"
+---
+
+# Full Command
+
+Execute with arguments: $ARGUMENTS
+"#;
+
+            let cmd = parse_command(content, None, Scope::Project).unwrap();
+            assert_eq!(cmd.name(), "full-command");
+            assert_eq!(cmd.description(), "A fully configured command");
+            assert_eq!(cmd.metadata.allowed_tools.len(), 3);
+            assert_eq!(cmd.metadata.denied_tools.len(), 1);
+            assert_eq!(cmd.metadata.argument_hint.len(), 2);
+            assert!(cmd.content.contains("# Full Command"));
+        }
+
+        #[test]
+        fn test_parse_missing_name() {
+            let content = r#"---
+description: No name field
+---
+
+Content
+"#;
+
+            let result = parse_command(content, None, Scope::Builtin);
+            assert!(matches!(result, Err(CommandError::MissingField(_))));
+        }
+
+        #[test]
+        fn test_parse_invalid_name() {
+            let content = r#"---
+name: Invalid Name
+---
+
+Content
+"#;
+
+            let result = parse_command(content, None, Scope::Builtin);
+            assert!(matches!(result, Err(CommandError::InvalidName(_))));
+        }
+
+        #[test]
+        fn test_parse_command_with_source_path() {
+            let content = r#"---
+name: test
+---
+
+Content
+"#;
+
+            let path = PathBuf::from("/some/path/test.md");
+            let cmd = parse_command(content, Some(path.clone()), Scope::User).unwrap();
+            assert_eq!(cmd.source_path, Some(path));
+            assert_eq!(cmd.scope, Scope::User);
+        }
+    }
+
+    mod valid_name_tests {
+        use super::*;
+
+        #[test]
+        fn test_valid_names() {
+            assert!(is_valid_command_name("commit"));
+            assert!(is_valid_command_name("pr"));
+            assert!(is_valid_command_name("review-pr"));
+            assert!(is_valid_command_name("build-and-test"));
+            assert!(is_valid_command_name("test123"));
+            assert!(is_valid_command_name("a"));
+        }
+
+        #[test]
+        fn test_invalid_names() {
+            assert!(!is_valid_command_name(""));
+            assert!(!is_valid_command_name("Invalid"));
+            assert!(!is_valid_command_name("has spaces"));
+            assert!(!is_valid_command_name("has_underscore"));
+            assert!(!is_valid_command_name("has.dot"));
+            assert!(!is_valid_command_name(&"a".repeat(65)));
+        }
+    }
+
+    mod command_registry_tests {
+        use super::*;
+
+        #[test]
+        fn test_new_registry() {
+            let registry = CommandRegistry::new();
+            assert!(registry.is_empty());
+            assert_eq!(registry.len(), 0);
+        }
+
+        #[test]
+        fn test_register_and_get() {
+            let mut registry = CommandRegistry::new();
+
+            let cmd = parse_command(
+                "---\nname: test-cmd\n---\n\nPrompt",
+                None,
+                Scope::Project,
+            )
+            .unwrap();
+
+            registry.register(cmd);
+
+            let retrieved = registry.get("test-cmd").unwrap();
+            assert_eq!(retrieved.name(), "test-cmd");
+        }
+
+        #[test]
+        fn test_get_with_slash() {
+            let mut registry = CommandRegistry::new();
+
+            let cmd = parse_command(
+                "---\nname: test\n---\n\nPrompt",
+                None,
+                Scope::Project,
+            )
+            .unwrap();
+
+            registry.register(cmd);
+
+            // Both with and without slash should work
+            assert!(registry.get("test").is_some());
+            assert!(registry.get("/test").is_some());
+        }
+
+        #[test]
+        fn test_scope_priority() {
+            let mut registry = CommandRegistry::new();
+
+            // Register a builtin command
+            let builtin_cmd = parse_command(
+                "---\nname: test\ndescription: Builtin version\n---\n\nBuiltin",
+                None,
+                Scope::Builtin,
+            )
+            .unwrap();
+            registry.register(builtin_cmd);
+
+            // Try to register a user command with same name (should override)
+            let user_cmd = parse_command(
+                "---\nname: test\ndescription: User version\n---\n\nUser",
+                None,
+                Scope::User,
+            )
+            .unwrap();
+            registry.register(user_cmd);
+
+            let cmd = registry.get("test").unwrap();
+            assert_eq!(cmd.description(), "User version");
+
+            // Try to register another builtin (should NOT override user)
+            let another_builtin = parse_command(
+                "---\nname: test\ndescription: Another builtin\n---\n\nBuiltin2",
+                None,
+                Scope::Builtin,
+            )
+            .unwrap();
+            registry.register(another_builtin);
+
+            let cmd = registry.get("test").unwrap();
+            assert_eq!(cmd.description(), "User version");
+        }
+
+        #[test]
+        fn test_list_commands() {
+            let mut registry = CommandRegistry::new();
+
+            registry.register(parse_command("---\nname: cmd1\n---\n\n1", None, Scope::Builtin).unwrap());
+            registry.register(parse_command("---\nname: cmd2\n---\n\n2", None, Scope::Builtin).unwrap());
+
+            let commands: Vec<_> = registry.list().collect();
+            assert_eq!(commands.len(), 2);
+        }
+
+        #[test]
+        fn test_names() {
+            let mut registry = CommandRegistry::new();
+
+            registry.register(parse_command("---\nname: alpha\n---\n\n1", None, Scope::Builtin).unwrap());
+            registry.register(parse_command("---\nname: beta\n---\n\n2", None, Scope::Builtin).unwrap());
+
+            let names: Vec<_> = registry.names().collect();
+            assert!(names.contains(&"alpha"));
+            assert!(names.contains(&"beta"));
+        }
+    }
+
+    mod parse_invocation_tests {
+        use super::*;
+
+        #[test]
+        fn test_parse_simple_command() {
+            let result = CommandRegistry::parse_invocation("/commit");
+            assert_eq!(result, Some(("commit", "")));
+        }
+
+        #[test]
+        fn test_parse_command_with_args() {
+            let result = CommandRegistry::parse_invocation("/pr --draft");
+            assert_eq!(result, Some(("pr", "--draft")));
+        }
+
+        #[test]
+        fn test_parse_command_with_long_args() {
+            let result = CommandRegistry::parse_invocation("/review-pr 123 --verbose --output json");
+            assert_eq!(result, Some(("review-pr", "123 --verbose --output json")));
+        }
+
+        #[test]
+        fn test_parse_non_command() {
+            let result = CommandRegistry::parse_invocation("regular message");
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn test_parse_with_whitespace() {
+            let result = CommandRegistry::parse_invocation("  /commit  arg1 arg2  ");
+            assert_eq!(result, Some(("commit", "arg1 arg2")));
+        }
+    }
+
+    mod execute_tests {
+        use super::*;
+
+        #[test]
+        fn test_execute_command() {
+            let mut registry = CommandRegistry::new();
+            registry.register(parse_command(
+                "---\nname: greet\n---\n\nHello $ARGUMENTS!",
+                None,
+                Scope::Builtin,
+            ).unwrap());
+
+            let result = registry.execute("/greet World").unwrap();
+            assert_eq!(result, Some("Hello World!".to_string()));
+        }
+
+        #[test]
+        fn test_execute_non_command() {
+            let registry = CommandRegistry::new();
+            let result = registry.execute("regular message").unwrap();
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn test_execute_unknown_command() {
+            let registry = CommandRegistry::new();
+            let result = registry.execute("/unknown");
+            assert!(matches!(result, Err(CommandError::NotFound(_))));
+        }
+    }
+
+    mod serialization_tests {
+        use super::*;
+
+        #[test]
+        fn test_command_metadata_serde() {
+            let meta = CommandMetadata {
+                name: "test".to_string(),
+                description: "Test command".to_string(),
+                allowed_tools: vec!["Bash".to_string()],
+                denied_tools: vec!["Write".to_string()],
+                argument_hint: vec!["<arg>".to_string()],
+            };
+
+            let json = serde_json::to_string(&meta).unwrap();
+            let deserialized: CommandMetadata = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(meta.name, deserialized.name);
+            assert_eq!(meta.allowed_tools.len(), deserialized.allowed_tools.len());
+        }
+
+        #[test]
+        fn test_command_definition_serde() {
+            let cmd = CommandDefinition {
+                metadata: CommandMetadata {
+                    name: "test".to_string(),
+                    description: "Test".to_string(),
+                    allowed_tools: vec![],
+                    denied_tools: vec![],
+                    argument_hint: vec![],
+                },
+                content: "Content".to_string(),
+                source_path: Some(PathBuf::from("/path")),
+                scope: Scope::User,
+            };
+
+            let json = serde_json::to_string(&cmd).unwrap();
+            let deserialized: CommandDefinition = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(cmd.name(), deserialized.name());
+            assert_eq!(cmd.scope, deserialized.scope);
+        }
+    }
+
+    mod builtin_command_tests {
+        use super::*;
+
+        #[test]
+        fn test_with_builtins() {
+            let registry = CommandRegistry::with_builtins();
+            assert!(!registry.is_empty());
+            assert!(registry.len() >= 3);
+
+            // Check built-in commands are loaded
+            assert!(registry.get("commit").is_some());
+            assert!(registry.get("pr").is_some());
+            assert!(registry.get("review-pr").is_some());
+        }
+
+        #[test]
+        fn test_parse_commit_command() {
+            let cmd = parse_command(builtin::commands::COMMIT, None, Scope::Builtin).unwrap();
+            assert_eq!(cmd.name(), "commit");
+            assert!(!cmd.description().is_empty());
+            assert!(cmd.content.contains("git"));
+            assert!(cmd.content.contains("$ARGUMENTS"));
+
+            // Check tool restrictions
+            let restrictions = cmd.tool_restrictions();
+            assert!(restrictions.is_allowed("Bash", &serde_json::json!({})));
+            assert!(restrictions.is_allowed("Read", &serde_json::json!({})));
+            assert!(!restrictions.is_allowed("Write", &serde_json::json!({})));
+            assert!(!restrictions.is_allowed("Edit", &serde_json::json!({})));
+        }
+
+        #[test]
+        fn test_parse_pr_command() {
+            let cmd = parse_command(builtin::commands::PR, None, Scope::Builtin).unwrap();
+            assert_eq!(cmd.name(), "pr");
+            assert!(!cmd.description().is_empty());
+            assert!(cmd.content.contains("gh pr create"));
+        }
+
+        #[test]
+        fn test_parse_review_pr_command() {
+            let cmd = parse_command(builtin::commands::REVIEW_PR, None, Scope::Builtin).unwrap();
+            assert_eq!(cmd.name(), "review-pr");
+            assert!(!cmd.description().is_empty());
+            assert!(cmd.content.contains("gh pr view"));
+        }
+
+        #[test]
+        fn test_execute_builtin_command() {
+            let registry = CommandRegistry::with_builtins();
+
+            // Execute /commit with arguments
+            let result = registry.execute("/commit -m 'Test commit'").unwrap();
+            assert!(result.is_some());
+            let content = result.unwrap();
+            assert!(content.contains("-m 'Test commit'"));
+        }
+
+        #[test]
+        fn test_builtin_command_help_text() {
+            let registry = CommandRegistry::with_builtins();
+
+            let commit = registry.get("commit").unwrap();
+            let help = commit.help_text();
+            assert!(help.contains("/commit"));
+            assert!(help.contains("-m"));
+
+            let pr = registry.get("pr").unwrap();
+            let help = pr.help_text();
+            assert!(help.contains("/pr"));
+        }
+    }
+
+    mod filesystem_tests {
+        use super::*;
+        use tempfile::TempDir;
+
+        fn create_command_file(dir: &Path, name: &str, content: &str) {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join(format!("{}.md", name)), content).unwrap();
+        }
+
+        #[test]
+        fn test_load_from_directory() {
+            let dir = TempDir::new().unwrap();
+
+            create_command_file(
+                dir.path(),
+                "my-command",
+                r#"---
+name: my-command
+description: My custom command
+---
+
+Do something.
+"#,
+            );
+
+            let mut registry = CommandRegistry::new();
+            let loaded = registry.load_from_directory(dir.path(), Scope::User).unwrap();
+
+            assert_eq!(loaded, 1);
+            assert!(registry.get("my-command").is_some());
+        }
+
+        #[test]
+        fn test_load_from_nonexistent_directory() {
+            let mut registry = CommandRegistry::new();
+            let loaded = registry.load_from_directory(Path::new("/nonexistent"), Scope::User).unwrap();
+            assert_eq!(loaded, 0);
+        }
+
+        #[test]
+        fn test_load_command_from_file() {
+            let dir = TempDir::new().unwrap();
+            let file_path = dir.path().join("test.md");
+
+            std::fs::write(&file_path, "---\nname: file-cmd\n---\n\nContent").unwrap();
+
+            let cmd = load_command_from_file(&file_path, Scope::Project).unwrap();
+            assert_eq!(cmd.name(), "file-cmd");
+            assert_eq!(cmd.source_path, Some(file_path));
+        }
+    }
+}

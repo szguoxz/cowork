@@ -1,6 +1,7 @@
 //! Browser Agent - specialized for web automation
 
 use async_trait::async_trait;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::context::Context;
@@ -21,13 +22,13 @@ pub struct BrowserAgent {
 }
 
 impl BrowserAgent {
-    pub fn new(headless: bool) -> Self {
-        let controller = BrowserController::new(headless);
+    pub fn new(headless: bool, workspace: PathBuf) -> Self {
+        let controller = BrowserController::new(headless, workspace.clone());
         let session = controller.session();
 
         let tools: Vec<Arc<dyn Tool>> = vec![
             Arc::new(NavigateTo::new(session.clone())),
-            Arc::new(TakeScreenshot::new(session.clone())),
+            Arc::new(TakeScreenshot::new(session.clone(), workspace)),
             Arc::new(ClickElement::new(session.clone())),
             Arc::new(TypeText::new(session.clone())),
             Arc::new(GetPageContent::new(session)),
@@ -42,12 +43,6 @@ impl BrowserAgent {
 
     pub fn controller(&self) -> &BrowserController {
         &self.controller
-    }
-}
-
-impl Default for BrowserAgent {
-    fn default() -> Self {
-        Self::new(true)
     }
 }
 

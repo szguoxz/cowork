@@ -1,14 +1,38 @@
 //! System prompt management
 //!
-//! Provides a single source of truth for system prompts used by both CLI and UI.
+//! Provides integration between the orchestration layer and the prompt system.
+//! This module bridges the legacy static prompt approach with the new dynamic
+//! prompt builder system.
+
+use std::path::Path;
+use std::sync::Arc;
+
+use crate::config::PromptSystemConfig;
+use crate::prompt::{
+    builtin, AssembledPrompt, ComponentRegistry, HooksConfig,
+    PromptBuilder, TemplateVars,
+};
+
+// Used in tests
+#[cfg(test)]
+use crate::prompt::ModelPreference;
 
 /// System prompt configuration and generation
-#[derive(Debug, Clone)]
+///
+/// This struct provides both legacy compatibility (simple string prompts)
+/// and integration with the new prompt system (PromptBuilder, hooks, etc.)
+#[derive(Debug)]
 pub struct SystemPrompt {
-    /// Base system prompt
+    /// Base system prompt (from builtin or custom)
     base: String,
     /// Additional context (e.g., workspace info)
     context: Option<String>,
+    /// Template variables for substitution
+    template_vars: Option<TemplateVars>,
+    /// Component registry for agents, commands, skills (shared via Arc)
+    registry: Option<Arc<ComponentRegistry>>,
+    /// Hooks configuration
+    hooks: Option<HooksConfig>,
 }
 
 impl Default for SystemPrompt {
@@ -21,8 +45,11 @@ impl SystemPrompt {
     /// Create a new system prompt with the default content
     pub fn new() -> Self {
         Self {
-            base: DEFAULT_SYSTEM_PROMPT.to_string(),
+            base: builtin::SYSTEM_PROMPT.to_string(),
             context: None,
+            template_vars: None,
+            registry: None,
+            hooks: None,
         }
     }
 
@@ -31,16 +58,66 @@ impl SystemPrompt {
         Self {
             base: base.into(),
             context: None,
+            template_vars: None,
+            registry: None,
+            hooks: None,
         }
     }
 
+    /// Create a system prompt with full prompt system integration
+    pub fn with_prompt_system(
+        workspace_path: &Path,
+        config: &PromptSystemConfig,
+    ) -> Result<Self, crate::error::Error> {
+        // Create component paths from config
+        let paths = config.to_component_paths(workspace_path);
+
+        // Initialize registry with builtins
+        let mut registry = ComponentRegistry::with_builtins();
+
+        // Load components from filesystem if paths exist
+        if let Err(e) = registry.load_from_paths(&paths) {
+            tracing::warn!("Failed to load some prompt components: {}", e);
+        }
+
+        // Get hooks from registry
+        let hooks = registry.get_hooks().clone();
+
+        // Use custom base prompt if configured, otherwise use builtin
+        let base = config
+            .base_system_prompt
+            .clone()
+            .unwrap_or_else(|| builtin::SYSTEM_PROMPT.to_string());
+
+        Ok(Self {
+            base,
+            context: None,
+            template_vars: None,
+            registry: Some(Arc::new(registry)),
+            hooks: Some(hooks),
+        })
+    }
+
     /// Add workspace context to the prompt
-    pub fn with_workspace_context(mut self, workspace_path: &std::path::Path) -> Self {
+    pub fn with_workspace_context(mut self, workspace_path: &Path) -> Self {
+        // Create template vars if not already set
+        let mut vars = self.template_vars.take().unwrap_or_default();
+        vars.working_directory = workspace_path.display().to_string();
+        vars.is_git_repo = workspace_path.join(".git").exists();
+
+        // Also add legacy context format
         let context = format!(
             "\n\n## Current Workspace\nYou are working in: {}",
             workspace_path.display()
         );
         self.context = Some(context);
+        self.template_vars = Some(vars);
+        self
+    }
+
+    /// Add template variables for substitution
+    pub fn with_template_vars(mut self, vars: TemplateVars) -> Self {
+        self.template_vars = Some(vars);
         self
     }
 
@@ -50,126 +127,234 @@ impl SystemPrompt {
         self
     }
 
-    /// Build the final system prompt
+    /// Set the component registry
+    pub fn with_registry(mut self, registry: ComponentRegistry) -> Self {
+        // Also extract hooks from registry
+        self.hooks = Some(registry.get_hooks().clone());
+        self.registry = Some(Arc::new(registry));
+        self
+    }
+
+    /// Set the component registry (Arc version)
+    pub fn with_registry_arc(mut self, registry: Arc<ComponentRegistry>) -> Self {
+        // Also extract hooks from registry
+        self.hooks = Some(registry.get_hooks().clone());
+        self.registry = Some(registry);
+        self
+    }
+
+    /// Build the final system prompt string (legacy interface)
     pub fn build(&self) -> String {
-        match &self.context {
-            Some(ctx) => format!("{}{}", self.base, ctx),
-            None => self.base.clone(),
+        let mut prompt = self.base.clone();
+
+        // Apply template variable substitution if available
+        if let Some(vars) = &self.template_vars {
+            prompt = vars.substitute(&prompt);
         }
+
+        // Append context if present
+        if let Some(ctx) = &self.context {
+            prompt.push_str(ctx);
+        }
+
+        prompt
+    }
+
+    /// Build an AssembledPrompt using the PromptBuilder
+    ///
+    /// This is the preferred method for new code, as it returns
+    /// the full assembled prompt with tool restrictions and metadata.
+    pub fn build_assembled(&self) -> AssembledPrompt {
+        let base = if let Some(vars) = &self.template_vars {
+            vars.substitute(&self.base)
+        } else {
+            self.base.clone()
+        };
+
+        let mut builder = PromptBuilder::new(base);
+
+        // Add context if present
+        if let Some(ctx) = &self.context {
+            builder = builder.with_hook_context(ctx.clone());
+        }
+
+        // Add template vars if present
+        if let Some(vars) = &self.template_vars {
+            builder = builder.with_environment(vars);
+        }
+
+        builder.build()
     }
 
     /// Get the base prompt without context
     pub fn base(&self) -> &str {
         &self.base
     }
+
+    /// Get the component registry if available
+    pub fn registry(&self) -> Option<&ComponentRegistry> {
+        self.registry.as_deref()
+    }
+
+    /// Get the component registry Arc if available
+    pub fn registry_arc(&self) -> Option<&Arc<ComponentRegistry>> {
+        self.registry.as_ref()
+    }
+
+    /// Get the hooks configuration if available
+    pub fn hooks(&self) -> Option<&HooksConfig> {
+        self.hooks.as_ref()
+    }
+
+    /// Get template variables if set
+    pub fn template_vars(&self) -> Option<&TemplateVars> {
+        self.template_vars.as_ref()
+    }
+
+    /// Create a PromptBuilder from this system prompt
+    ///
+    /// This allows further customization before building the final prompt.
+    pub fn to_builder(&self) -> PromptBuilder {
+        let base = if let Some(vars) = &self.template_vars {
+            vars.substitute(&self.base)
+        } else {
+            self.base.clone()
+        };
+
+        let mut builder = PromptBuilder::new(base);
+
+        if let Some(ctx) = &self.context {
+            builder = builder.with_hook_context(ctx.clone());
+        }
+
+        if let Some(vars) = &self.template_vars {
+            builder = builder.with_environment(vars);
+        }
+
+        builder
+    }
+
+    /// Get an agent definition by name from the registry
+    pub fn get_agent(&self, name: &str) -> Option<&crate::prompt::AgentDefinition> {
+        self.registry()?.get_agent(name)
+    }
+
+    /// Get a command definition by name from the registry
+    pub fn get_command(&self, name: &str) -> Option<&crate::prompt::CommandDefinition> {
+        self.registry()?.get_command(name)
+    }
+
+    /// List all available agent names
+    pub fn list_agents(&self) -> Vec<String> {
+        self.registry()
+            .map(|r| r.agent_names().map(String::from).collect())
+            .unwrap_or_default()
+    }
+
+    /// List all available command names
+    pub fn list_commands(&self) -> Vec<String> {
+        self.registry()
+            .map(|r| r.command_names().map(String::from).collect())
+            .unwrap_or_default()
+    }
 }
 
-/// Default system prompt used by both CLI and UI
-pub const DEFAULT_SYSTEM_PROMPT: &str = r#"You are Cowork, an AI coding assistant. You help developers with software engineering tasks.
+/// Default system prompt used by both CLI and UI (legacy constant)
+///
+/// For new code, prefer using `builtin::SYSTEM_PROMPT` directly or
+/// the `SystemPrompt::new()` constructor.
+pub const DEFAULT_SYSTEM_PROMPT: &str = builtin::SYSTEM_PROMPT;
 
-## Available Tools
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
 
-### File Operations
-- read_file: Read file contents (supports offset/limit for large files)
-- write_file: Create or completely overwrite a file
-- edit: Surgical string replacement in files. PREFER THIS over write_file for modifications - requires unique old_string or use replace_all for renaming
-- glob: Find files by pattern (e.g., "**/*.rs", "src/**/*.ts")
-- grep: Search file contents with regex patterns
-- list_directory: List directory contents
-- search_files: Search for files by name or content
-- delete_file: Delete a file
-- move_file: Move or rename a file
+    #[test]
+    fn test_new_system_prompt() {
+        let prompt = SystemPrompt::new();
+        let built = prompt.build();
+        assert!(built.contains("Cowork"));
+    }
 
-### Shell Execution
-- execute_command: Run shell commands (build, test, git, etc.)
+    #[test]
+    fn test_with_base() {
+        let prompt = SystemPrompt::with_base("Custom base prompt");
+        assert_eq!(prompt.base(), "Custom base prompt");
+        assert_eq!(prompt.build(), "Custom base prompt");
+    }
 
-### Web Access
-- web_fetch: Fetch URL content and extract text
-- web_search: Search the web (requires API key configuration)
+    #[test]
+    fn test_with_context() {
+        let prompt = SystemPrompt::new().with_context("Additional context here");
+        let built = prompt.build();
+        assert!(built.contains("Additional context here"));
+    }
 
-### Jupyter Notebooks
-- notebook_edit: Edit, insert, or delete cells in .ipynb files
+    #[test]
+    fn test_with_workspace_context() {
+        let workspace = PathBuf::from("/test/workspace");
+        let prompt = SystemPrompt::new().with_workspace_context(&workspace);
+        let built = prompt.build();
+        assert!(built.contains("/test/workspace"));
+    }
 
-### Task Management
-- todo_write: Track progress with a structured todo list
+    #[test]
+    fn test_template_vars_substitution() {
+        let prompt = SystemPrompt::with_base("Working in: ${WORKING_DIRECTORY}")
+            .with_template_vars(TemplateVars {
+                working_directory: "/my/project".to_string(),
+                ..Default::default()
+            });
+        let built = prompt.build();
+        assert!(built.contains("/my/project"));
+        assert!(!built.contains("${WORKING_DIRECTORY}"));
+    }
 
-### Code Intelligence (LSP)
-- lsp: Language Server Protocol operations
-  - goToDefinition: Find where a symbol is defined
-  - findReferences: Find all usages of a symbol
-  - hover: Get type info and documentation
-  - documentSymbol: List all symbols in a file
-  - workspaceSymbol: Search symbols across workspace
+    #[test]
+    fn test_build_assembled() {
+        let prompt = SystemPrompt::new();
+        let assembled = prompt.build_assembled();
+        assert!(!assembled.system_prompt.is_empty());
+        assert!(matches!(assembled.model, ModelPreference::Inherit));
+    }
 
-### Sub-Agents (Task Tool)
-- task: Launch specialized subagents for complex tasks
-  - Bash: Command execution specialist
-  - general-purpose: Research and multi-step tasks
-  - Explore: Fast codebase exploration
-  - Plan: Software architecture and planning
-- task_output: Get output from running/completed agents
+    #[test]
+    fn test_to_builder() {
+        let prompt = SystemPrompt::with_base("Base prompt")
+            .with_context("Extra context");
+        let builder = prompt.to_builder();
+        let assembled = builder.build();
+        assert!(assembled.system_prompt.contains("Base prompt"));
+        assert!(assembled.system_prompt.contains("Extra context"));
+    }
 
-## Task Tool Usage Strategy
+    #[test]
+    fn test_default_prompt_constant() {
+        // Ensure the constant matches the builtin
+        assert_eq!(DEFAULT_SYSTEM_PROMPT, builtin::SYSTEM_PROMPT);
+    }
 
-The Task tool launches specialized subagents with isolated context. Use it strategically to optimize performance and context usage:
+    #[test]
+    fn test_registry_access() {
+        let prompt = SystemPrompt::new();
+        // Without registry set, should return None
+        assert!(prompt.registry().is_none());
+        assert!(prompt.get_agent("Explore").is_none());
+        assert!(prompt.list_agents().is_empty());
+    }
 
-### When to Use Task Tool:
-- **Open-ended exploration**: "How does authentication work?" → Task(Explore)
-- **Multiple search rounds**: Finding patterns across many files → Task(Explore)
-- **Complex multi-step operations**: Tasks requiring both exploration and modification → Task(general-purpose)
-- **Verbose output expected**: Running tests, fetching docs → isolates output from main context
-- **Uncertain search scope**: When you might need to try multiple search patterns
+    #[test]
+    fn test_with_registry() {
+        let registry = ComponentRegistry::with_builtins();
+        let prompt = SystemPrompt::new().with_registry(registry);
 
-### When NOT to Use Task Tool:
-- **Reading a specific file path** → use read_file directly
-- **Searching for a specific class/function** like "class Foo" → use grep or glob directly
-- **Searching within 2-3 known files** → use read_file directly
-- **Running a simple command** → use execute_command directly
-- **Quick targeted searches** with high confidence → use grep/glob directly
+        // Now registry should be available
+        assert!(prompt.registry().is_some());
 
-### Subagent Type Selection:
-| Type | Use When | Speed |
-|------|----------|-------|
-| Explore | Codebase search, finding files, understanding structure | Fast |
-| Plan | Designing implementation approach, architecture decisions | Balanced |
-| Bash | Git operations, command execution | Fast |
-| general-purpose | Complex tasks needing exploration + action | Balanced |
-
-### Key Principle:
-Use direct tools for **targeted, single operations** with clear inputs.
-Use Task for **open-ended exploration** or **multi-step workflows** where the scope is uncertain.
-
-### Browser Automation
-- browser_navigate: Navigate to a URL
-- browser_screenshot: Take a screenshot of the page
-- browser_click: Click an element on the page (use CSS selector)
-- browser_type: Type text into an input element
-- browser_get_page_content: Get the HTML content of the current page
-
-### Document Parsing
-- read_pdf: Extract text from PDF files (with optional page range)
-- read_office_doc: Extract text from Office documents (.docx, .xlsx, .pptx)
-
-### Planning Tools
-- enter_plan_mode: Enter planning mode for complex implementation tasks
-- exit_plan_mode: Exit planning mode and request user approval with permission requests
-
-## Workflow Guidelines
-
-1. **Understand first**: Use read-only tools (read_file, glob, grep) to understand the codebase before making changes
-2. **Use edit for modifications**: When changing existing files, use the `edit` tool with old_string/new_string for surgical precision. Only use write_file for creating new files.
-3. **Be precise with edit**: The old_string must be unique in the file, or use replace_all=true. Include enough context (surrounding lines) to make it unique.
-4. **Verify changes**: After modifications, verify your changes worked (read the file, run tests, etc.)
-5. **Explain your reasoning**: Tell the user what you're doing and why
-
-## Tool Result Handling
-
-IMPORTANT: When you receive tool results (messages containing "[Tool result for"):
-- Summarize the results in a helpful response to the user
-- Do NOT call the same tool again unless the user explicitly asks for more
-- A single tool call is usually sufficient for simple queries
-
-## Slash Commands
-Users can use slash commands like /commit, /pr, /review, /help for common workflows.
-
-Be concise and helpful. Follow existing code style. Ask for clarification if needed."#;
+        // Should have builtin agents
+        let agents = prompt.list_agents();
+        assert!(!agents.is_empty());
+        assert!(agents.contains(&"Explore".to_string()) || agents.contains(&"explore".to_string()));
+    }
+}

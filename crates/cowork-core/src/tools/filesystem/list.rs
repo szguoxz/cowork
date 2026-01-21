@@ -22,7 +22,7 @@ impl ListDirectory {
 
 impl Tool for ListDirectory {
     fn name(&self) -> &str {
-        "list_directory"
+        "ListDirectory"
     }
 
     fn description(&self) -> &str {

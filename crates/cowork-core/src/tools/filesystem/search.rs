@@ -23,7 +23,7 @@ impl SearchFiles {
 
 impl Tool for SearchFiles {
     fn name(&self) -> &str {
-        "search_files"
+        "SearchFiles"
     }
 
     fn description(&self) -> &str {
@@ -67,8 +67,22 @@ impl Tool for SearchFiles {
             let validated = validate_path(&path, &self.workspace)?;
 
             let mut results = Vec::new();
-            let glob_pattern: Option<glob::Pattern> = pattern.and_then(|p| glob::Pattern::new(p).ok());
-            let content_regex: Option<Regex> = content_search.and_then(|c| Regex::new(c).ok());
+
+            // Validate glob pattern if provided
+            let glob_pattern: Option<glob::Pattern> = match pattern {
+                Some(p) => Some(glob::Pattern::new(p).map_err(|e| {
+                    ToolError::InvalidParams(format!("Invalid glob pattern '{}': {}", p, e))
+                })?),
+                None => None,
+            };
+
+            // Validate regex pattern if provided
+            let content_regex: Option<Regex> = match content_search {
+                Some(c) => Some(Regex::new(c).map_err(|e| {
+                    ToolError::InvalidParams(format!("Invalid regex '{}': {}", c, e))
+                })?),
+                None => None,
+            };
 
             for entry in walkdir::WalkDir::new(&validated)
                 .into_iter()

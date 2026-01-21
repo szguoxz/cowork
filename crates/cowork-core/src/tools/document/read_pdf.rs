@@ -8,6 +8,9 @@ use crate::error::ToolError;
 use crate::tools::filesystem::{path_to_display, validate_path};
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
+/// Maximum output size in bytes to prevent DoS from very large PDFs
+const MAX_OUTPUT_SIZE: usize = 512 * 1024; // 512 KB
+
 /// Tool for reading PDF documents
 pub struct ReadPdf {
     workspace: PathBuf,
@@ -21,7 +24,7 @@ impl ReadPdf {
 
 impl Tool for ReadPdf {
     fn name(&self) -> &str {
-        "read_pdf"
+        "ReadPdf"
     }
 
     fn description(&self) -> &str {
@@ -94,7 +97,7 @@ impl Tool for ReadPdf {
             let page_count = extracted_text.matches('\u{0C}').count() + 1; // Form feed = page break
 
             // Handle page range filtering if specified
-            let output_text = if pages_param == "all" {
+            let mut output_text = if pages_param == "all" {
                 extracted_text
             } else {
                 // Parse page range like "1-5" or "3"
@@ -111,11 +114,21 @@ impl Tool for ReadPdf {
                 selected.join("\n\n--- Page Break ---\n\n")
             };
 
+            // Truncate if too large to prevent DoS
+            let truncated = if output_text.len() > MAX_OUTPUT_SIZE {
+                output_text.truncate(MAX_OUTPUT_SIZE);
+                output_text.push_str("\n\n... [Content truncated due to size limit]");
+                true
+            } else {
+                false
+            };
+
             Ok(ToolOutput::success(json!({
                 "path": path_to_display(&validated),
                 "text": output_text,
                 "pages": page_count,
-                "extracted_pages": pages_param
+                "extracted_pages": pages_param,
+                "truncated": truncated
             })))
         })
     }
