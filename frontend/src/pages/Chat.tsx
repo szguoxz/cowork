@@ -44,13 +44,14 @@ export default function Chat() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim() || !isIdle) return
+    if (!input.trim()) return
 
     const userMessage = input
     setInput('')
     setError(null)
 
     try {
+      // Message will be queued if not idle, processed when ready
       await sendMessage(userMessage)
     } catch (err) {
       console.error('Send error:', err)
@@ -203,20 +204,25 @@ export default function Chat() {
           </div>
         ))}
 
-        {/* Thinking indicator with actual content */}
+        {/* Thinking indicator - show actual content if available, otherwise just spinner */}
         {isReady && !isIdle && isThinking && (
           <div className="flex justify-start">
-            <div className="max-w-[80%] bg-card border border-border rounded-xl px-4 py-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                <span className="text-sm font-medium text-muted-foreground">Thinking</span>
-              </div>
-              {thinkingContent && (
+            {thinkingContent && thinkingContent !== "Thinking..." ? (
+              <div className="max-w-[80%] bg-card border border-border rounded-xl px-4 py-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                  <span className="text-sm font-medium text-muted-foreground">Thinking</span>
+                </div>
                 <pre className="whitespace-pre-wrap font-sans text-sm text-muted-foreground/80 max-h-64 overflow-auto">
                   {thinkingContent}
                 </pre>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                <span className="text-sm text-muted-foreground">Thinking...</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -233,20 +239,19 @@ export default function Chat() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
+      {/* Input - always enabled to allow queueing messages */}
       <form onSubmit={handleSubmit} className="p-4 border-t border-border bg-card/50">
         <div className="flex gap-3">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={isIdle ? "Type a message..." : "Waiting..."}
+            placeholder={isIdle ? "Type a message..." : "Type to queue message..."}
             className="flex-1 rounded-xl border border-border bg-background px-4 py-3 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-            disabled={!isIdle}
           />
           <Button
             type="submit"
-            disabled={!isIdle || !input.trim()}
+            disabled={!input.trim()}
             variant="gradient"
             size="lg"
           >
