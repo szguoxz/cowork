@@ -98,12 +98,17 @@ pub async fn test_api_connection(
 }
 
 /// Check if initial setup is complete
+///
+/// This checks if the config FILE exists with an API key saved.
+/// Environment variables don't count - we want users to go through
+/// the wizard to save their preferences in the config file.
 #[tauri::command]
 pub async fn is_setup_complete(state: State<'_, AppState>) -> Result<bool, String> {
     let cm = state.config_manager.read().await;
 
-    // Setup is complete if we have an API key
-    if !cm.has_api_key() {
+    // Use config-only check: requires config file to exist with API key saved
+    // This ensures wizard shows even if ANTHROPIC_API_KEY env var is set
+    if !cm.is_setup_complete_config_only() {
         return Ok(false);
     }
 
