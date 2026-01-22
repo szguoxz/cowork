@@ -36,33 +36,31 @@ pub fn init_state(
         .parse()
         .unwrap_or(ApprovalLevel::Low);
 
-    // Create session manager with config factory
-    let workspace_for_factory = workspace_path.clone();
-    let (session_manager, output_rx) = SessionManager::new(move || {
-        let mut approval_config = cowork_core::ToolApprovalConfig::default();
-        approval_config.set_level(approval_level);
+    // Create session config
+    let mut tool_approval_config = cowork_core::ToolApprovalConfig::default();
+    tool_approval_config.set_level(approval_level);
 
-        let mut config = SessionConfig::new(workspace_for_factory.clone())
-            .with_approval_config(approval_config);
+    let mut session_config = SessionConfig::new(workspace_path.clone())
+        .with_approval_config(tool_approval_config);
 
-        // Use configured provider if available
-        if let Some(ref provider_config) = default_provider {
-            let provider_type = match provider_config.provider_type.as_str() {
-                "openai" => cowork_core::provider::ProviderType::OpenAI,
-                "anthropic" => cowork_core::provider::ProviderType::Anthropic,
-                "ollama" => cowork_core::provider::ProviderType::Ollama,
-                "gemini" => cowork_core::provider::ProviderType::Gemini,
-                _ => cowork_core::provider::ProviderType::Anthropic,
-            };
-            config = config.with_provider(provider_type);
-            config = config.with_model(&provider_config.model);
-            if let Some(api_key) = provider_config.get_api_key() {
-                config = config.with_api_key(api_key);
-            }
+    // Use configured provider if available
+    if let Some(ref provider_config) = default_provider {
+        let provider_type = match provider_config.provider_type.as_str() {
+            "openai" => cowork_core::provider::ProviderType::OpenAI,
+            "anthropic" => cowork_core::provider::ProviderType::Anthropic,
+            "ollama" => cowork_core::provider::ProviderType::Ollama,
+            "gemini" => cowork_core::provider::ProviderType::Gemini,
+            _ => cowork_core::provider::ProviderType::Anthropic,
+        };
+        session_config = session_config.with_provider(provider_type);
+        session_config = session_config.with_model(&provider_config.model);
+        if let Some(api_key) = provider_config.get_api_key() {
+            session_config = session_config.with_api_key(api_key);
         }
+    }
 
-        config
-    });
+    // Create session manager
+    let (session_manager, output_rx) = SessionManager::new(session_config);
 
     let state = AppState {
         context: Arc::new(RwLock::new(context)),

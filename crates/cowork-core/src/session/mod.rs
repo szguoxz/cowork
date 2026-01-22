@@ -57,7 +57,7 @@ pub use agent_loop::{
     get_sessions_dir, list_saved_sessions, load_session, AgentLoop, SavedMessage, SavedSession,
     SavedToolCall,
 };
-pub use manager::{ConfigFactory, OutputReceiver, SessionManager};
+pub use manager::{OutputReceiver, SessionManager};
 pub use types::{
     QuestionInfo, QuestionOption, SessionConfig, SessionId, SessionInput, SessionOutput,
 };

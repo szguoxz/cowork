@@ -299,19 +299,19 @@ async fn run_one_shot(
         ToolApprovalConfig::default()
     };
 
-    // Create session manager with a config factory
-    let (session_manager, mut output_rx) = SessionManager::new(move || {
-        let mut config = SessionConfig::new(workspace.clone())
-            .with_provider(provider_type)
-            .with_approval_config(approval_config.clone());
-        if let Some(ref m) = model {
-            config = config.with_model(m.clone());
-        }
-        if let Some(ref key) = api_key {
-            config = config.with_api_key(key.clone());
-        }
-        config
-    });
+    // Create session config
+    let mut session_config = SessionConfig::new(workspace.clone())
+        .with_provider(provider_type)
+        .with_approval_config(approval_config.clone());
+    if let Some(ref m) = model {
+        session_config = session_config.with_model(m.clone());
+    }
+    if let Some(ref key) = api_key {
+        session_config = session_config.with_api_key(key.clone());
+    }
+
+    // Create session manager
+    let (session_manager, mut output_rx) = SessionManager::new(session_config);
 
     let session_id = "cli-oneshot";
 
@@ -443,25 +443,19 @@ async fn run_chat(
     // Session-level approval state (owned by output handler task)
     let session_approval = base_approval_config.clone();
 
+    // Create session config
+    let mut session_config = SessionConfig::new(workspace_path.clone())
+        .with_provider(provider_type)
+        .with_approval_config(base_approval_config.clone());
+    if let Some(ref m) = model {
+        session_config = session_config.with_model(m.clone());
+    }
+    if let Some(ref key) = api_key {
+        session_config = session_config.with_api_key(key.clone());
+    }
+
     // Create session manager
-    let (session_manager, mut output_rx) = SessionManager::new({
-        let workspace_path = workspace_path.clone();
-        let model = model.clone();
-        let api_key = api_key.clone();
-        let approval_config = base_approval_config.clone();
-        move || {
-            let mut config = SessionConfig::new(workspace_path.clone())
-                .with_provider(provider_type)
-                .with_approval_config(approval_config.clone());
-            if let Some(ref m) = model {
-                config = config.with_model(m.clone());
-            }
-            if let Some(ref key) = api_key {
-                config = config.with_api_key(key.clone());
-            }
-            config
-        }
-    });
+    let (session_manager, mut output_rx) = SessionManager::new(session_config);
     let session_manager = Arc::new(session_manager);
 
     // Channel for sending approval decisions back to the output handler

@@ -11,9 +11,6 @@ use super::agent_loop::AgentLoop;
 use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
 use crate::error::Result;
 
-/// Factory function type for creating session configs
-pub type ConfigFactory = Arc<dyn Fn() -> SessionConfig + Send + Sync>;
-
 /// Type alias for the output receiver
 pub type OutputReceiver = mpsc::Receiver<(SessionId, SessionOutput)>;
 
@@ -23,26 +20,21 @@ pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<SessionId, mpsc::Sender<SessionInput>>>>,
     /// Channel for all session outputs (session_id, output)
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
-    /// Factory for creating session configs
-    config_factory: ConfigFactory,
+    /// Base config used for new sessions
+    base_config: SessionConfig,
 }
 
 impl SessionManager {
-    /// Create a new session manager with the given config factory
+    /// Create a new session manager with the given base config
     ///
     /// Returns the manager and an output receiver for consuming session outputs.
-    /// The config factory is called each time a new session is created,
-    /// allowing customization of session parameters.
-    pub fn new<F>(config_factory: F) -> (Self, OutputReceiver)
-    where
-        F: Fn() -> SessionConfig + Send + Sync + 'static,
-    {
+    pub fn new(config: SessionConfig) -> (Self, OutputReceiver) {
         let (output_tx, output_rx) = mpsc::channel(256);
 
         let manager = Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             output_tx,
-            config_factory: Arc::new(config_factory),
+            base_config: config,
         };
 
         (manager, output_rx)
@@ -77,18 +69,25 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Create a new session with the given ID
-    ///
-    /// Returns the input sender for the session
+    /// Create a new session with the given ID using the base config
     async fn create_session(&self, session_id: &str) -> Result<mpsc::Sender<SessionInput>> {
+        self.create_session_with_config(session_id, self.base_config.clone())
+            .await
+    }
+
+    /// Create a new session with a custom config
+    ///
+    /// Use this when you need different settings per session (e.g., different model).
+    pub async fn create_session_with_config(
+        &self,
+        session_id: &str,
+        config: SessionConfig,
+    ) -> Result<mpsc::Sender<SessionInput>> {
         let session_id = session_id.to_string();
         info!("Creating new session: {}", session_id);
 
         // Create input channel for this session
         let (input_tx, input_rx) = mpsc::channel(256);
-
-        // Get config from factory
-        let config = (self.config_factory)();
 
         // Create the agent loop
         let agent_loop = AgentLoop::new(
@@ -209,14 +208,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_creation() {
-        let (manager, _output_rx) = SessionManager::new(test_config);
+        let (manager, _output_rx) = SessionManager::new(test_config());
         assert_eq!(manager.session_count().await, 0);
         assert!(manager.list_sessions().await.is_empty());
     }
 
     #[tokio::test]
     async fn test_has_session() {
-        let (manager, _output_rx) = SessionManager::new(test_config);
+        let (manager, _output_rx) = SessionManager::new(test_config());
 
         // Session shouldn't exist yet
         assert!(!manager.has_session("test-session").await);
@@ -224,7 +223,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_nonexistent_session() {
-        let (manager, _output_rx) = SessionManager::new(test_config);
+        let (manager, _output_rx) = SessionManager::new(test_config());
 
         // Stopping a non-existent session should be a no-op
         let result = manager.stop_session("nonexistent").await;
@@ -233,7 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_all_empty() {
-        let (manager, _output_rx) = SessionManager::new(test_config);
+        let (manager, _output_rx) = SessionManager::new(test_config());
 
         // Stopping all when empty should be fine
         let result = manager.stop_all().await;
@@ -242,14 +241,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_output_sender_clone() {
-        let (manager, _output_rx) = SessionManager::new(test_config);
+        let (manager, _output_rx) = SessionManager::new(test_config());
         let _sender = manager.output_sender();
         // Just verify we can get a clone of the sender
     }
 
     #[tokio::test]
     async fn test_remove_session() {
-        let (manager, _output_rx) = SessionManager::new(test_config);
+        let (manager, _output_rx) = SessionManager::new(test_config());
 
         // Add a session entry directly for testing
         {
