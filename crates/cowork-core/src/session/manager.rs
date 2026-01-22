@@ -45,16 +45,20 @@ impl SessionManager {
     /// If the session doesn't exist, it will be created automatically.
     /// Returns an error if the message couldn't be sent.
     pub async fn push_message(&self, session_id: &str, input: SessionInput) -> Result<()> {
-        self.sessions
-            .read()
-            .await
-            .get(session_id)
-            .cloned()
-            .unwrap_or(
-                self.create_session(session_id, self.base_config.clone())
-                    .await?,
-            )
-            // Send the input
+        // Try to get existing session first (read lock)
+        let sender = {
+            let sessions = self.sessions.read().await;
+            sessions.get(session_id).cloned()
+        };
+
+        // If not found, create new session (will take write lock)
+        let sender = match sender {
+            Some(tx) => tx,
+            None => self.create_session(session_id, self.base_config.clone()).await?,
+        };
+
+        // Send the input
+        sender
             .send(input)
             .await
             .map_err(|e| crate::error::Error::Agent(format!("Failed to send input: {}", e)))
