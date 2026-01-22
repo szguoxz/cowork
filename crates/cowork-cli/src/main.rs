@@ -440,8 +440,8 @@ async fn run_chat(
         ToolApprovalConfig::default()
     };
 
-    // Session-level approval state (can be modified during session)
-    let session_approval = Arc::new(tokio::sync::Mutex::new(base_approval_config.clone()));
+    // Session-level approval state (owned by output handler task)
+    let session_approval = base_approval_config.clone();
 
     // Create session manager
     let (session_manager, mut output_rx) = SessionManager::new({
@@ -469,8 +469,9 @@ async fn run_chat(
 
     // Spawn output handler task
     let session_manager_clone = Arc::clone(&session_manager);
-    let session_approval_clone = Arc::clone(&session_approval);
     let output_handle = tokio::spawn(async move {
+        // Approval config owned by this task - no mutex needed
+        let mut approval_config = session_approval;
         let mut spinner: Option<ProgressBar> = None;
 
         loop {
@@ -587,15 +588,12 @@ async fn run_chat(
                                     println!("{}", style("└─────────────────────────────────────────────────").dim());
 
                                     // Check if should auto-approve based on session state
-                                    let approval_config = session_approval_clone.lock().await;
                                     if approval_config.should_auto_approve(&name) {
                                         println!("  {} {}", style("✓").green(), style("Auto-approved").dim());
-                                        drop(approval_config);
                                         let _ = session_manager_clone
                                             .push_message(&session_id, SessionInput::approve_tool(&id))
                                             .await;
                                     } else {
-                                        drop(approval_config);
                                         // Need user approval - show options
                                         let options: Vec<String> = vec![
                                             "Yes - approve this call".to_string(),
@@ -627,10 +625,7 @@ async fn run_chat(
                                             }
                                             2 => {
                                                 // Always - add to session approved
-                                                {
-                                                    let mut approval_config = session_approval_clone.lock().await;
-                                                    approval_config.approve_for_session(name.clone());
-                                                }
+                                                approval_config.approve_for_session(name.clone());
                                                 println!("  {} '{}' will be auto-approved for this session",
                                                     style("✓").green(), name);
                                                 let _ = session_manager_clone
@@ -639,10 +634,7 @@ async fn run_chat(
                                             }
                                             3 => {
                                                 // Approve all
-                                                {
-                                                    let mut approval_config = session_approval_clone.lock().await;
-                                                    approval_config.approve_all_for_session();
-                                                }
+                                                approval_config.approve_all_for_session();
                                                 println!("  {} All tools will be auto-approved for this session",
                                                     style("✓").green());
                                                 let _ = session_manager_clone
