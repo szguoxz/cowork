@@ -975,7 +975,7 @@ async fn run_bash_command(workspace: &Path, command: &str) -> anyhow::Result<()>
     let tool = ExecuteCommand::new(workspace.to_path_buf());
     let params = serde_json::json!({
         "command": command,
-        "timeout": 120
+        "timeout": 120000  // 120 seconds in milliseconds
     });
 
     let result = tool.execute(params).await;
