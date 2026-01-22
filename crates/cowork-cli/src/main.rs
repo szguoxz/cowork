@@ -28,13 +28,11 @@ use cowork_core::mcp_manager::McpServerManager;
 use cowork_core::provider::{
     has_api_key_configured, ProviderType,
 };
-use cowork_core::orchestration::format_size;
 use cowork_core::prompt::{ComponentPaths, ComponentRegistry};
 use cowork_core::session::{SessionConfig, SessionInput, SessionManager, SessionOutput};
 use cowork_core::ToolApprovalConfig;
 use cowork_core::skills::SkillRegistry;
-// Only import tools that are used directly (for quick commands like /ls, /read, /search)
-use cowork_core::tools::filesystem::{ListDirectory, ReadFile, SearchFiles};
+// Import for ! prefix bash mode
 use cowork_core::tools::shell::ExecuteCommand;
 use cowork_core::tools::Tool;
 
@@ -53,10 +51,6 @@ impl SlashCompleter {
                 ("/quit", "Exit the program"),
                 ("/clear", "Clear conversation history"),
                 ("/tools", "Show available tools"),
-                ("/ls", "List directory contents"),
-                ("/read", "Read file contents"),
-                ("/run", "Run a shell command"),
-                ("/search", "Search for files"),
                 ("/commit", "Create a git commit"),
                 ("/push", "Push to remote"),
                 ("/pr", "Create a pull request"),
@@ -164,35 +158,6 @@ struct Cli {
 enum Commands {
     /// Interactive chat mode
     Chat,
-
-    /// Execute a shell command
-    Run {
-        /// Command to execute
-        command: String,
-    },
-
-    /// List files in workspace
-    List {
-        /// Path to list
-        #[arg(default_value = ".")]
-        path: String,
-    },
-
-    /// Read a file
-    Read {
-        /// File path
-        path: String,
-    },
-
-    /// Search for files
-    Search {
-        /// Search pattern
-        pattern: String,
-
-        /// Search in file contents
-        #[arg(short, long)]
-        content: bool,
-    },
 
     /// Show available tools
     Tools,
@@ -303,12 +268,6 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Some(Commands::Chat) => run_chat(&workspace, provider_type, cli.model.as_deref(), cli.auto_approve).await?,
-        Some(Commands::Run { command }) => run_command(&workspace, &command).await?,
-        Some(Commands::List { path }) => list_files(&workspace, &path).await?,
-        Some(Commands::Read { path }) => read_file(&workspace, &path).await?,
-        Some(Commands::Search { pattern, content }) => {
-            search_files(&workspace, &pattern, content).await?
-        }
         Some(Commands::Tools) => show_tools(),
         Some(Commands::Config) => show_config(&workspace),
         Some(Commands::Plugin(cmd)) => handle_plugin_command(&workspace, cmd)?,
@@ -813,28 +772,14 @@ async fn run_chat(
                 let _ = session_manager.stop_session(session_id).await;
                 println!("{}", style("Conversation cleared.").green());
             }
-            cmd if cmd.starts_with("/run ") => {
-                let command = &cmd[5..];
-                run_command(&workspace_path, command).await?;
-            }
-            cmd if cmd.starts_with("/ls ") || cmd.starts_with("/list ") => {
-                let path = cmd.split_whitespace().nth(1).unwrap_or(".");
-                list_files(&workspace_path, path).await?;
-            }
-            "/ls" | "/list" => {
-                list_files(&workspace_path, ".").await?;
-            }
-            cmd if cmd.starts_with("/cat ") || cmd.starts_with("/read ") => {
-                let path = cmd.split_whitespace().nth(1).unwrap_or("");
-                if path.is_empty() {
-                    println!("{}", style("Usage: /read <file>").yellow());
+            cmd if cmd.starts_with('!') => {
+                // Bash mode: run command directly without AI
+                let command = cmd[1..].trim();
+                if command.is_empty() {
+                    println!("{}", style("Usage: ! <command>").yellow());
                 } else {
-                    read_file(&workspace_path, path).await?;
+                    run_bash_command(&workspace_path, command).await?;
                 }
-            }
-            cmd if cmd.starts_with("/search ") || cmd.starts_with("/find ") => {
-                let pattern = &cmd[cmd.find(' ').unwrap_or(0) + 1..];
-                search_files(&workspace_path, pattern, false).await?;
             }
             cmd if cmd.starts_with('/') => {
                 // Handle slash commands via skill registry
@@ -970,16 +915,14 @@ fn print_help() {
     println!("  {}      - Clear conversation history", style("/clear").green());
     println!("  {}      - Show available tools", style("/tools").green());
     println!();
-    println!("{}", style("Quick Commands:").bold());
-    println!("  {}     - Run a shell command", style("/run <cmd>").green());
+    println!("{}", style("Bash Mode:").bold());
     println!(
-        "  {}   - List directory contents",
-        style("/ls [path]").green()
+        "  {}  - Run shell command directly (bypasses AI)",
+        style("! <command>").green()
     );
-    println!("  {} - Read file contents", style("/read <file>").green());
     println!(
-        "  {} - Search for files",
-        style("/search <pattern>").green()
+        "  {}",
+        style("  Examples: ! ls -la, ! git status, ! cat file.txt").dim()
     );
     println!();
     println!("{}", style("Slash Commands (Skills):").bold());
@@ -1004,24 +947,15 @@ fn print_help() {
     );
 }
 
-async fn run_command(workspace: &Path, command: &str) -> anyhow::Result<()> {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.blue} {msg}")
-            .unwrap(),
-    );
-    spinner.set_message(format!("Running: {}", command));
-    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
-
+/// Run a bash command directly (! prefix mode)
+async fn run_bash_command(workspace: &Path, command: &str) -> anyhow::Result<()> {
     let tool = ExecuteCommand::new(workspace.to_path_buf());
     let params = serde_json::json!({
         "command": command,
-        "timeout": 30
+        "timeout": 120
     });
 
     let result = tool.execute(params).await;
-    spinner.finish_and_clear();
 
     match result {
         Ok(output) => {
@@ -1037,123 +971,18 @@ async fn run_command(workspace: &Path, command: &str) -> anyhow::Result<()> {
                             eprintln!("{}", style(s).yellow());
                         }
             } else {
-                println!("{}", style("Command failed").red());
+                if let Some(stderr) = output.content.get("stderr")
+                    && let Some(s) = stderr.as_str()
+                        && !s.is_empty() {
+                            eprintln!("{}", style(s).red());
+                        }
                 if let Some(err) = output.error {
-                    println!("{}", style(err).red());
+                    eprintln!("{}", style(err).red());
                 }
             }
         }
         Err(e) => {
-            println!("{}", style(format!("Error: {}", e)).red());
-        }
-    }
-
-    Ok(())
-}
-
-async fn list_files(workspace: &Path, path: &str) -> anyhow::Result<()> {
-    let tool = ListDirectory::new(workspace.to_path_buf());
-    let params = serde_json::json!({
-        "path": path,
-        "include_hidden": false
-    });
-
-    let result = tool.execute(params).await;
-
-    match result {
-        Ok(output) => {
-            if let Some(entries) = output.content.get("entries")
-                && let Some(arr) = entries.as_array() {
-                    for entry in arr {
-                        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        let is_dir = entry.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
-                        let size = entry.get("size").and_then(|v| v.as_u64());
-
-                        if is_dir {
-                            println!("{}/", style(name).blue().bold());
-                        } else {
-                            let size_str = size
-                                .map(format_size)
-                                .unwrap_or_else(|| "-".to_string());
-                            println!("{:<40} {}", name, style(size_str).dim());
-                        }
-                    }
-                }
-        }
-        Err(e) => {
-            println!("{}", style(format!("Error: {}", e)).red());
-        }
-    }
-
-    Ok(())
-}
-
-async fn read_file(workspace: &Path, path: &str) -> anyhow::Result<()> {
-    let tool = ReadFile::new(workspace.to_path_buf());
-    let params = serde_json::json!({
-        "path": path
-    });
-
-    let result = tool.execute(params).await;
-
-    match result {
-        Ok(output) => {
-            if let Some(content) = output.content.get("content")
-                && let Some(s) = content.as_str() {
-                    println!("{}", s);
-                }
-        }
-        Err(e) => {
-            println!("{}", style(format!("Error: {}", e)).red());
-        }
-    }
-
-    Ok(())
-}
-
-async fn search_files(workspace: &Path, pattern: &str, in_content: bool) -> anyhow::Result<()> {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.blue} Searching...")
-            .unwrap(),
-    );
-    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
-
-    let tool = SearchFiles::new(workspace.to_path_buf());
-    let params = if in_content {
-        serde_json::json!({
-            "content": pattern,
-            "max_results": 50
-        })
-    } else {
-        serde_json::json!({
-            "pattern": pattern,
-            "max_results": 50
-        })
-    };
-
-    let result = tool.execute(params).await;
-    spinner.finish_and_clear();
-
-    match result {
-        Ok(output) => {
-            if let Some(results) = output.content.get("results")
-                && let Some(arr) = results.as_array() {
-                    if arr.is_empty() {
-                        println!("{}", style("No matches found").yellow());
-                    } else {
-                        for entry in arr {
-                            let path = entry.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                            println!("{}", style(path).green());
-                        }
-                        println!();
-                        println!("{}", style(format!("Found {} matches", arr.len())).dim());
-                    }
-                }
-        }
-        Err(e) => {
-            println!("{}", style(format!("Error: {}", e)).red());
+            eprintln!("{}", style(format!("Error: {}", e)).red());
         }
     }
 
