@@ -171,6 +171,24 @@ export function SessionProvider({ children }: SessionProviderProps) {
         break
       }
 
+      case 'question':
+        updateSession(sessionId, s => ({
+          ...s,
+          isIdle: false, // Waiting for user input
+          messages: [...s.messages, {
+            id: output.request_id,
+            type: 'question' as const,
+            content: '',
+            question: {
+              request_id: output.request_id,
+              questions: output.questions,
+              is_answered: false,
+            }
+          }],
+          updatedAt: new Date(),
+        }))
+        break
+
       case 'error':
         updateSession(sessionId, s => ({
           ...s,

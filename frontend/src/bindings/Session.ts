@@ -10,11 +10,29 @@ export interface ToolInfo {
   output?: string
 }
 
+export interface QuestionOption {
+  label: string
+  description: string | null
+}
+
+export interface QuestionInfo {
+  request_id: string
+  questions: Array<{
+    question: string
+    header: string | null
+    options: QuestionOption[]
+    multi_select: boolean
+  }>
+  answers?: Record<string, string>
+  is_answered: boolean
+}
+
 export interface Message {
   id: string
-  type: 'user' | 'assistant' | 'tool'
+  type: 'user' | 'assistant' | 'tool' | 'question'
   content: string
   tool?: ToolInfo
+  question?: QuestionInfo
 }
 
 export interface SessionProvider {

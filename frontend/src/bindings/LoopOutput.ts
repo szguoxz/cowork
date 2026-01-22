@@ -12,6 +12,7 @@ export type LoopOutput =
   | { type: "tool_start"; session_id: string; id: string; name: string; arguments: Record<string, unknown> }
   | { type: "tool_pending"; session_id: string; id: string; name: string; arguments: Record<string, unknown> }
   | { type: "tool_done"; session_id: string; id: string; name: string; success: boolean; output: string }
+  | { type: "question"; session_id: string; request_id: string; questions: Array<{ question: string; header: string | null; options: Array<{ label: string; description: string | null }>; multi_select: boolean }> }
   | { type: "idle"; session_id: string }
   | { type: "error"; session_id: string; message: string }
   | { type: "stopped"; session_id: string };

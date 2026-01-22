@@ -73,11 +73,27 @@ pub struct SavedSession {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Current state of the agent loop
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AgentState {
+    /// Waiting for user message
+    Idle,
+    /// Waiting for user interaction (approval or answer)
+    AwaitingInteraction,
+}
+
 /// The unified agent loop
 pub struct AgentLoop {
+    /// Current state
+    state: AgentState,
     /// Session identifier
     session_id: SessionId,
-    /// Input receiver
+    /// Message receiver (questions from user)
+    message_rx: mpsc::UnboundedReceiver<String>,
+    /// Answer receiver (approvals/answers from user)
+    answer_rx: mpsc::UnboundedReceiver<SessionInput>,
+    /// Input receiver (from outside) - retained for ownership but consumed by dispatcher
+    #[allow(dead_code)]
     input_rx: mpsc::Receiver<SessionInput>,
     /// Output sender
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
@@ -117,10 +133,39 @@ impl AgentLoop {
     /// Create a new agent loop
     pub async fn new(
         session_id: SessionId,
-        input_rx: mpsc::Receiver<SessionInput>,
+        mut input_rx: mpsc::Receiver<SessionInput>,
         output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
         config: SessionConfig,
     ) -> Result<Self> {
+        // Create internal channels for dispatching
+        let (message_tx, message_rx) = mpsc::unbounded_channel();
+        let (answer_tx, answer_rx) = mpsc::unbounded_channel();
+
+        // Spawn Dispatcher Task
+        // This task reads from the main input channel and routes messages to the correct internal channel
+        let sid = session_id.clone();
+        tokio::spawn(async move {
+            debug!("Dispatcher started for session: {}", sid);
+            while let Some(input) = input_rx.recv().await {
+                match input {
+                    SessionInput::UserMessage { content } => {
+                        if let Err(e) = message_tx.send(content) {
+                            error!("Failed to dispatch user message: {}", e);
+                            break;
+                        }
+                    }
+                    // All other inputs are answers/approvals
+                    input => {
+                        if let Err(e) = answer_tx.send(input) {
+                            error!("Failed to dispatch answer: {:?}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+            debug!("Dispatcher ended for session: {}", sid);
+        });
+
         // Create the provider
         let provider = match &config.api_key {
             Some(key) => GenAIProvider::with_api_key(
@@ -174,9 +219,15 @@ impl AgentLoop {
             .unwrap_or_default();
         let hooks_enabled = config.prompt_config.enable_hooks;
 
+        // Re-create input_rx to satisfy struct requirement (it's unused but kept for type consistency if needed)
+        let (_, dummy_rx) = mpsc::channel(1);
+
         Ok(Self {
+            state: AgentState::Idle,
             session_id,
-            input_rx,
+            input_rx: dummy_rx, 
+            message_rx,
+            answer_rx,
             output_tx,
             provider,
             session,
@@ -209,42 +260,16 @@ impl AgentLoop {
             }
         }
 
-        loop {
-            // Wait for input
-            let input = match self.input_rx.recv().await {
-                Some(input) => input,
-                None => {
-                    debug!("Input channel closed for session: {}", self.session_id);
-                    break;
-                }
-            };
-
-            match input {
-                SessionInput::UserMessage { content } => {
-                    if let Err(e) = self.handle_user_message(content).await {
-                        self.emit(SessionOutput::error(e.to_string())).await;
-                    }
-                    // Only emit Idle if no tools are waiting for approval
-                    // If tools are pending, Idle will be emitted after they're handled
-                    if self.pending_approvals.is_empty() {
-                        self.emit(SessionOutput::idle()).await;
-                    }
-                }
-                SessionInput::ApproveTool { tool_call_id } => {
-                    if let Err(e) = self.handle_approve_tool(&tool_call_id).await {
-                        self.emit(SessionOutput::error(e.to_string())).await;
-                        self.emit(SessionOutput::idle()).await;
-                    }
-                }
-                SessionInput::RejectTool { tool_call_id, reason } => {
-                    self.handle_reject_tool(&tool_call_id, reason).await;
-                }
-                SessionInput::AnswerQuestion { request_id, answers } => {
-                    if let Err(e) = self.handle_answer_question(&request_id, answers).await {
-                        self.emit(SessionOutput::error(e.to_string())).await;
-                        self.emit(SessionOutput::idle()).await;
-                    }
-                }
+        // Main Loop: Only cares about Questions (UserMessages)
+        // The Agentic Loop (inside handle_user_message) handles Answers (Approvals)
+        while let Some(content) = self.message_rx.recv().await {
+            if let Err(e) = self.handle_user_message(content).await {
+                self.emit(SessionOutput::error(e.to_string())).await;
+            }
+            // Only emit Idle if no tools are waiting for approval
+            // If tools are pending, Idle will be emitted after they're handled
+            if self.pending_approvals.is_empty() {
+                self.emit(SessionOutput::idle()).await;
             }
         }
 
@@ -359,10 +384,6 @@ impl AgentLoop {
                     }
                 }
             }
-            if has_question {
-                // Stop the loop - will continue when answers come in
-                break;
-            }
 
             // Execute auto-approved tools and batch results
             let auto_approved_tools: Vec<_> = tool_calls
@@ -388,8 +409,41 @@ impl AgentLoop {
                         self.pending_approvals.push(tool_call.clone());
                     }
                 }
-                // Stop the loop - will continue when approvals come in
-                break;
+            }
+
+            // If we have pending questions or approvals, wait for answers
+            // This blocks the agent loop but leaves the main loop free to queue new messages
+            if has_question || !self.pending_approvals.is_empty() {
+                self.state = AgentState::AwaitingInteraction;
+                
+                while !self.pending_approvals.is_empty() {
+                    // Wait for an answer
+                    if let Some(input) = self.answer_rx.recv().await {
+                        match input {
+                            SessionInput::ApproveTool { tool_call_id } => {
+                                if let Err(e) = self.handle_approve_tool(&tool_call_id).await {
+                                    self.emit(SessionOutput::error(e.to_string())).await;
+                                }
+                            }
+                            SessionInput::RejectTool { tool_call_id, reason } => {
+                                self.handle_reject_tool(&tool_call_id, reason).await;
+                            }
+                            SessionInput::AnswerQuestion { request_id, answers } => {
+                                if let Err(e) = self.handle_answer_question(&request_id, answers).await {
+                                    self.emit(SessionOutput::error(e.to_string())).await;
+                                }
+                            }
+                            _ => {
+                                warn!("Unexpected input type in waiting loop: {:?}", input);
+                            }
+                        }
+                    } else {
+                        // Channel closed
+                        return Ok(());
+                    }
+                }
+                
+                self.state = AgentState::Idle;
             }
 
             // If all tools auto-approved, continue loop
@@ -676,12 +730,6 @@ impl AgentLoop {
 
             // Execute the tool
             self.execute_tool(&tool_call).await;
-
-            // If no more pending, continue the agentic loop
-            if self.pending_approvals.is_empty() {
-                self.run_agentic_loop().await?;
-                self.emit(SessionOutput::idle()).await;
-            }
         } else {
             // Tool not found in pending - this shouldn't happen
             warn!(
@@ -689,8 +737,6 @@ impl AgentLoop {
                 tool_call_id,
                 self.pending_approvals.iter().map(|t| &t.id).collect::<Vec<_>>()
             );
-            // Emit idle to prevent CLI from hanging
-            self.emit(SessionOutput::idle()).await;
         }
 
         Ok(())
@@ -711,14 +757,6 @@ impl AgentLoop {
         // Emit done with rejection
         self.emit(SessionOutput::tool_done(tool_call_id, "", false, result))
             .await;
-
-        // If no more pending, continue the agentic loop
-        if self.pending_approvals.is_empty() {
-            if let Err(e) = self.run_agentic_loop().await {
-                self.emit(SessionOutput::error(e.to_string())).await;
-            }
-            self.emit(SessionOutput::idle()).await;
-        }
     }
 
     /// Handle answer to a question from AskUserQuestion tool
@@ -758,12 +796,6 @@ impl AgentLoop {
                 result.to_string(),
             ))
             .await;
-
-            // Continue the agentic loop
-            if self.pending_approvals.is_empty() {
-                self.run_agentic_loop().await?;
-                self.emit(SessionOutput::idle()).await;
-            }
         }
 
         Ok(())

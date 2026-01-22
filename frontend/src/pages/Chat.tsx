@@ -197,8 +197,34 @@ export default function Chat() {
                 <div className="px-3 py-2 text-xs font-mono text-muted-foreground">
                   {JSON.stringify(msg.tool.arguments, null, 2)}
                 </div>
+              </div>
+            )}
 
-    {/* Tool output hidden from frontend */}
+            {msg.type === 'question' && msg.question && (
+              <div className="border border-primary rounded-xl overflow-hidden bg-card ml-4">
+                <div className="bg-primary/10 px-4 py-3 border-b border-primary/20 flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-primary" />
+                  <span className="font-semibold text-primary">Question Required</span>
+                </div>
+                <div className="p-4 space-y-4">
+                  {msg.question.questions.map((q, idx) => (
+                    <div key={idx} className="space-y-2">
+                      <p className="font-medium">{q.question}</p>
+                      {q.options.length > 0 && (
+                        <div className="space-y-1 ml-2">
+                          {q.options.map((opt, optIdx) => (
+                            <div key={optIdx} className="text-sm text-muted-foreground">
+                              • {opt.label} {opt.description && <span className="text-xs opacity-70">({opt.description})</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <div className="bg-warning/10 text-warning p-3 rounded-md text-sm">
+                    ⚠️ Answering questions is currently only supported in the CLI. Please restart the session in the terminal to continue.
+                  </div>
+                </div>
               </div>
             )}
           </div>

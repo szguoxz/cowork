@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use super::{App, AppState, Message, MessageType, PendingApproval, PendingQuestion};
+use super::{App, AppState, Interaction, Message, MessageType, PendingApproval, PendingQuestion};
 
 /// Draw the entire UI
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -27,14 +27,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // Draw modal overlays if needed
     match app.state {
-        AppState::ToolApproval => {
-            if let Some(ref approval) = app.pending_approval {
-                draw_approval_modal(frame, approval);
-            }
-        }
-        AppState::Question => {
-            if let Some(ref question) = app.pending_question {
-                draw_question_modal(frame, question);
+        AppState::Interaction => {
+            match app.interactions.front() {
+                Some(Interaction::ToolApproval(approval)) => draw_approval_modal(frame, approval),
+                Some(Interaction::Question(question)) => draw_question_modal(frame, question),
+                None => {}
             }
         }
         _ => {}
@@ -231,8 +228,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     let style = match app.state {
         AppState::Processing => Style::default().bg(Color::Blue).fg(Color::White),
-        AppState::ToolApproval => Style::default().bg(Color::Yellow).fg(Color::Black),
-        AppState::Question => Style::default().bg(Color::Cyan).fg(Color::Black),
+        AppState::Interaction => Style::default().bg(Color::Yellow).fg(Color::Black),
         AppState::Normal => Style::default().bg(Color::DarkGray).fg(Color::White),
     };
 
@@ -245,8 +241,7 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
     let prompt = match app.state {
         AppState::Normal => "You> ",
         AppState::Processing => "You> ",  // Keep same prompt, user can type
-        AppState::ToolApproval => "[Awaiting approval] ",
-        AppState::Question => "[Answering question] ",
+        AppState::Interaction => "[Awaiting interaction] ",
     };
 
     // Input is active during Normal and Processing states

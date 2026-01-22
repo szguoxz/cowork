@@ -2,7 +2,7 @@
 
 use cowork_core::session::SessionOutput;
 use cowork_core::QuestionInfo;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use tui_input::Input;
 
 /// Message types for display in the output area
@@ -180,15 +180,20 @@ impl PendingQuestion {
     }
 }
 
+/// Pending user interaction (approval or question)
+#[derive(Debug, Clone)]
+pub enum Interaction {
+    ToolApproval(PendingApproval),
+    Question(PendingQuestion),
+}
+
 /// Application state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppState {
     /// Normal mode - user can type messages
     Normal,
-    /// Waiting for tool approval
-    ToolApproval,
-    /// Answering a question
-    Question,
+    /// Waiting for user interaction (tool approval or question)
+    Interaction,
     /// Processing (AI is working)
     Processing,
 }
@@ -205,10 +210,8 @@ pub struct App {
     pub scroll_offset: usize,
     /// Whether the app should quit
     pub should_quit: bool,
-    /// Pending tool approval
-    pub pending_approval: Option<PendingApproval>,
-    /// Pending question
-    pub pending_question: Option<PendingQuestion>,
+    /// Pending interactions queue
+    pub interactions: VecDeque<Interaction>,
     /// Session-approved tools
     pub session_approved_tools: std::collections::HashSet<String>,
     /// Approve all tools for session
@@ -232,8 +235,7 @@ impl App {
             ],
             scroll_offset: 0,
             should_quit: false,
-            pending_approval: None,
-            pending_question: None,
+            interactions: VecDeque::new(),
             session_approved_tools: std::collections::HashSet::new(),
             approve_all_session: false,
             thinking_content: None,
@@ -315,21 +317,16 @@ impl App {
                 self.status = format!("Executing {}...", name);
             }
             SessionOutput::ToolPending { id, name, arguments, .. } => {
-                if self.should_auto_approve(&name) {
-                    // Will be auto-approved by the event handler
-                    self.pending_approval = Some(PendingApproval::new(id, name, arguments));
-                } else {
-                    self.pending_approval = Some(PendingApproval::new(id, name, arguments));
-                    self.state = AppState::ToolApproval;
-                }
+                self.interactions.push_back(Interaction::ToolApproval(PendingApproval::new(id, name, arguments)));
+                self.state = AppState::Interaction;
             }
             SessionOutput::ToolDone { name, success, .. } => {
                 self.add_message(Message::tool_done(&name, success, ""));
                 self.status.clear();
             }
             SessionOutput::Question { request_id, questions } => {
-                self.pending_question = Some(PendingQuestion::new(request_id, questions));
-                self.state = AppState::Question;
+                self.interactions.push_back(Interaction::Question(PendingQuestion::new(request_id, questions)));
+                self.state = AppState::Interaction;
             }
             SessionOutput::Error { message } => {
                 self.add_message(Message::error(message));

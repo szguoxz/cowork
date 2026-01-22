@@ -8,6 +8,6 @@ mod app;
 pub mod events;
 mod ui;
 
-pub use app::{App, AppState, Message, MessageType, PendingApproval, PendingQuestion};
+pub use app::{App, AppState, Interaction, Message, MessageType, PendingApproval, PendingQuestion};
 pub use events::{Event, EventHandler, KeyAction, handle_key_approval, handle_key_normal, handle_key_question};
 pub use ui::draw;

@@ -30,7 +30,7 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 use tui::{
-    App, AppState, Event, EventHandler, KeyAction, Message,
+    App, AppState, Event, EventHandler, Interaction, KeyAction, Message,
     handle_key_approval, handle_key_normal, handle_key_question,
 };
 
@@ -496,18 +496,11 @@ async fn run_event_loop(
                                 }
                             }
                         }
-                        AppState::ToolApproval => {
-                            if let Some(ref mut approval) = app.pending_approval {
-                                handle_key_approval(key, approval)
-                            } else {
-                                KeyAction::None
-                            }
-                        }
-                        AppState::Question => {
-                            if let Some(ref mut question) = app.pending_question {
-                                handle_key_question(key, question)
-                            } else {
-                                KeyAction::None
+                        AppState::Interaction => {
+                            match app.interactions.front_mut() {
+                                Some(Interaction::ToolApproval(approval)) => handle_key_approval(key, approval),
+                                Some(Interaction::Question(question)) => handle_key_question(key, question),
+                                None => KeyAction::None,
                             }
                         }
                     };
@@ -521,25 +514,29 @@ async fn run_event_loop(
                             handle_user_input(app, session_manager, session_id, workspace, &input).await?;
                         }
                         KeyAction::ApproveTool => {
-                            if let Some(approval) = app.pending_approval.take() {
+                            if let Some(Interaction::ToolApproval(approval)) = app.interactions.pop_front() {
                                 app.add_message(Message::system(format!("Approved: {}", approval.name)));
                                 session_manager
                                     .push_message(session_id, SessionInput::approve_tool(&approval.id))
                                     .await?;
-                                app.state = AppState::Processing;
+                                if app.interactions.is_empty() {
+                                    app.state = AppState::Processing;
+                                }
                             }
                         }
                         KeyAction::RejectTool => {
-                            if let Some(approval) = app.pending_approval.take() {
+                            if let Some(Interaction::ToolApproval(approval)) = app.interactions.pop_front() {
                                 app.add_message(Message::system(format!("Rejected: {}", approval.name)));
                                 session_manager
                                     .push_message(session_id, SessionInput::reject_tool(&approval.id, None))
                                     .await?;
-                                app.state = AppState::Normal;
+                                if app.interactions.is_empty() {
+                                    app.state = AppState::Normal;
+                                }
                             }
                         }
                         KeyAction::ApproveToolSession => {
-                            if let Some(approval) = app.pending_approval.take() {
+                            if let Some(Interaction::ToolApproval(approval)) = app.interactions.pop_front() {
                                 app.session_approved_tools.insert(approval.name.clone());
                                 app.add_message(Message::system(format!(
                                     "Approved '{}' for session",
@@ -548,21 +545,25 @@ async fn run_event_loop(
                                 session_manager
                                     .push_message(session_id, SessionInput::approve_tool(&approval.id))
                                     .await?;
-                                app.state = AppState::Processing;
+                                if app.interactions.is_empty() {
+                                    app.state = AppState::Processing;
+                                }
                             }
                         }
                         KeyAction::ApproveAllSession => {
-                            if let Some(approval) = app.pending_approval.take() {
+                            if let Some(Interaction::ToolApproval(approval)) = app.interactions.pop_front() {
                                 app.approve_all_session = true;
                                 app.add_message(Message::system("All tools approved for session"));
                                 session_manager
                                     .push_message(session_id, SessionInput::approve_tool(&approval.id))
                                     .await?;
-                                app.state = AppState::Processing;
+                                if app.interactions.is_empty() {
+                                    app.state = AppState::Processing;
+                                }
                             }
                         }
                         KeyAction::AnswerQuestion => {
-                            if let Some(mut question) = app.pending_question.take() {
+                            if let Some(Interaction::Question(mut question)) = app.interactions.pop_front() {
                                 // Build answer
                                 let answer = if question.is_other_selected() {
                                     question.custom_input.take().unwrap_or_default()
@@ -584,12 +585,12 @@ async fn run_event_loop(
                                     answer.clone(),
                                 );
 
-                                // Check if more questions
+                                // Check if more questions in this set
                                 if question.current_question + 1 < question.questions.len() {
                                     question.current_question += 1;
-                                    app.pending_question = Some(question);
+                                    app.interactions.push_front(Interaction::Question(question));
                                 } else {
-                                    // All questions answered
+                                    // All questions in this set answered
                                     app.add_message(Message::system(format!("Answered: {}", answer)));
                                     session_manager
                                         .push_message(
@@ -600,7 +601,10 @@ async fn run_event_loop(
                                             ),
                                         )
                                         .await?;
-                                    app.state = AppState::Processing;
+                                    
+                                    if app.interactions.is_empty() {
+                                        app.state = AppState::Processing;
+                                    }
                                 }
                             }
                         }
