@@ -28,7 +28,7 @@ use cowork_core::mcp_manager::McpServerManager;
 use cowork_core::provider::{
     has_api_key_configured, ProviderType,
 };
-use cowork_core::prompt::{ComponentPaths, ComponentRegistry};
+use cowork_core::prompt::ComponentRegistry;
 use cowork_core::session::{SessionConfig, SessionInput, SessionManager, SessionOutput};
 use cowork_core::ToolApprovalConfig;
 use cowork_core::skills::SkillRegistry;
@@ -1067,12 +1067,12 @@ fn show_config(workspace: &Path) {
 
 /// Handle plugin management commands
 fn handle_plugin_command(workspace: &Path, cmd: PluginCommands) -> anyhow::Result<()> {
-    // Initialize component registry with builtins and load from paths
-    let paths = ComponentPaths::for_project(workspace);
-    let mut registry = ComponentRegistry::with_builtins();
-    if let Err(e) = registry.load_from_paths(&paths) {
-        eprintln!("{}", style(format!("Warning: Failed to load some components: {}", e)).yellow());
-    }
+    // Use core's convenience constructor
+    let mut registry = ComponentRegistry::for_workspace(workspace)
+        .unwrap_or_else(|e| {
+            eprintln!("{}", style(format!("Warning: {}", e)).yellow());
+            ComponentRegistry::with_builtins()
+        });
 
     match cmd {
         PluginCommands::List => {
@@ -1177,12 +1177,15 @@ fn handle_plugin_command(workspace: &Path, cmd: PluginCommands) -> anyhow::Resul
 
 /// Handle component listing commands
 fn handle_component_command(workspace: &Path, cmd: ComponentCommands) -> anyhow::Result<()> {
-    // Initialize component registry with builtins and load from paths
-    let paths = ComponentPaths::for_project(workspace);
-    let mut registry = ComponentRegistry::with_builtins();
-    if let Err(e) = registry.load_from_paths(&paths) {
-        eprintln!("{}", style(format!("Warning: Failed to load some components: {}", e)).yellow());
-    }
+    // Use core's convenience constructor
+    let registry = ComponentRegistry::for_workspace(workspace)
+        .unwrap_or_else(|e| {
+            eprintln!("{}", style(format!("Warning: {}", e)).yellow());
+            ComponentRegistry::with_builtins()
+        });
+
+    // Get summary for serializable info
+    let summary = registry.summary();
 
     match cmd {
         ComponentCommands::Agents => {
@@ -1260,37 +1263,33 @@ fn handle_component_command(workspace: &Path, cmd: ComponentCommands) -> anyhow:
         }
 
         ComponentCommands::All => {
-            // Show summary of all components
+            // Show summary of all components using the serializable summary
             println!("{}", style("Component Registry Summary:").bold());
             println!();
 
-            println!("  {} {} agents", style("•").cyan(), registry.agent_count());
-            println!("  {} {} commands", style("•").cyan(), registry.command_count());
-            println!("  {} {} skills", style("•").cyan(), registry.skill_count());
-            println!("  {} {} plugins", style("•").cyan(), registry.plugin_count());
+            println!("  {} {} agents", style("•").cyan(), summary.counts.agents);
+            println!("  {} {} commands", style("•").cyan(), summary.counts.commands);
+            println!("  {} {} skills", style("•").cyan(), summary.counts.skills);
+            println!("  {} {} plugins", style("•").cyan(), summary.counts.plugins);
             println!();
 
             // Show source breakdown
             println!("{}", style("Agents:").bold());
-            for agent in registry.list_agents() {
-                println!("  {} [{}]", style(agent.name()).green(), format!("{:?}", agent.scope).to_lowercase());
+            for agent in &summary.agents {
+                println!("  {} [{}]", style(&agent.name).green(), agent.scope);
             }
             println!();
 
             println!("{}", style("Commands:").bold());
-            for cmd in registry.list_commands() {
-                println!("  /{} [{}]", style(cmd.name()).green(), format!("{:?}", cmd.scope).to_lowercase());
+            for cmd in &summary.commands {
+                println!("  /{} [{}]", style(&cmd.name).green(), cmd.scope);
             }
 
-            if registry.skill_count() > 0 {
+            if !summary.skills.is_empty() {
                 println!();
                 println!("{}", style("Skills:").bold());
-                for skill in registry.list_skills() {
-                    let source = match skill.source {
-                        cowork_core::skills::loader::SkillSource::Project => "project",
-                        cowork_core::skills::loader::SkillSource::User => "user",
-                    };
-                    println!("  {} [{}]", style(&skill.frontmatter.name).green(), source);
+                for skill in &summary.skills {
+                    println!("  {} [{}]", style(&skill.name).green(), skill.source);
                 }
             }
         }

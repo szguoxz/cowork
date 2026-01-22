@@ -35,6 +35,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::prompt::agents::{AgentDefinition, AgentRegistry};
 use crate::prompt::builder::SkillDefinition;
 use crate::prompt::commands::{CommandDefinition, CommandRegistry};
@@ -43,6 +45,130 @@ use crate::prompt::hooks::HooksConfig;
 use crate::prompt::plugins::{DiscoverResult, PluginRegistry};
 use crate::prompt::types::Scope;
 use crate::skills::loader::{DynamicSkill, SkillSource};
+
+// ================== Serializable Info Structs ==================
+
+/// Serializable information about an agent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentInfo {
+    pub name: String,
+    pub description: String,
+    pub scope: String,
+    pub model: Option<String>,
+    pub tools: Vec<String>,
+}
+
+impl From<&AgentDefinition> for AgentInfo {
+    fn from(agent: &AgentDefinition) -> Self {
+        let tools: Vec<String> = agent
+            .tool_restrictions()
+            .allowed
+            .iter()
+            .map(|t| t.to_string())
+            .collect();
+
+        Self {
+            name: agent.name().to_string(),
+            description: agent.description().to_string(),
+            scope: format!("{:?}", agent.scope).to_lowercase(),
+            model: match agent.model() {
+                crate::ModelPreference::Inherit => None,
+                other => Some(format!("{:?}", other).to_lowercase()),
+            },
+            tools,
+        }
+    }
+}
+
+/// Serializable information about a command
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandInfo {
+    pub name: String,
+    pub description: String,
+    pub scope: String,
+}
+
+impl From<&CommandDefinition> for CommandInfo {
+    fn from(cmd: &CommandDefinition) -> Self {
+        Self {
+            name: cmd.name().to_string(),
+            description: cmd.description().to_string(),
+            scope: format!("{:?}", cmd.scope).to_lowercase(),
+        }
+    }
+}
+
+/// Serializable information about a skill
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillInfo {
+    pub name: String,
+    pub description: String,
+    pub source: String,
+    pub user_invocable: bool,
+    pub auto_triggers: Vec<String>,
+}
+
+impl From<&DynamicSkill> for SkillInfo {
+    fn from(skill: &DynamicSkill) -> Self {
+        Self {
+            name: skill.frontmatter.name.clone(),
+            description: skill.frontmatter.description.clone(),
+            source: match skill.source {
+                SkillSource::Project => "project".to_string(),
+                SkillSource::User => "user".to_string(),
+            },
+            user_invocable: skill.frontmatter.user_invocable,
+            auto_triggers: skill.frontmatter.auto_triggers.clone(),
+        }
+    }
+}
+
+/// Serializable information about a plugin
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginInfo {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub author: String,
+    pub enabled: bool,
+    pub agent_count: usize,
+    pub command_count: usize,
+    pub skill_count: usize,
+}
+
+impl From<&crate::prompt::plugins::Plugin> for PluginInfo {
+    fn from(plugin: &crate::prompt::plugins::Plugin) -> Self {
+        Self {
+            name: plugin.name().to_string(),
+            version: plugin.version().to_string(),
+            description: plugin.description().to_string(),
+            author: plugin.manifest.author.clone(),
+            enabled: plugin.is_enabled(),
+            agent_count: plugin.agents.len(),
+            command_count: plugin.commands.len(),
+            skill_count: plugin.skills.len(),
+        }
+    }
+}
+
+/// Summary of all components in the registry (for easy serialization)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistrySummary {
+    pub agents: Vec<AgentInfo>,
+    pub commands: Vec<CommandInfo>,
+    pub skills: Vec<SkillInfo>,
+    pub plugins: Vec<PluginInfo>,
+    pub counts: RegistryCounts,
+}
+
+/// Component counts
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryCounts {
+    pub agents: usize,
+    pub commands: usize,
+    pub skills: usize,
+    pub plugins: usize,
+}
 
 /// Paths for component discovery
 ///
@@ -211,6 +337,55 @@ impl ComponentRegistry {
         let mut registry = Self::new();
         registry.load_builtins();
         registry
+    }
+
+    /// Create a fully initialized registry for a workspace
+    ///
+    /// This is the main entry point for CLI and UI apps. It:
+    /// 1. Creates a registry with built-in components
+    /// 2. Discovers and loads components from standard paths
+    /// 3. Returns the ready-to-use registry
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let registry = ComponentRegistry::for_workspace("/path/to/project")?;
+    /// let agents = registry.summary().agents;
+    /// ```
+    pub fn for_workspace(workspace: impl AsRef<Path>) -> Result<Self, RegistryError> {
+        let paths = ComponentPaths::for_project(workspace);
+        let mut registry = Self::with_builtins();
+        registry.load_from_paths(&paths)?;
+        Ok(registry)
+    }
+
+    /// Get a serializable summary of all components
+    ///
+    /// This is useful for CLI display and Tauri commands.
+    pub fn summary(&self) -> RegistrySummary {
+        let mut agents: Vec<AgentInfo> = self.agents.values().map(AgentInfo::from).collect();
+        agents.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let mut commands: Vec<CommandInfo> = self.commands.values().map(CommandInfo::from).collect();
+        commands.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let mut skills: Vec<SkillInfo> = self.skills.values().map(SkillInfo::from).collect();
+        skills.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let plugins: Vec<PluginInfo> = self.plugins.list().map(PluginInfo::from).collect();
+
+        RegistrySummary {
+            counts: RegistryCounts {
+                agents: agents.len(),
+                commands: commands.len(),
+                skills: skills.len(),
+                plugins: plugins.len(),
+            },
+            agents,
+            commands,
+            skills,
+            plugins,
+        }
     }
 
     /// Load built-in components (agents and commands)

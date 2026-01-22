@@ -94,7 +94,8 @@ pub use pipeline::{
 
 // Re-export registry types
 pub use registry::{
-    ComponentPaths, ComponentRegistry, LoadResult, RegistryError,
+    AgentInfo, CommandInfo, ComponentPaths, ComponentRegistry, LoadResult, PluginInfo,
+    RegistryCounts, RegistryError, RegistrySummary, SkillInfo,
 };
 
 // Re-export plugin types

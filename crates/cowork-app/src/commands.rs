@@ -1,10 +1,13 @@
-//! Tauri commands - Settings and configuration only
+//! Tauri commands - Settings, configuration, and component management
 //!
 //! The main loop commands are in simple_commands.rs
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use cowork_core::prompt::{
+    AgentInfo, CommandInfo, ComponentRegistry, PluginInfo, RegistrySummary, SkillInfo,
+};
 use cowork_core::provider::{
     create_provider_with_settings, LlmProvider, LlmRequest, ProviderType,
 };
@@ -189,4 +192,46 @@ pub async fn fetch_provider_models(provider_type: String) -> Result<Vec<ModelInf
     };
 
     Ok(models)
+}
+
+// ================== Component Registry Commands ==================
+
+/// Get a summary of all registered components
+#[tauri::command]
+pub async fn get_component_summary(state: State<'_, AppState>) -> Result<RegistrySummary, String> {
+    let registry = ComponentRegistry::for_workspace(&state.workspace_path)
+        .map_err(|e| e.to_string())?;
+    Ok(registry.summary())
+}
+
+/// List all registered agents
+#[tauri::command]
+pub async fn list_agents(state: State<'_, AppState>) -> Result<Vec<AgentInfo>, String> {
+    let registry = ComponentRegistry::for_workspace(&state.workspace_path)
+        .map_err(|e| e.to_string())?;
+    Ok(registry.summary().agents)
+}
+
+/// List all registered commands
+#[tauri::command]
+pub async fn list_commands(state: State<'_, AppState>) -> Result<Vec<CommandInfo>, String> {
+    let registry = ComponentRegistry::for_workspace(&state.workspace_path)
+        .map_err(|e| e.to_string())?;
+    Ok(registry.summary().commands)
+}
+
+/// List all registered skills
+#[tauri::command]
+pub async fn list_skills(state: State<'_, AppState>) -> Result<Vec<SkillInfo>, String> {
+    let registry = ComponentRegistry::for_workspace(&state.workspace_path)
+        .map_err(|e| e.to_string())?;
+    Ok(registry.summary().skills)
+}
+
+/// List all registered plugins
+#[tauri::command]
+pub async fn list_plugins(state: State<'_, AppState>) -> Result<Vec<PluginInfo>, String> {
+    let registry = ComponentRegistry::for_workspace(&state.workspace_path)
+        .map_err(|e| e.to_string())?;
+    Ok(registry.summary().plugins)
 }

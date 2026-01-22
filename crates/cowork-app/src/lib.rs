@@ -191,6 +191,12 @@ pub fn run() {
             commands::test_api_connection,
             commands::is_setup_complete,
             commands::fetch_provider_models,
+            // Component registry commands
+            commands::get_component_summary,
+            commands::list_agents,
+            commands::list_commands,
+            commands::list_skills,
+            commands::list_plugins,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
