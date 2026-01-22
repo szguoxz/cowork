@@ -651,6 +651,15 @@ impl AgentLoop {
                 self.run_agentic_loop().await?;
                 self.emit(SessionOutput::idle()).await;
             }
+        } else {
+            // Tool not found in pending - this shouldn't happen
+            warn!(
+                "Tool approval received for unknown tool_call_id: {}. Pending: {:?}",
+                tool_call_id,
+                self.pending_approvals.iter().map(|t| &t.id).collect::<Vec<_>>()
+            );
+            // Emit idle to prevent CLI from hanging
+            self.emit(SessionOutput::idle()).await;
         }
 
         Ok(())
