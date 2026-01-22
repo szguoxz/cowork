@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, info};
 
 use super::agent_loop::AgentLoop;
@@ -45,45 +45,27 @@ impl SessionManager {
     /// If the session doesn't exist, it will be created automatically.
     /// Returns an error if the message couldn't be sent.
     pub async fn push_message(&self, session_id: &str, input: SessionInput) -> Result<()> {
-        let session_id = session_id.to_string();
-
-        // Check if session exists
-        let tx = {
-            let sessions = self.sessions.read().await;
-            sessions.get(&session_id).cloned()
-        };
-
-        let tx = match tx {
-            Some(tx) => tx,
-            None => {
-                // Create new session
-                self.create_session(&session_id).await?
-            }
-        };
-
-        // Send the input
-        tx.send(input)
+        self.sessions
+            .read()
             .await
-            .map_err(|e| crate::error::Error::Agent(format!("Failed to send input: {}", e)))?;
-
-        Ok(())
+            .get(session_id)
+            .cloned()
+            .unwrap_or(
+                self.create_session(session_id, self.base_config.clone())
+                    .await?,
+            )
+            // Send the input
+            .send(input)
+            .await
+            .map_err(|e| crate::error::Error::Agent(format!("Failed to send input: {}", e)))
     }
 
     /// Create a new session with the given ID using the base config
-    async fn create_session(&self, session_id: &str) -> Result<mpsc::Sender<SessionInput>> {
-        self.create_session_with_config(session_id, self.base_config.clone())
-            .await
-    }
-
-    /// Create a new session with a custom config
-    ///
-    /// Use this when you need different settings per session (e.g., different model).
-    pub async fn create_session_with_config(
+    async fn create_session(
         &self,
         session_id: &str,
         config: SessionConfig,
     ) -> Result<mpsc::Sender<SessionInput>> {
-        let session_id = session_id.to_string();
         info!("Creating new session: {}", session_id);
 
         // Create input channel for this session
@@ -91,7 +73,7 @@ impl SessionManager {
 
         // Create the agent loop
         let agent_loop = AgentLoop::new(
-            session_id.clone(),
+            session_id.to_string(),
             input_rx,
             self.output_tx.clone(),
             config,
@@ -99,23 +81,18 @@ impl SessionManager {
         .await?;
 
         // Spawn the agent loop
-        let session_id_clone = session_id.clone();
-        tokio::spawn(async move {
-            debug!("Agent loop starting for session: {}", session_id_clone);
-            agent_loop.run().await;
-            debug!("Agent loop ended for session: {}", session_id_clone);
-        });
+        tokio::spawn(agent_loop.run());
 
         // Register the session
-        {
-            let mut sessions = self.sessions.write().await;
-            sessions.insert(session_id.clone(), input_tx.clone());
-        }
+        self.sessions
+            .write()
+            .await
+            .insert(session_id.to_string(), input_tx.clone());
 
         // Emit ready notification
         let _ = self
             .output_tx
-            .send((session_id, SessionOutput::ready()))
+            .send((session_id.to_string(), SessionOutput::ready()))
             .await;
 
         Ok(input_tx)
@@ -143,8 +120,7 @@ impl SessionManager {
     /// Simply removes the session from the registry, which drops the input sender.
     /// The agent loop will detect the closed channel and save the session before exiting.
     pub async fn stop_session(&self, session_id: &str) -> Result<()> {
-        let mut sessions = self.sessions.write().await;
-        if sessions.remove(session_id).is_some() {
+        if self.sessions.write().await.remove(session_id).is_some() {
             info!("Stopped session: {}", session_id);
         }
         Ok(())
@@ -152,15 +128,7 @@ impl SessionManager {
 
     /// Stop all sessions
     pub async fn stop_all(&self) -> Result<()> {
-        let session_ids: Vec<String> = {
-            let sessions = self.sessions.read().await;
-            sessions.keys().cloned().collect()
-        };
-
-        for session_id in session_ids {
-            self.stop_session(&session_id).await?;
-        }
-
+        self.sessions.write().await.clear();
         Ok(())
     }
 
@@ -168,22 +136,6 @@ impl SessionManager {
     pub async fn session_count(&self) -> usize {
         let sessions = self.sessions.read().await;
         sessions.len()
-    }
-
-    /// Remove a session from the registry (called when session ends)
-    #[allow(dead_code)]
-    pub(crate) async fn remove_session(&self, session_id: &str) {
-        let mut sessions = self.sessions.write().await;
-        sessions.remove(session_id);
-        debug!("Removed session from registry: {}", session_id);
-    }
-}
-
-impl Drop for SessionManager {
-    fn drop(&mut self) {
-        // Note: We can't async drop, so sessions will be dropped when their
-        // senders are dropped, which will cause the agent loops to exit
-        debug!("SessionManager dropping");
     }
 }
 
@@ -244,24 +196,5 @@ mod tests {
         let (manager, _output_rx) = SessionManager::new(test_config());
         let _sender = manager.output_sender();
         // Just verify we can get a clone of the sender
-    }
-
-    #[tokio::test]
-    async fn test_remove_session() {
-        let (manager, _output_rx) = SessionManager::new(test_config());
-
-        // Add a session entry directly for testing
-        {
-            let (tx, _rx) = mpsc::channel(1);
-            let mut sessions = manager.sessions.write().await;
-            sessions.insert("test-session".to_string(), tx);
-        }
-
-        assert!(manager.has_session("test-session").await);
-
-        // Remove it
-        manager.remove_session("test-session").await;
-
-        assert!(!manager.has_session("test-session").await);
     }
 }
