@@ -224,6 +224,7 @@ impl AgentLoop {
                 SessionInput::ApproveTool { tool_call_id } => {
                     if let Err(e) = self.handle_approve_tool(&tool_call_id).await {
                         self.emit(SessionOutput::error(e.to_string())).await;
+                        self.emit(SessionOutput::idle()).await;
                     }
                 }
                 SessionInput::RejectTool { tool_call_id, reason } => {
@@ -232,6 +233,7 @@ impl AgentLoop {
                 SessionInput::AnswerQuestion { request_id, answers } => {
                     if let Err(e) = self.handle_answer_question(&request_id, answers).await {
                         self.emit(SessionOutput::error(e.to_string())).await;
+                        self.emit(SessionOutput::idle()).await;
                     }
                 }
             }
