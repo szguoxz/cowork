@@ -313,6 +313,8 @@ impl AgentLoop {
 
             // Check for tool calls
             if response.tool_calls.is_empty() {
+                // Add final assistant message to session history (important for multi-turn conversations)
+                self.session.add_assistant_message(&content, Vec::new());
                 // No tool calls, we're done
                 break;
             }
