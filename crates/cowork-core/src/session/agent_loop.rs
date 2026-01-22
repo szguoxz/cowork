@@ -790,11 +790,16 @@ impl AgentLoop {
             Some(&tool_defs_json), // Include tool definitions in token count
         );
 
-        debug!(
-            "Context usage: {:.1}% ({}/{} tokens)",
+        // Log detailed breakdown for debugging context issues
+        info!(
+            "Context usage: {:.1}% ({}/{} tokens) - breakdown: system={}, memory/tools={}, conversation={}, tool_results={}",
             usage.used_percentage * 100.0,
             usage.used_tokens,
-            usage.limit_tokens
+            usage.limit_tokens,
+            usage.breakdown.system_tokens,
+            usage.breakdown.memory_tokens,
+            usage.breakdown.conversation_tokens,
+            usage.breakdown.tool_tokens,
         );
 
         if !usage.should_compact {
