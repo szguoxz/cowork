@@ -478,13 +478,22 @@ async fn run_event_loop(
                     let action = match app.state {
                         AppState::Normal => handle_key_normal(key, &mut app.input),
                         AppState::Processing => {
-                            // Allow quit even while processing
-                            if key.code == crossterm::event::KeyCode::Char('c')
-                                && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
-                            {
-                                KeyAction::Quit
-                            } else {
-                                KeyAction::None
+                            // Allow typing while processing (queue input for later)
+                            // But don't submit - just buffer the input
+                            match key.code {
+                                crossterm::event::KeyCode::Char('c')
+                                    if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) =>
+                                {
+                                    KeyAction::Quit
+                                }
+                                crossterm::event::KeyCode::Enter => {
+                                    // Don't submit while processing, just ignore Enter
+                                    KeyAction::None
+                                }
+                                _ => {
+                                    // Allow typing (buffer input)
+                                    handle_key_normal(key, &mut app.input)
+                                }
                             }
                         }
                         AppState::ToolApproval => {

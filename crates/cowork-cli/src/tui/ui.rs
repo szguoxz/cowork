@@ -244,22 +244,31 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
     let prompt = match app.state {
         AppState::Normal => "You> ",
-        AppState::Processing => "Processing... ",
+        AppState::Processing => "You> ",  // Keep same prompt, user can type
         AppState::ToolApproval => "[Awaiting approval] ",
         AppState::Question => "[Answering question] ",
     };
 
-    let input_style = match app.state {
-        AppState::Normal => Style::default(),
-        _ => Style::default().fg(Color::DarkGray),
+    // Input is active during Normal and Processing states
+    let input_active = matches!(app.state, AppState::Normal | AppState::Processing);
+
+    let input_style = if input_active {
+        Style::default()
+    } else {
+        Style::default().fg(Color::DarkGray)
     };
 
     let input_text = format!("{}{}", prompt, app.input.value());
 
+    let title = match app.state {
+        AppState::Processing => " Input (processing...) ",
+        _ => " Input ",
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Input ")
-        .border_style(if app.state == AppState::Normal {
+        .title(title)
+        .border_style(if input_active {
             Style::default().fg(Color::Cyan)
         } else {
             Style::default().fg(Color::DarkGray)
@@ -271,8 +280,8 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
 
     frame.render_widget(paragraph, area);
 
-    // Set cursor position
-    if app.state == AppState::Normal {
+    // Set cursor position when input is active
+    if input_active {
         let cursor_x = area.x + 1 + prompt.len() as u16 + app.input.visual_cursor() as u16;
         let cursor_y = area.y + 1;
         frame.set_cursor_position((cursor_x.min(area.x + area.width - 2), cursor_y));
