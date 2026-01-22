@@ -471,6 +471,10 @@ async fn run_event_loop(
         if let Some(event) = events.next().await {
             match event {
                 Event::Terminal(crossterm::event::Event::Key(key)) => {
+                    // Only handle key press events, not release or repeat
+                    if key.kind != crossterm::event::KeyEventKind::Press {
+                        continue;
+                    }
                     let action = match app.state {
                         AppState::Normal => handle_key_normal(key, &mut app.input),
                         AppState::Processing => {
