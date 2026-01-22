@@ -12,7 +12,7 @@ genai = "0.5"
 # Async runtime
 tokio.workspace = true
 futures.workspace = true
-async-trait.workspace = true
+async-trait.workspace = true  # For dyn-compatible async traits (Agent, Tool, LlmProvider)
 
 # Serialization
 serde.workspace = true

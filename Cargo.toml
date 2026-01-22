@@ -18,7 +18,7 @@ repository = "https://github.com/example/cowork"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
-async-trait = "0.1"
+async-trait = "0.1"  # Required for dyn-compatible async traits
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
