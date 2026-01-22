@@ -459,7 +459,7 @@ async fn run_chat(
     let (approval_tx, mut approval_rx) = mpsc::channel::<ApprovalDecision>(16);
 
     // Spawn output handler task
-    let session_manager_clone = Arc::clone(&session_manager);
+    let session_manager_clone = session_manager.clone();
     let output_handle = tokio::spawn(async move {
         // Approval config owned by this task - no mutex needed
         let mut spinner: Option<ProgressBar> = None;

@@ -144,7 +144,7 @@ impl BrowserController {
     }
 
     pub fn session(&self) -> Arc<Mutex<BrowserSession>> {
-        Arc::clone(&self.session)
+        self.session.clone()
     }
 
     /// Create all browser tools
