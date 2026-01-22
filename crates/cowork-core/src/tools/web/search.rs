@@ -303,11 +303,7 @@ impl Tool for WebSearch {
     }
 
     fn description(&self) -> &str {
-        "Search the web for up-to-date information.\n\n\
-         - Provides current information beyond the knowledge cutoff\n\
-         - Returns search results with titles, URLs, and snippets\n\
-         - Domain filtering supported via allowed_domains and blocked_domains\n\
-         - IMPORTANT: Include a \"Sources:\" section with URLs in your response"
+        crate::prompt::builtin::claude_code::tools::WEBSEARCH
     }
 
     fn parameters_schema(&self) -> Value {

@@ -55,21 +55,7 @@ impl Tool for ExecuteCommand {
     }
 
     fn description(&self) -> &str {
-        "Executes a given bash command in a persistent shell session with optional timeout.\n\n\
-         IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.\n\n\
-         Usage notes:\n\
-         - The command argument is required.\n\
-         - You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). Default is 120000ms (2 minutes).\n\
-         - Always quote file paths that contain spaces with double quotes.\n\
-         - Avoid using Bash with find, grep, cat, head, tail, sed, awk, or echo commands. Instead use:\n\
-           - File search: Use Glob (NOT find or ls)\n\
-           - Content search: Use Grep (NOT grep or rg)\n\
-           - Read files: Use Read (NOT cat/head/tail)\n\
-           - Edit files: Use Edit (NOT sed/awk)\n\
-           - Write files: Use Write (NOT echo >/cat <<EOF)\n\
-         - If the output exceeds 30000 characters, output will be truncated.\n\
-         - You can use run_in_background to run commands in the background.\n\
-         - Try to maintain your current working directory by using absolute paths."
+        crate::prompt::builtin::claude_code::tools::BASH
     }
 
     fn parameters_schema(&self) -> Value {

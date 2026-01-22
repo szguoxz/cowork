@@ -104,6 +104,9 @@ pub use plugins::{
 };
 
 /// Template variables that can be substituted in prompts
+///
+/// These variables are substituted at runtime in prompt templates using
+/// `${VARIABLE_NAME}` syntax.
 #[derive(Debug, Clone)]
 pub struct TemplateVars {
     /// Current working directory
@@ -114,18 +117,24 @@ pub struct TemplateVars {
     pub platform: String,
     /// OS version
     pub os_version: String,
-    /// Current date
+    /// Current date (YYYY-MM-DD format)
     pub current_date: String,
-    /// Current year
+    /// Current year (YYYY format)
     pub current_year: String,
-    /// Model information
+    /// Model information (name and ID)
     pub model_info: String,
     /// Git status output
     pub git_status: String,
-    /// Assistant name
+    /// Assistant name (e.g., "Cowork", "Claude")
     pub assistant_name: String,
     /// Security policy content
     pub security_policy: String,
+    /// Current git branch name
+    pub current_branch: String,
+    /// Main/master branch name
+    pub main_branch: String,
+    /// Recent git commits (for commit style reference)
+    pub recent_commits: String,
 }
 
 impl Default for TemplateVars {
@@ -141,12 +150,17 @@ impl Default for TemplateVars {
             git_status: String::new(),
             assistant_name: "Cowork".to_string(),
             security_policy: builtin::reminders::SECURITY_POLICY.to_string(),
+            current_branch: String::new(),
+            main_branch: "main".to_string(),
+            recent_commits: String::new(),
         }
     }
 }
 
 impl TemplateVars {
     /// Substitute template variables in a string
+    ///
+    /// Replaces all `${VARIABLE_NAME}` patterns with their corresponding values.
     pub fn substitute(&self, template: &str) -> String {
         template
             .replace("${WORKING_DIRECTORY}", &self.working_directory)
@@ -159,6 +173,9 @@ impl TemplateVars {
             .replace("${GIT_STATUS}", &self.git_status)
             .replace("${ASSISTANT_NAME}", &self.assistant_name)
             .replace("${SECURITY_POLICY}", &self.security_policy)
+            .replace("${CURRENT_BRANCH}", &self.current_branch)
+            .replace("${MAIN_BRANCH}", &self.main_branch)
+            .replace("${RECENT_COMMITS}", &self.recent_commits)
     }
 }
 

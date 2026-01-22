@@ -26,17 +26,7 @@ impl Tool for ReadFile {
     }
 
     fn description(&self) -> &str {
-        "Reads a file from the local filesystem. You can access any file directly by using this tool.\n\n\
-         Usage:\n\
-         - The file_path parameter can be absolute or relative to workspace\n\
-         - By default, it reads the entire file\n\
-         - You can optionally specify offset and limit for large files\n\
-         - Any lines longer than 2000 characters will be truncated\n\
-         - Results are returned with line numbers starting at 1\n\
-         - This tool can read images (PNG, JPG, etc.) - they are presented visually\n\
-         - This tool can read PDF files and Jupyter notebooks (.ipynb)\n\
-         - This tool can only read files, not directories. Use Bash with ls for directories.\n\
-         - You can call multiple tools in a single response to read multiple files in parallel."
+        crate::prompt::builtin::claude_code::tools::READ
     }
 
     fn parameters_schema(&self) -> Value {

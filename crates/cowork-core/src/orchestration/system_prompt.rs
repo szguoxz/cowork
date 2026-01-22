@@ -274,7 +274,9 @@ mod tests {
     fn test_new_system_prompt() {
         let prompt = SystemPrompt::new();
         let built = prompt.build();
-        assert!(built.contains("Cowork"));
+        // System prompt is now Claude Code's pre-expanded prompt
+        assert!(built.contains("Claude"));
+        assert!(built.contains("Security"));
     }
 
     #[test]

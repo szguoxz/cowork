@@ -225,18 +225,7 @@ impl Tool for TaskTool {
     }
 
     fn description(&self) -> &str {
-        "Launch a new agent to handle complex, multi-step tasks autonomously.\n\n\
-         Available agent types:\n\
-         - Bash: Command execution specialist for git operations, npm, docker, etc.\n\
-         - general-purpose: General-purpose agent for research and multi-step tasks\n\
-         - Explore: Fast agent for exploring codebases (finding files, searching code, understanding structure)\n\
-         - Plan: Software architect for designing implementation plans\n\n\
-         Usage notes:\n\
-         - Always include a short description (3-5 words) summarizing what the agent will do\n\
-         - Launch multiple agents concurrently whenever possible to maximize performance\n\
-         - The agent's results are not visible to the user - send a text message with a summary\n\
-         - Agents can be resumed using the resume parameter\n\
-         - Provide clear, detailed prompts so the agent can work autonomously"
+        crate::prompt::builtin::claude_code::tools::TASK
     }
 
     fn parameters_schema(&self) -> Value {

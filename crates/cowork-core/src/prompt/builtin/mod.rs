@@ -3,9 +3,20 @@
 //! This module provides the literal prompt text used by the agent system.
 //! These prompts are based on Claude Code's prompt system and can be loaded
 //! at runtime.
+//!
+//! # Module Structure
+//!
+//! - `claude_code` - Pre-expanded prompts from Claude Code's prompt system
+//! - `agents` - Agent definitions with YAML frontmatter
+//! - `tools` - Tool descriptions
+//! - `reminders` - System reminders
+//! - `commands` - Slash command definitions
 
-/// Main system prompt template
-pub const SYSTEM_PROMPT: &str = include_str!("system_prompt.md");
+/// Claude Code prompt system (pre-expanded)
+pub mod claude_code;
+
+/// Main system prompt template - uses Claude Code's pre-expanded prompt
+pub const SYSTEM_PROMPT: &str = claude_code::SYSTEM_PROMPT;
 
 /// Agent definitions
 pub mod agents {
@@ -78,7 +89,9 @@ mod tests {
     #[test]
     fn test_system_prompt_loads() {
         assert!(!SYSTEM_PROMPT.is_empty());
-        assert!(SYSTEM_PROMPT.contains("You are Cowork"));
+        // System prompt comes from Claude Code
+        assert!(SYSTEM_PROMPT.contains("You are Claude"));
+        assert!(SYSTEM_PROMPT.contains("Security"));
     }
 
     #[test]

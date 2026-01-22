@@ -26,12 +26,7 @@ impl Tool for GlobFiles {
     }
 
     fn description(&self) -> &str {
-        "Fast file pattern matching tool that works with any codebase size.\n\n\
-         - Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\"\n\
-         - Returns matching file paths sorted by modification time\n\
-         - Use this tool when you need to find files by name patterns\n\
-         - When doing an open ended search that may require multiple rounds of globbing and grepping, use the Task tool instead\n\
-         - You can call multiple tools in a single response. It is always better to speculatively perform multiple searches in parallel if they are potentially useful."
+        crate::prompt::builtin::claude_code::tools::GLOB
     }
 
     fn parameters_schema(&self) -> Value {

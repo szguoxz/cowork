@@ -65,19 +65,7 @@ impl Tool for TodoWrite {
     }
 
     fn description(&self) -> &str {
-        "Use this tool proactively to create and manage a structured task list for your current coding session.\n\n\
-         When to Use:\n\
-         - Complex multi-step tasks (3+ distinct steps)\n\
-         - User provides multiple tasks (numbered or comma-separated)\n\
-         - After receiving new instructions (capture requirements as todos)\n\
-         - When you start working on a task (mark as in_progress BEFORE beginning)\n\
-         - After completing a task (mark as completed and add follow-up tasks)\n\n\
-         When NOT to Use:\n\
-         - Single, straightforward tasks\n\
-         - Tasks that can be completed in less than 3 trivial steps\n\
-         - Purely conversational or informational requests\n\n\
-         Task States: pending, in_progress, completed\n\
-         IMPORTANT: Only ONE task should be in_progress at any time."
+        crate::prompt::builtin::claude_code::tools::TODOWRITE
     }
 
     fn parameters_schema(&self) -> Value {

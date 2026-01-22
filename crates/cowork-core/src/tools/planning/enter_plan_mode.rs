@@ -35,16 +35,7 @@ impl Tool for EnterPlanMode {
     }
 
     fn description(&self) -> &str {
-        "Use this tool proactively when you're about to start a non-trivial implementation task.\n\n\
-         Getting user sign-off on your approach before writing code prevents wasted effort and ensures alignment.\n\n\
-         Prefer using EnterPlanMode for implementation tasks unless they're simple. Use when:\n\
-         - New Feature Implementation: Adding meaningful new functionality\n\
-         - Multiple Valid Approaches: The task can be solved several different ways\n\
-         - Code Modifications: Changes that affect existing behavior or structure\n\
-         - Architectural Decisions: Task requires choosing between patterns or technologies\n\
-         - Multi-File Changes: Task will likely touch more than 2-3 files\n\
-         - Unclear Requirements: Need to explore before understanding the full scope\n\n\
-         Skip for: single-line fixes, typos, obvious bugs, small tweaks"
+        crate::prompt::builtin::claude_code::tools::ENTER_PLAN_MODE
     }
 
     fn parameters_schema(&self) -> Value {
