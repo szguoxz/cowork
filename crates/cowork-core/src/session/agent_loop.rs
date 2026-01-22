@@ -254,11 +254,8 @@ impl AgentLoop {
             if let Err(e) = self.handle_user_message(content).await {
                 self.emit(SessionOutput::error(e.to_string())).await;
             }
-            // Only emit Idle if no tools are waiting for approval
-            // If tools are pending, Idle will be emitted after they're handled
-            if self.pending_approvals.is_empty() {
-                self.emit(SessionOutput::idle()).await;
-            }
+            // Emit Idle when the turn is complete
+            self.emit(SessionOutput::idle()).await;
         }
 
         // Channel closed - save session before exiting
