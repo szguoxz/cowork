@@ -479,6 +479,10 @@ async fn run_chat(
                                     if let Some(s) = spinner.take() {
                                         s.finish_and_clear();
                                     }
+                                    // Print prompt hint since readline's prompt may have been overwritten
+                                    print!("\n{} ", style("You>").bold());
+                                    use std::io::Write;
+                                    let _ = std::io::stdout().flush();
                                 }
                                 SessionOutput::UserMessage { .. } => {
                                     // User message echo - we already printed it
@@ -654,14 +658,19 @@ async fn run_chat(
                                     if let Some(s) = spinner.take() {
                                         s.finish_and_clear();
                                     }
+                                    // Visual separator for question
+                                    println!();
+                                    println!("{}", style("┌─ Question ───────────────────────────────────────").bold().cyan());
                                     // Handle ask_user_question interactively
                                     match handle_questions_interactive(&questions) {
                                         Ok(answers) => {
+                                            println!("{}", style("└─────────────────────────────────────────────────").dim().cyan());
                                             let _ = session_manager_clone
                                                 .push_message(&session_id, SessionInput::answer_question(request_id, answers))
                                                 .await;
                                         }
                                         Err(e) => {
+                                            println!("{}", style("└─────────────────────────────────────────────────").dim().cyan());
                                             println!("{}", style(format!("Error handling question: {}", e)).red());
                                         }
                                     }
