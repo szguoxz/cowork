@@ -434,19 +434,16 @@ async fn run_chat(
     // Create session config factory
     let workspace_path = workspace.to_path_buf();
     let model = model.map(|s| s.to_string());
-    let base_approval_config = if auto_approve {
+    let mut approval_config = if auto_approve {
         ToolApprovalConfig::trust_all()
     } else {
         ToolApprovalConfig::default()
     };
 
-    // Session-level approval state (owned by output handler task)
-    let session_approval = base_approval_config.clone();
-
     // Create session config
     let mut session_config = SessionConfig::new(workspace_path.clone())
         .with_provider(provider_type)
-        .with_approval_config(base_approval_config.clone());
+        .with_approval_config(approval_config.clone());
     if let Some(ref m) = model {
         session_config = session_config.with_model(m.clone());
     }
@@ -465,7 +462,6 @@ async fn run_chat(
     let session_manager_clone = Arc::clone(&session_manager);
     let output_handle = tokio::spawn(async move {
         // Approval config owned by this task - no mutex needed
-        let mut approval_config = session_approval;
         let mut spinner: Option<ProgressBar> = None;
 
         loop {
