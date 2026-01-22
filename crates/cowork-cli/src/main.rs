@@ -4,121 +4,35 @@
 //! sharing the same agent loop logic with the UI application.
 
 mod onboarding;
+mod tui;
 
-use std::borrow::Cow;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use console::style;
-use dialoguer::{theme::ColorfulTheme, Input, MultiSelect, Select};
-use indicatif::{ProgressBar, ProgressStyle};
-use rustyline::completion::{Completer, Pair};
-use rustyline::error::ReadlineError;
-use rustyline::highlight::Highlighter;
-use rustyline::hint::Hinter;
-use rustyline::validate::Validator;
-use rustyline::{Config, Editor, Helper};
 use onboarding::OnboardingWizard;
 
 use cowork_core::config::ConfigManager;
-use cowork_core::mcp_manager::McpServerManager;
-use cowork_core::provider::{
-    has_api_key_configured, ProviderType,
-};
+use cowork_core::provider::{has_api_key_configured, ProviderType};
 use cowork_core::orchestration::SystemPrompt;
 use cowork_core::prompt::{ComponentRegistry, TemplateVars};
 use cowork_core::session::{SessionConfig, SessionInput, SessionManager, SessionOutput};
 use cowork_core::ToolApprovalConfig;
-use cowork_core::skills::SkillRegistry;
 // Import for ! prefix bash mode
 use cowork_core::tools::shell::ExecuteCommand;
 use cowork_core::tools::Tool;
 
-/// Slash command completer for readline
-#[derive(Default)]
-struct SlashCompleter {
-    commands: Vec<(&'static str, &'static str)>,
-}
-
-impl SlashCompleter {
-    fn new() -> Self {
-        Self {
-            commands: vec![
-                ("/help", "Show help"),
-                ("/exit", "Exit the program"),
-                ("/quit", "Exit the program"),
-                ("/clear", "Clear conversation history"),
-                ("/tools", "Show available tools"),
-                ("/commit", "Create a git commit"),
-                ("/push", "Push to remote"),
-                ("/pr", "Create a pull request"),
-                ("/review", "Review staged changes"),
-                ("/clean-gone", "Clean up deleted branches"),
-            ],
-        }
-    }
-}
-
-impl Completer for SlashCompleter {
-    type Candidate = Pair;
-
-    fn complete(
-        &self,
-        line: &str,
-        pos: usize,
-        _ctx: &rustyline::Context<'_>,
-    ) -> rustyline::Result<(usize, Vec<Pair>)> {
-        // Only complete if line starts with /
-        if !line.starts_with('/') {
-            return Ok((0, vec![]));
-        }
-
-        let input = &line[..pos];
-        let matches: Vec<Pair> = self
-            .commands
-            .iter()
-            .filter(|(cmd, _)| cmd.starts_with(input))
-            .map(|(cmd, desc)| Pair {
-                display: format!("{} - {}", cmd, desc),
-                replacement: cmd.to_string(),
-            })
-            .collect();
-
-        Ok((0, matches))
-    }
-}
-
-impl Hinter for SlashCompleter {
-    type Hint = String;
-
-    fn hint(&self, line: &str, pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
-        if !line.starts_with('/') || pos < line.len() {
-            return None;
-        }
-
-        // If just "/" typed, show hint to press Tab
-        if line == "/" {
-            return Some(" <Tab> for commands".to_string());
-        }
-
-        // Find first matching command and show hint for typeahead
-        self.commands
-            .iter()
-            .find(|(cmd, _)| cmd.starts_with(line) && *cmd != line)
-            .map(|(cmd, _)| cmd[line.len()..].to_string())
-    }
-}
-
-impl Highlighter for SlashCompleter {
-    fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
-        Cow::Owned(format!("\x1b[90m{}\x1b[0m", hint))
-    }
-}
-
-impl Validator for SlashCompleter {}
-impl Helper for SlashCompleter {}
+// TUI imports
+use crossterm::{
+    event::DisableMouseCapture,
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::prelude::*;
+use tui::{
+    App, AppState, Event, EventHandler, KeyAction, Message,
+    handle_key_approval, handle_key_normal, handle_key_question,
+};
 
 #[derive(Parser)]
 #[command(name = "cowork")]
@@ -444,46 +358,19 @@ async fn run_chat(
         cli_provider_type
     };
 
-    println!("{}", style("Cowork - AI Coding Assistant").bold().cyan());
-    println!(
-        "{}",
-        style(format!("Provider: {:?}", provider_type)).dim()
-    );
-    if auto_approve {
-        println!(
-            "{}",
-            style("Warning: Auto-approve mode is ON - all tool calls will be approved automatically!").yellow().bold()
-        );
-    }
-    println!();
-
     // Check if API key is configured - show setup instructions if not
     if !has_api_key_configured(&config_manager, provider_type) {
         show_setup_instructions(provider_type);
         return Ok(());
     }
 
-    println!(
-        "{}",
-        style("Type 'help' for commands, 'exit' to quit, or just chat with the AI").dim()
-    );
-    println!();
-
-    // Initialize MCP server manager (servers start lazily when tools are called)
-    let mcp_manager = Arc::new(
-        McpServerManager::with_configs(config_manager.config().mcp_servers.clone())
-    );
-
     // Get API key for session config
     let api_key = cowork_core::provider::get_api_key(&config_manager, provider_type);
 
-    // Create skill registry for slash commands with MCP manager
-    let skill_registry = SkillRegistry::with_builtins_and_mcp(workspace.to_path_buf(), Some(mcp_manager));
-
-    // Create session config factory
+    // Create session config
     let workspace_path = workspace.to_path_buf();
     let model = model.map(|s| s.to_string());
-    let mut approval_config = if auto_approve {
+    let approval_config = if auto_approve {
         ToolApprovalConfig::trust_all()
     } else {
         ToolApprovalConfig::default()
@@ -505,520 +392,353 @@ async fn run_chat(
     }
 
     // Create session manager
-    let (session_manager, mut output_rx) = SessionManager::new(session_config);
+    let (session_manager, output_rx) = SessionManager::new(session_config);
 
-    // Set up readline with history and slash command completion
-    let rl_config = Config::builder()
-        .history_ignore_space(true)
-        .completion_type(rustyline::CompletionType::List)
-        .edit_mode(rustyline::EditMode::Emacs)
-        .auto_add_history(false) // We add manually
-        .build();
-    let mut rl = Editor::with_config(rl_config)?;
-    rl.set_helper(Some(SlashCompleter::new()));
+    // Run the TUI
+    run_chat_tui(
+        &workspace_path,
+        session_manager,
+        output_rx,
+        provider_type,
+        auto_approve,
+    ).await
+}
 
-    // Load history from file
-    let history_path = directories::ProjectDirs::from("", "", "cowork")
-        .map(|p| p.config_dir().join("history.txt"))
-        .unwrap_or_else(|| PathBuf::from(".cowork_history"));
-    let _ = rl.load_history(&history_path);
+/// Run the TUI-based chat interface
+async fn run_chat_tui(
+    workspace: &Path,
+    session_manager: SessionManager,
+    output_rx: cowork_core::session::OutputReceiver,
+    provider_type: ProviderType,
+    auto_approve: bool,
+) -> anyhow::Result<()> {
+    // Setup terminal
+    enable_raw_mode()?;
+    let mut stdout = std::io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
-    // Use simple prompt without ANSI to avoid cursor position issues
-    let prompt = "You> ";
+    // Create app state
+    let provider_info = format!("{:?}", provider_type);
+    let mut app = App::new(provider_info);
+
+    if auto_approve {
+        app.approve_all_session = true;
+        app.add_message(Message::system("Auto-approve mode is ON"));
+    }
+
+    // Create event handler
+    let mut events = EventHandler::new(output_rx);
 
     let session_id = "cli-session";
 
-    loop {
-        // Ensure terminal is in a clean state before readline
-        let _ = std::io::stdout().flush();
-        let _ = std::io::stderr().flush();
+    // Main event loop
+    let result = run_event_loop(
+        &mut terminal,
+        &mut app,
+        &mut events,
+        &session_manager,
+        session_id,
+        workspace,
+    ).await;
 
-        let readline = rl.readline(prompt);
-        let input = match readline {
-            Ok(line) => line,
-            Err(ReadlineError::Interrupted) => {
-                println!("{}", style("Use /exit to quit").dim());
-                continue;
-            }
-            Err(ReadlineError::Eof) => {
-                println!("{}", style("Goodbye!").green());
-                break;
-            }
-            Err(err) => {
-                println!("{}", style(format!("Error: {}", err)).red());
-                continue;
-            }
-        };
+    // Restore terminal
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    terminal.show_cursor()?;
 
-        let input = input.trim();
-
-        if input.is_empty() {
-            continue;
-        }
-
-        // Add to history
-        let _ = rl.add_history_entry(input);
-
-        match input {
-            "/exit" | "/quit" | "/q" => {
-                println!("{}", style("Goodbye!").green());
-                break;
-            }
-            "/help" | "/?" => {
-                print_help();
-            }
-            "/tools" => {
-                show_tools();
-            }
-            "/clear" => {
-                // Stop current session and create a new one
-                let _ = session_manager.stop_session(session_id).await;
-                println!("{}", style("Conversation cleared.").green());
-            }
-            cmd if cmd.starts_with('!') => {
-                // Bash mode: run command directly without AI
-                let command = cmd[1..].trim();
-                if command.is_empty() {
-                    println!("{}", style("Usage: ! <command>").yellow());
-                } else {
-                    run_bash_command(&workspace_path, command).await?;
-                }
-            }
-            cmd if cmd.starts_with('/') => {
-                // Handle slash commands via skill registry
-                handle_slash_command(cmd, &workspace_path, &skill_registry).await;
-            }
-            _ => {
-                // Send to session manager
-                session_manager
-                    .push_message(session_id, SessionInput::user_message(input))
-                    .await?;
-
-                // Process outputs until Idle (blocking single-threaded design)
-                process_outputs_until_idle(
-                    &session_manager,
-                    session_id,
-                    &mut output_rx,
-                    &mut approval_config,
-                ).await?;
-            }
-        }
-    }
-
-    // Stop session and clean up
+    // Stop session
     let _ = session_manager.stop_all().await;
 
-    // Save history on exit
-    if let Some(parent) = history_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = rl.save_history(&history_path);
-
-    Ok(())
+    result
 }
 
-/// Process session outputs until Idle is received (blocking single-threaded design)
-async fn process_outputs_until_idle(
+/// Main event loop for the TUI
+async fn run_event_loop(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    app: &mut App,
+    events: &mut EventHandler,
     session_manager: &SessionManager,
     session_id: &str,
-    output_rx: &mut cowork_core::session::OutputReceiver,
-    approval_config: &mut ToolApprovalConfig,
+    workspace: &Path,
 ) -> anyhow::Result<()> {
-    let mut spinner: Option<ProgressBar> = None;
+    loop {
+        // Draw UI
+        terminal.draw(|frame| tui::draw(frame, app))?;
 
-    while let Some((sid, output)) = output_rx.recv().await {
-        // Only process outputs for our session
-        if sid != session_id {
-            continue;
+        // Handle events
+        if let Some(event) = events.next().await {
+            match event {
+                Event::Terminal(crossterm::event::Event::Key(key)) => {
+                    let action = match app.state {
+                        AppState::Normal => handle_key_normal(key, &mut app.input),
+                        AppState::Processing => {
+                            // Allow quit even while processing
+                            if key.code == crossterm::event::KeyCode::Char('c')
+                                && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                            {
+                                KeyAction::Quit
+                            } else {
+                                KeyAction::None
+                            }
+                        }
+                        AppState::ToolApproval => {
+                            if let Some(ref mut approval) = app.pending_approval {
+                                handle_key_approval(key, approval)
+                            } else {
+                                KeyAction::None
+                            }
+                        }
+                        AppState::Question => {
+                            if let Some(ref mut question) = app.pending_question {
+                                handle_key_question(key, question)
+                            } else {
+                                KeyAction::None
+                            }
+                        }
+                    };
+
+                    match action {
+                        KeyAction::Quit => {
+                            app.should_quit = true;
+                            break;
+                        }
+                        KeyAction::Submit(input) => {
+                            handle_user_input(app, session_manager, session_id, workspace, &input).await?;
+                        }
+                        KeyAction::ApproveTool => {
+                            if let Some(approval) = app.pending_approval.take() {
+                                app.add_message(Message::system(format!("Approved: {}", approval.name)));
+                                session_manager
+                                    .push_message(session_id, SessionInput::approve_tool(&approval.id))
+                                    .await?;
+                                app.state = AppState::Processing;
+                            }
+                        }
+                        KeyAction::RejectTool => {
+                            if let Some(approval) = app.pending_approval.take() {
+                                app.add_message(Message::system(format!("Rejected: {}", approval.name)));
+                                session_manager
+                                    .push_message(session_id, SessionInput::reject_tool(&approval.id, None))
+                                    .await?;
+                                app.state = AppState::Normal;
+                            }
+                        }
+                        KeyAction::ApproveToolSession => {
+                            if let Some(approval) = app.pending_approval.take() {
+                                app.session_approved_tools.insert(approval.name.clone());
+                                app.add_message(Message::system(format!(
+                                    "Approved '{}' for session",
+                                    approval.name
+                                )));
+                                session_manager
+                                    .push_message(session_id, SessionInput::approve_tool(&approval.id))
+                                    .await?;
+                                app.state = AppState::Processing;
+                            }
+                        }
+                        KeyAction::ApproveAllSession => {
+                            if let Some(approval) = app.pending_approval.take() {
+                                app.approve_all_session = true;
+                                app.add_message(Message::system("All tools approved for session"));
+                                session_manager
+                                    .push_message(session_id, SessionInput::approve_tool(&approval.id))
+                                    .await?;
+                                app.state = AppState::Processing;
+                            }
+                        }
+                        KeyAction::AnswerQuestion => {
+                            if let Some(mut question) = app.pending_question.take() {
+                                // Build answer
+                                let answer = if question.is_other_selected() {
+                                    question.custom_input.take().unwrap_or_default()
+                                } else if let Some(q) = question.current() {
+                                    let selected = question.selected_options
+                                        .get(question.current_question)
+                                        .copied()
+                                        .unwrap_or(0);
+                                    q.options.get(selected)
+                                        .map(|o| o.label.clone())
+                                        .unwrap_or_default()
+                                } else {
+                                    String::new()
+                                };
+
+                                // Store answer
+                                question.answers.insert(
+                                    question.current_question.to_string(),
+                                    answer.clone(),
+                                );
+
+                                // Check if more questions
+                                if question.current_question + 1 < question.questions.len() {
+                                    question.current_question += 1;
+                                    app.pending_question = Some(question);
+                                } else {
+                                    // All questions answered
+                                    app.add_message(Message::system(format!("Answered: {}", answer)));
+                                    session_manager
+                                        .push_message(
+                                            session_id,
+                                            SessionInput::answer_question(
+                                                question.request_id,
+                                                question.answers,
+                                            ),
+                                        )
+                                        .await?;
+                                    app.state = AppState::Processing;
+                                }
+                            }
+                        }
+                        KeyAction::ScrollUp => app.scroll_up(),
+                        KeyAction::ScrollDown => app.scroll_down(),
+                        KeyAction::PageUp => {
+                            for _ in 0..10 {
+                                app.scroll_up();
+                            }
+                        }
+                        KeyAction::PageDown => {
+                            for _ in 0..10 {
+                                app.scroll_down();
+                            }
+                        }
+                        KeyAction::None => {}
+                    }
+                }
+                Event::Terminal(crossterm::event::Event::Resize(_, _)) => {
+                    // Terminal will redraw on next iteration
+                }
+                Event::Session(sid, output) => {
+                    if sid == session_id {
+                        // Check for auto-approval before handling
+                        if let SessionOutput::ToolPending { ref id, ref name, .. } = output {
+                            if app.should_auto_approve(name) {
+                                app.add_message(Message::system(format!("Auto-approved: {}", name)));
+                                session_manager
+                                    .push_message(session_id, SessionInput::approve_tool(id))
+                                    .await?;
+                                // Don't show the approval modal
+                                continue;
+                            }
+                        }
+                        app.handle_session_output(output);
+                    }
+                }
+                Event::Tick => {
+                    // UI refresh tick - nothing to do
+                }
+                _ => {}
+            }
         }
 
-        match output {
-            SessionOutput::Ready => {
-                // Session ready, nothing to display
-            }
-            SessionOutput::Idle => {
-                // Clear spinner if any
-                if let Some(s) = spinner.take() {
-                    s.finish_and_clear();
-                }
-                // Done processing, return to prompt
-                // Flush stdout to ensure all output is visible before readline takes over
-                println!();
-                let _ = std::io::stdout().flush();
-                let _ = std::io::stderr().flush();
-                break;
-            }
-            SessionOutput::UserMessage { .. } => {
-                // User message echo - we already printed it
-            }
-            SessionOutput::Thinking { content } => {
-                // Clear previous spinner if any
-                if let Some(s) = spinner.take() {
-                    s.finish_and_clear();
-                }
-
-                // Display thinking content if available
-                if !content.is_empty() {
-                    println!();
-                    println!("{}", style("┌─ Thinking ──────────────────────────────────────").dim().blue());
-                    // Truncate thinking content for display
-                    let max_lines = 20;
-                    let lines: Vec<&str> = content.lines().collect();
-                    let display_lines = if lines.len() > max_lines {
-                        &lines[..max_lines]
-                    } else {
-                        &lines[..]
-                    };
-                    for line in display_lines {
-                        println!("│ {}", style(line).dim());
-                    }
-                    if lines.len() > max_lines {
-                        println!("│ {}", style(format!("... ({} more lines)", lines.len() - max_lines)).dim().italic());
-                    }
-                    println!("{}", style("└─────────────────────────────────────────────────").dim().blue());
-                }
-
-                // Show spinner for ongoing thinking
-                let s = ProgressBar::new_spinner();
-                s.set_style(
-                    ProgressStyle::default_spinner()
-                        .template("{spinner:.blue} {msg}")
-                        .unwrap(),
-                );
-                s.set_message("Thinking...");
-                s.enable_steady_tick(std::time::Duration::from_millis(100));
-                spinner = Some(s);
-            }
-            SessionOutput::AssistantMessage { content, .. } => {
-                if let Some(s) = spinner.take() {
-                    s.finish_and_clear();
-                }
-                if !content.is_empty() {
-                    println!("{}: {}", style("Assistant").bold().green(), content);
-                }
-            }
-            SessionOutput::ToolStart { name, arguments, .. } => {
-                if let Some(s) = spinner.take() {
-                    s.finish_and_clear();
-                }
-                println!();
-                println!("{}", style("┌─ Tool Executing ────────────────────────────────").dim());
-                println!("│ {} {}", style("Tool:").bold(), style(&name).yellow().bold());
-                let args_str = serde_json::to_string_pretty(&arguments)
-                    .unwrap_or_else(|_| arguments.to_string());
-                for (i, line) in args_str.lines().enumerate() {
-                    if i == 0 {
-                        println!("│ {} {}", style("Args:").bold(), line);
-                    } else {
-                        println!("│       {}", line);
-                    }
-                }
-                println!("{}", style("└─────────────────────────────────────────────────").dim());
-
-                // Show executing spinner
-                let s = ProgressBar::new_spinner();
-                s.set_style(
-                    ProgressStyle::default_spinner()
-                        .template("{spinner:.blue} Executing...")
-                        .unwrap(),
-                );
-                s.enable_steady_tick(std::time::Duration::from_millis(100));
-                spinner = Some(s);
-            }
-            SessionOutput::ToolPending { id, name, arguments, .. } => {
-                if let Some(s) = spinner.take() {
-                    s.finish_and_clear();
-                }
-
-                // Display tool call in a formatted box
-                println!();
-                println!("{}", style("┌─ Tool Call (Needs Approval) ────────────────────").dim());
-                println!("│ {} {}", style("Tool:").bold(), style(&name).yellow().bold());
-                let args_str = serde_json::to_string_pretty(&arguments)
-                    .unwrap_or_else(|_| arguments.to_string());
-                for (i, line) in args_str.lines().enumerate() {
-                    if i == 0 {
-                        println!("│ {} {}", style("Args:").bold(), line);
-                    } else {
-                        println!("│       {}", line);
-                    }
-                }
-                println!("{}", style("└─────────────────────────────────────────────────").dim());
-
-                // Check if should auto-approve based on session state
-                if approval_config.should_auto_approve(&name) {
-                    println!("  {} {}", style("✓").green(), style("Auto-approved").dim());
-                    session_manager
-                        .push_message(session_id, SessionInput::approve_tool(&id))
-                        .await?;
-                } else {
-                    // Need user approval - show options
-                    let options: Vec<String> = vec![
-                        "Yes - approve this call".to_string(),
-                        "No - reject this call".to_string(),
-                        format!("Always - auto-approve '{}' for session", name),
-                        "Approve all - auto-approve everything for session".to_string(),
-                    ];
-
-                    let selection = Select::with_theme(&ColorfulTheme::default())
-                        .with_prompt("Approve?")
-                        .items(&options)
-                        .default(0)
-                        .interact()
-                        .unwrap_or(1); // Default to reject on error
-
-                    match selection {
-                        0 => {
-                            // Yes - approve this call
-                            session_manager
-                                .push_message(session_id, SessionInput::approve_tool(&id))
-                                .await?;
-                        }
-                        1 => {
-                            // No - reject
-                            session_manager
-                                .push_message(session_id, SessionInput::reject_tool(&id, None))
-                                .await?;
-                            println!("  {}", style("✗ Rejected by user").yellow());
-                        }
-                        2 => {
-                            // Always - add to session approved
-                            approval_config.approve_for_session(name.clone());
-                            println!("  {} '{}' will be auto-approved for this session",
-                                style("✓").green(), name);
-                            session_manager
-                                .push_message(session_id, SessionInput::approve_tool(&id))
-                                .await?;
-                        }
-                        3 => {
-                            // Approve all
-                            approval_config.approve_all_for_session();
-                            println!("  {} All tools will be auto-approved for this session",
-                                style("✓").green());
-                            session_manager
-                                .push_message(session_id, SessionInput::approve_tool(&id))
-                                .await?;
-                        }
-                        _ => {
-                            session_manager
-                                .push_message(session_id, SessionInput::reject_tool(&id, None))
-                                .await?;
-                        }
-                    }
-                }
-            }
-            SessionOutput::ToolDone { name, success, .. } => {
-                if let Some(s) = spinner.take() {
-                    s.finish_and_clear();
-                }
-                // Only show status indicator, not the full result
-                if success {
-                    println!("  {} {}", style("✓").green(), style(format!("{} completed", name)).dim());
-                } else {
-                    println!("  {} {}", style("✗").red(), style(format!("{} failed", name)).dim());
-                }
-            }
-            SessionOutput::Question { request_id, questions } => {
-                if let Some(s) = spinner.take() {
-                    s.finish_and_clear();
-                }
-                // Visual separator for question
-                println!();
-                println!("{}", style("┌─ Question ───────────────────────────────────────").bold().cyan());
-                // Handle ask_user_question interactively
-                match handle_questions_interactive(&questions) {
-                    Ok(answers) => {
-                        println!("{}", style("└─────────────────────────────────────────────────").dim().cyan());
-                        session_manager
-                            .push_message(session_id, SessionInput::answer_question(request_id, answers))
-                            .await?;
-                    }
-                    Err(e) => {
-                        println!("{}", style("└─────────────────────────────────────────────────").dim().cyan());
-                        println!("{}", style(format!("Error handling question: {}", e)).red());
-                    }
-                }
-            }
-            SessionOutput::Error { message } => {
-                if let Some(s) = spinner.take() {
-                    s.finish_and_clear();
-                }
-                println!("{}", style(format!("Error: {}", message)).red());
-            }
+        if app.should_quit {
+            break;
         }
     }
 
     Ok(())
 }
 
-/// Handle questions from ask_user_question tool interactively
-fn handle_questions_interactive(
-    questions: &[cowork_core::QuestionInfo],
-) -> Result<std::collections::HashMap<String, String>, String> {
-    let mut answers = std::collections::HashMap::new();
+/// Handle user input (commands and messages)
+async fn handle_user_input(
+    app: &mut App,
+    session_manager: &SessionManager,
+    session_id: &str,
+    workspace: &Path,
+    input: &str,
+) -> anyhow::Result<()> {
+    let input = input.trim();
 
-    for (i, question) in questions.iter().enumerate() {
-        // Build display items with label and description
-        let mut items: Vec<String> = question
-            .options
-            .iter()
-            .map(|opt| {
-                if let Some(ref desc) = opt.description {
-                    format!("{} - {}", opt.label, style(desc).dim())
-                } else {
-                    opt.label.clone()
-                }
-            })
-            .collect();
-
-        // Add "Other" option
-        items.push(format!("{}", style("Other (type custom answer)").italic()));
-
-        // Display the question
-        println!();
-        let header = question.header.as_deref().unwrap_or("Question");
-        println!("{}", style(format!("┌─ {} ─────────────────────────────────────", header)).cyan());
-        println!("│ {}", style(&question.question).bold());
-        println!("{}", style("└─────────────────────────────────────────────────").cyan());
-
-        if question.multi_select {
-            // Multi-select mode
-            let selections = MultiSelect::with_theme(&ColorfulTheme::default())
-                .items(&items)
-                .interact()
-                .map_err(|e| format!("Selection failed: {}", e))?;
-
-            let mut selected_labels: Vec<String> = Vec::new();
-            for idx in selections {
-                if idx == items.len() - 1 {
-                    // "Other" selected - prompt for custom input
-                    let custom: String = Input::with_theme(&ColorfulTheme::default())
-                        .with_prompt("Enter your custom answer")
-                        .interact_text()
-                        .map_err(|e| format!("Input failed: {}", e))?;
-                    selected_labels.push(custom);
-                } else {
-                    selected_labels.push(question.options[idx].label.clone());
+    match input {
+        "/exit" | "/quit" | "/q" => {
+            app.should_quit = true;
+        }
+        "/help" | "/?" => {
+            app.add_message(Message::system("Commands: /exit, /quit, /clear, /tools, /help"));
+            app.add_message(Message::system("Use ! prefix for direct shell commands (e.g., ! ls -la)"));
+            app.add_message(Message::system("Shortcuts: Ctrl+C to quit, Shift+Up/Down to scroll"));
+        }
+        "/tools" => {
+            app.add_message(Message::system("Available tools: read_file, write_file, edit, glob, grep, execute_command, web_fetch, task, and more"));
+        }
+        "/clear" => {
+            let _ = session_manager.stop_session(session_id).await;
+            app.messages.clear();
+            app.add_message(Message::system("Conversation cleared"));
+        }
+        cmd if cmd.starts_with('!') => {
+            // Bash mode: run command directly
+            let command = cmd[1..].trim();
+            if command.is_empty() {
+                app.add_message(Message::system("Usage: ! <command>"));
+            } else {
+                app.add_message(Message::user(format!("! {}", command)));
+                let result = run_bash_command_quiet(workspace, command).await;
+                match result {
+                    Ok(output) => app.add_message(Message::system(output)),
+                    Err(e) => app.add_message(Message::error(e.to_string())),
                 }
             }
-            answers.insert(i.to_string(), selected_labels.join(", "));
-        } else {
-            // Single select mode
-            let selection = Select::with_theme(&ColorfulTheme::default())
-                .items(&items)
-                .default(0)
-                .interact()
-                .map_err(|e| format!("Selection failed: {}", e))?;
+        }
+        _ => {
+            // Regular message to AI
+            app.add_message(Message::user(input));
+            app.state = AppState::Processing;
+            app.status = "Sending...".to_string();
 
-            let answer = if selection == items.len() - 1 {
-                // "Other" selected - prompt for custom input
-                let custom: String = Input::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Enter your custom answer")
-                    .interact_text()
-                    .map_err(|e| format!("Input failed: {}", e))?;
-                custom
-            } else {
-                question.options[selection].label.clone()
-            };
-            answers.insert(i.to_string(), answer);
+            session_manager
+                .push_message(session_id, SessionInput::user_message(input))
+                .await?;
         }
     }
 
-    Ok(answers)
+    Ok(())
 }
 
-/// Handle slash commands
-async fn handle_slash_command(cmd: &str, workspace: &Path, registry: &SkillRegistry) {
-    let result = registry.execute_command(cmd, workspace.to_path_buf()).await;
-    if result.success {
-        println!("{}", result.response);
-    } else {
-        println!(
-            "{}",
-            style(format!("Error: {}", result.error.unwrap_or_default())).red()
-        );
-    }
-}
-
-fn print_help() {
-    println!("{}", style("Built-in Commands:").bold());
-    println!("  {}       - Show this help", style("/help").green());
-    println!("  {}       - Exit the program", style("/exit").green());
-    println!("  {}      - Clear conversation history", style("/clear").green());
-    println!("  {}      - Show available tools", style("/tools").green());
-    println!();
-    println!("{}", style("Bash Mode:").bold());
-    println!(
-        "  {}  - Run shell command directly (bypasses AI)",
-        style("! <command>").green()
-    );
-    println!(
-        "  {}",
-        style("  Examples: ! ls -la, ! git status, ! cat file.txt").dim()
-    );
-    println!();
-    println!("{}", style("Slash Commands (Skills):").bold());
-    println!("  {}      - Create a git commit", style("/commit").green());
-    println!("  {}        - Push to remote", style("/push").green());
-    println!(
-        "  {}   - Create a pull request",
-        style("/pr [title]").green()
-    );
-    println!(
-        "  {}      - Review staged changes",
-        style("/review").green()
-    );
-    println!(
-        "  {}  - Clean up deleted branches",
-        style("/clean-gone").green()
-    );
-    println!();
-    println!(
-        "{}",
-        style("Or just type what you want to do - the AI will help!").dim()
-    );
-}
-
-/// Run a bash command directly (! prefix mode)
-async fn run_bash_command(workspace: &Path, command: &str) -> anyhow::Result<()> {
+/// Run a bash command and return output as string (for TUI mode)
+async fn run_bash_command_quiet(workspace: &Path, command: &str) -> anyhow::Result<String> {
     let tool = ExecuteCommand::new(workspace.to_path_buf());
     let params = serde_json::json!({
         "command": command,
-        "timeout": 120000  // 120 seconds in milliseconds
+        "timeout": 120000
     });
 
-    let result = tool.execute(params).await;
+    let result = tool.execute(params).await?;
 
-    match result {
-        Ok(output) => {
-            if output.success {
-                if let Some(stdout) = output.content.get("stdout")
-                    && let Some(s) = stdout.as_str()
-                        && !s.is_empty() {
-                            println!("{}", s);
-                        }
-                if let Some(stderr) = output.content.get("stderr")
-                    && let Some(s) = stderr.as_str()
-                        && !s.is_empty() {
-                            eprintln!("{}", style(s).yellow());
-                        }
-            } else {
-                if let Some(stderr) = output.content.get("stderr")
-                    && let Some(s) = stderr.as_str()
-                        && !s.is_empty() {
-                            eprintln!("{}", style(s).red());
-                        }
-                if let Some(err) = output.error {
-                    eprintln!("{}", style(err).red());
-                }
+    let mut output = String::new();
+    if result.success {
+        if let Some(stdout) = result.content.get("stdout").and_then(|v| v.as_str()) {
+            if !stdout.is_empty() {
+                output.push_str(stdout);
             }
         }
-        Err(e) => {
-            eprintln!("{}", style(format!("Error: {}", e)).red());
+        if let Some(stderr) = result.content.get("stderr").and_then(|v| v.as_str()) {
+            if !stderr.is_empty() {
+                if !output.is_empty() {
+                    output.push('\n');
+                }
+                output.push_str("[stderr] ");
+                output.push_str(stderr);
+            }
+        }
+    } else {
+        if let Some(stderr) = result.content.get("stderr").and_then(|v| v.as_str()) {
+            output.push_str(stderr);
+        }
+        if let Some(err) = result.error {
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(&err);
         }
     }
 
-    Ok(())
+    if output.is_empty() {
+        output = "Command completed".to_string();
+    }
+
+    Ok(output)
 }
 
 fn show_tools() {

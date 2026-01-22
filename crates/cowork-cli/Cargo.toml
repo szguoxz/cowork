@@ -26,3 +26,10 @@ indicatif = "0.18.3"
 directories = "6.0.0"
 dunce = "1"  # Cross-platform canonicalize without UNC prefix on Windows
 rustyline = { version = "17.0.2", features = ["derive"] }
+
+# TUI dependencies
+ratatui = "0.29"
+crossterm = "0.28"
+tui-input = "0.12"  # Text input widget for ratatui
+unicode-width = "0.2"  # For proper text width calculation
+chrono = "0.4"  # For timestamps
