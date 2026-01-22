@@ -6,6 +6,7 @@
 mod onboarding;
 
 use std::borrow::Cow;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -528,6 +529,10 @@ async fn run_chat(
     let session_id = "cli-session";
 
     loop {
+        // Ensure terminal is in a clean state before readline
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+
         let readline = rl.readline(prompt);
         let input = match readline {
             Ok(line) => line,
@@ -637,7 +642,10 @@ async fn process_outputs_until_idle(
                     s.finish_and_clear();
                 }
                 // Done processing, return to prompt
+                // Flush stdout to ensure all output is visible before readline takes over
                 println!();
+                let _ = std::io::stdout().flush();
+                let _ = std::io::stderr().flush();
                 break;
             }
             SessionOutput::UserMessage { .. } => {
