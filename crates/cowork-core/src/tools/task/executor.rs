@@ -338,6 +338,70 @@ pub fn create_agent_tool_registry(agent_type: &AgentType, workspace: &Path) -> T
     registry
 }
 
+/// Build environment info to append to system prompts
+///
+/// This includes platform, working directory, and other context the agent needs.
+fn build_environment_info(workspace: &Path) -> String {
+    let platform = std::env::consts::OS;
+    let os_version = get_os_version();
+    let is_git_repo = workspace.join(".git").exists();
+
+    format!(
+        r#"
+
+## Environment Information
+Working directory: {}
+Platform: {}
+OS Version: {}
+Is git repo: {}"#,
+        workspace.display(),
+        platform,
+        os_version,
+        if is_git_repo { "Yes" } else { "No" }
+    )
+}
+
+/// Get OS version (cross-platform)
+fn get_os_version() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("uname")
+            .arg("-r")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| format!("Linux {}", s.trim()))
+            .unwrap_or_else(|| "Linux".to_string())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("sw_vers")
+            .arg("-productVersion")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| format!("macOS {}", s.trim()))
+            .unwrap_or_else(|| "macOS".to_string())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "ver"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "Windows".to_string())
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        std::env::consts::OS.to_string()
+    }
+}
+
 /// Execute the main agentic loop for a subagent
 ///
 /// This runs the agent until it completes (returns a message without tool calls)
@@ -357,10 +421,14 @@ pub async fn execute_agent_loop(
     let model_str = get_model_for_tier(model, &config.model_tiers);
 
     // Get system prompt - try registry first, then fall back to hardcoded
-    let system_prompt = get_system_prompt_dynamic(
+    let base_prompt = get_system_prompt_dynamic(
         agent_type,
         config.registry.as_ref().map(|r| r.as_ref()),
     );
+
+    // Append environment info (platform, workspace, etc.) to the system prompt
+    let env_info = build_environment_info(&config.workspace);
+    let system_prompt = format!("{}{}", base_prompt, env_info);
 
     let provider = create_provider(
         config.provider_type,

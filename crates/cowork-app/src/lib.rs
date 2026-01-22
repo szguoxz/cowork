@@ -12,9 +12,55 @@ use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
+use cowork_core::orchestration::SystemPrompt;
+use cowork_core::prompt::TemplateVars;
 use cowork_core::session::{OutputReceiver, SessionConfig, SessionManager, SessionOutput};
 use cowork_core::{AgentRegistry, ApprovalLevel, ConfigManager, Context, Workspace};
 use state::AppState;
+
+/// Build the system prompt with all template variables properly substituted
+fn build_system_prompt(workspace: &std::path::Path, model_info: Option<&str>) -> String {
+    let mut vars = TemplateVars::default();
+    vars.working_directory = workspace.display().to_string();
+    vars.is_git_repo = workspace.join(".git").exists();
+
+    // Get git status if in a repo
+    if vars.is_git_repo {
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["status", "--short", "--branch"])
+            .current_dir(workspace)
+            .output()
+        {
+            vars.git_status = String::from_utf8_lossy(&output.stdout).to_string();
+        }
+
+        // Get current branch
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(workspace)
+            .output()
+        {
+            vars.current_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        }
+
+        // Get recent commits for style reference
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["log", "--oneline", "-5"])
+            .current_dir(workspace)
+            .output()
+        {
+            vars.recent_commits = String::from_utf8_lossy(&output.stdout).to_string();
+        }
+    }
+
+    if let Some(info) = model_info {
+        vars.model_info = info.to_string();
+    }
+
+    SystemPrompt::new()
+        .with_template_vars(vars)
+        .build()
+}
 
 /// Initialize the application state
 ///
@@ -36,12 +82,17 @@ pub fn init_state(
         .parse()
         .unwrap_or(ApprovalLevel::Low);
 
+    // Build system prompt with template variables
+    let model_info = default_provider.as_ref().map(|p| p.model.as_str());
+    let system_prompt = build_system_prompt(&workspace_path, model_info);
+
     // Create session config
     let mut tool_approval_config = cowork_core::ToolApprovalConfig::default();
     tool_approval_config.set_level(approval_level);
 
     let mut session_config = SessionConfig::new(workspace_path.clone())
-        .with_approval_config(tool_approval_config);
+        .with_approval_config(tool_approval_config)
+        .with_system_prompt(system_prompt);
 
     // Use configured provider if available
     if let Some(ref provider_config) = default_provider {

@@ -143,7 +143,7 @@ impl Default for TemplateVars {
             working_directory: String::new(),
             is_git_repo: false,
             platform: std::env::consts::OS.to_string(),
-            os_version: String::new(),
+            os_version: get_os_version(),
             current_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
             current_year: chrono::Local::now().format("%Y").to_string(),
             model_info: String::new(),
@@ -154,6 +154,49 @@ impl Default for TemplateVars {
             main_branch: "main".to_string(),
             recent_commits: String::new(),
         }
+    }
+}
+
+/// Get the OS version string (cross-platform)
+fn get_os_version() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        // Try to get Linux kernel version
+        std::process::Command::new("uname")
+            .arg("-r")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| format!("Linux {}", s.trim()))
+            .unwrap_or_else(|| "Linux".to_string())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("sw_vers")
+            .arg("-productVersion")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| format!("macOS {}", s.trim()))
+            .unwrap_or_else(|| "macOS".to_string())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Get Windows version from ver command
+        std::process::Command::new("cmd")
+            .args(["/C", "ver"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "Windows".to_string())
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        std::env::consts::OS.to_string()
     }
 }
 

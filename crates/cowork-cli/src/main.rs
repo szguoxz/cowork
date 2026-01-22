@@ -26,7 +26,8 @@ use cowork_core::mcp_manager::McpServerManager;
 use cowork_core::provider::{
     has_api_key_configured, ProviderType,
 };
-use cowork_core::prompt::ComponentRegistry;
+use cowork_core::orchestration::SystemPrompt;
+use cowork_core::prompt::{ComponentRegistry, TemplateVars};
 use cowork_core::session::{SessionConfig, SessionInput, SessionManager, SessionOutput};
 use cowork_core::ToolApprovalConfig;
 use cowork_core::skills::SkillRegistry;
@@ -276,6 +277,50 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Build the system prompt with all template variables properly substituted
+fn build_system_prompt(workspace: &Path, model_info: Option<&str>) -> String {
+    let mut vars = TemplateVars::default();
+    vars.working_directory = workspace.display().to_string();
+    vars.is_git_repo = workspace.join(".git").exists();
+
+    // Get git status if in a repo
+    if vars.is_git_repo {
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["status", "--short", "--branch"])
+            .current_dir(workspace)
+            .output()
+        {
+            vars.git_status = String::from_utf8_lossy(&output.stdout).to_string();
+        }
+
+        // Get current branch
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(workspace)
+            .output()
+        {
+            vars.current_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        }
+
+        // Get recent commits for style reference
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["log", "--oneline", "-5"])
+            .current_dir(workspace)
+            .output()
+        {
+            vars.recent_commits = String::from_utf8_lossy(&output.stdout).to_string();
+        }
+    }
+
+    if let Some(info) = model_info {
+        vars.model_info = info.to_string();
+    }
+
+    SystemPrompt::new()
+        .with_template_vars(vars)
+        .build()
+}
+
 /// Run a single prompt non-interactively (for scripting/testing)
 async fn run_one_shot(
     workspace: &Path,
@@ -297,10 +342,14 @@ async fn run_one_shot(
         ToolApprovalConfig::default()
     };
 
+    // Build system prompt with template variables
+    let system_prompt = build_system_prompt(&workspace, model.as_deref());
+
     // Create session config
     let mut session_config = SessionConfig::new(workspace.clone())
         .with_provider(provider_type)
-        .with_approval_config(approval_config.clone());
+        .with_approval_config(approval_config.clone())
+        .with_system_prompt(system_prompt);
     if let Some(ref m) = model {
         session_config = session_config.with_model(m.clone());
     }
@@ -438,10 +487,14 @@ async fn run_chat(
         ToolApprovalConfig::default()
     };
 
+    // Build system prompt with template variables
+    let system_prompt = build_system_prompt(&workspace_path, model.as_deref());
+
     // Create session config
     let mut session_config = SessionConfig::new(workspace_path.clone())
         .with_provider(provider_type)
-        .with_approval_config(approval_config.clone());
+        .with_approval_config(approval_config.clone())
+        .with_system_prompt(system_prompt);
     if let Some(ref m) = model {
         session_config = session_config.with_model(m.clone());
     }
