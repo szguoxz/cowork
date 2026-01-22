@@ -19,8 +19,6 @@ use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Config, Editor, Helper};
-use tokio::sync::mpsc;
-
 use onboarding::OnboardingWizard;
 
 use cowork_core::config::ConfigManager;
@@ -453,251 +451,6 @@ async fn run_chat(
 
     // Create session manager
     let (session_manager, mut output_rx) = SessionManager::new(session_config);
-    let session_manager = Arc::new(session_manager);
-
-    // Channel for sending approval decisions back to the output handler
-    let (approval_tx, mut approval_rx) = mpsc::channel::<ApprovalDecision>(16);
-
-    // Spawn output handler task
-    let session_manager_clone = session_manager.clone();
-    let output_handle = tokio::spawn(async move {
-        // Approval config owned by this task - no mutex needed
-        let mut spinner: Option<ProgressBar> = None;
-
-        loop {
-            tokio::select! {
-                // Handle session outputs
-                output = output_rx.recv() => {
-                    match output {
-                        Some((session_id, output)) => {
-                            match output {
-                                SessionOutput::Ready => {
-                                    // Session ready, nothing to display
-                                }
-                                SessionOutput::Idle => {
-                                    // Clear spinner if any
-                                    if let Some(s) = spinner.take() {
-                                        s.finish_and_clear();
-                                    }
-                                    // Print prompt hint since readline's prompt may have been overwritten
-                                    print!("\n{} ", style("You>").bold());
-                                    use std::io::Write;
-                                    let _ = std::io::stdout().flush();
-                                }
-                                SessionOutput::UserMessage { .. } => {
-                                    // User message echo - we already printed it
-                                }
-                                SessionOutput::Thinking { content } => {
-                                    // Clear previous spinner if any
-                                    if let Some(s) = spinner.take() {
-                                        s.finish_and_clear();
-                                    }
-
-                                    // Display thinking content if available
-                                    if !content.is_empty() {
-                                        println!();
-                                        println!("{}", style("┌─ Thinking ──────────────────────────────────────").dim().blue());
-                                        // Truncate thinking content for display
-                                        let max_lines = 20;
-                                        let lines: Vec<&str> = content.lines().collect();
-                                        let display_lines = if lines.len() > max_lines {
-                                            &lines[..max_lines]
-                                        } else {
-                                            &lines[..]
-                                        };
-                                        for line in display_lines {
-                                            println!("│ {}", style(line).dim());
-                                        }
-                                        if lines.len() > max_lines {
-                                            println!("│ {}", style(format!("... ({} more lines)", lines.len() - max_lines)).dim().italic());
-                                        }
-                                        println!("{}", style("└─────────────────────────────────────────────────").dim().blue());
-                                    }
-
-                                    // Show spinner for ongoing thinking
-                                    let s = ProgressBar::new_spinner();
-                                    s.set_style(
-                                        ProgressStyle::default_spinner()
-                                            .template("{spinner:.blue} {msg}")
-                                            .unwrap(),
-                                    );
-                                    s.set_message("Thinking...");
-                                    s.enable_steady_tick(std::time::Duration::from_millis(100));
-                                    spinner = Some(s);
-                                }
-                                SessionOutput::AssistantMessage { content, .. } => {
-                                    if let Some(s) = spinner.take() {
-                                        s.finish_and_clear();
-                                    }
-                                    if !content.is_empty() {
-                                        println!("{}: {}", style("Assistant").bold().green(), content);
-                                    }
-                                }
-                                SessionOutput::ToolStart { name, arguments, .. } => {
-                                    if let Some(s) = spinner.take() {
-                                        s.finish_and_clear();
-                                    }
-                                    println!();
-                                    println!("{}", style("┌─ Tool Executing ────────────────────────────────").dim());
-                                    println!("│ {} {}", style("Tool:").bold(), style(&name).yellow().bold());
-                                    let args_str = serde_json::to_string_pretty(&arguments)
-                                        .unwrap_or_else(|_| arguments.to_string());
-                                    for (i, line) in args_str.lines().enumerate() {
-                                        if i == 0 {
-                                            println!("│ {} {}", style("Args:").bold(), line);
-                                        } else {
-                                            println!("│       {}", line);
-                                        }
-                                    }
-                                    println!("{}", style("└─────────────────────────────────────────────────").dim());
-
-                                    // Show executing spinner
-                                    let s = ProgressBar::new_spinner();
-                                    s.set_style(
-                                        ProgressStyle::default_spinner()
-                                            .template("{spinner:.blue} Executing...")
-                                            .unwrap(),
-                                    );
-                                    s.enable_steady_tick(std::time::Duration::from_millis(100));
-                                    spinner = Some(s);
-                                }
-                                SessionOutput::ToolPending { id, name, arguments, .. } => {
-                                    if let Some(s) = spinner.take() {
-                                        s.finish_and_clear();
-                                    }
-
-                                    // Display tool call in a formatted box
-                                    println!();
-                                    println!("{}", style("┌─ Tool Call (Needs Approval) ────────────────────").dim());
-                                    println!("│ {} {}", style("Tool:").bold(), style(&name).yellow().bold());
-                                    let args_str = serde_json::to_string_pretty(&arguments)
-                                        .unwrap_or_else(|_| arguments.to_string());
-                                    for (i, line) in args_str.lines().enumerate() {
-                                        if i == 0 {
-                                            println!("│ {} {}", style("Args:").bold(), line);
-                                        } else {
-                                            println!("│       {}", line);
-                                        }
-                                    }
-                                    println!("{}", style("└─────────────────────────────────────────────────").dim());
-
-                                    // Check if should auto-approve based on session state
-                                    if approval_config.should_auto_approve(&name) {
-                                        println!("  {} {}", style("✓").green(), style("Auto-approved").dim());
-                                        let _ = session_manager_clone
-                                            .push_message(&session_id, SessionInput::approve_tool(&id))
-                                            .await;
-                                    } else {
-                                        // Need user approval - show options
-                                        let options: Vec<String> = vec![
-                                            "Yes - approve this call".to_string(),
-                                            "No - reject this call".to_string(),
-                                            format!("Always - auto-approve '{}' for session", name),
-                                            "Approve all - auto-approve everything for session".to_string(),
-                                        ];
-
-                                        let selection = Select::with_theme(&ColorfulTheme::default())
-                                            .with_prompt("Approve?")
-                                            .items(&options)
-                                            .default(0)
-                                            .interact()
-                                            .unwrap_or(1); // Default to reject on error
-
-                                        match selection {
-                                            0 => {
-                                                // Yes - approve this call
-                                                let _ = session_manager_clone
-                                                    .push_message(&session_id, SessionInput::approve_tool(&id))
-                                                    .await;
-                                            }
-                                            1 => {
-                                                // No - reject
-                                                let _ = session_manager_clone
-                                                    .push_message(&session_id, SessionInput::reject_tool(&id, None))
-                                                    .await;
-                                                println!("  {}", style("✗ Rejected by user").yellow());
-                                            }
-                                            2 => {
-                                                // Always - add to session approved
-                                                approval_config.approve_for_session(name.clone());
-                                                println!("  {} '{}' will be auto-approved for this session",
-                                                    style("✓").green(), name);
-                                                let _ = session_manager_clone
-                                                    .push_message(&session_id, SessionInput::approve_tool(&id))
-                                                    .await;
-                                            }
-                                            3 => {
-                                                // Approve all
-                                                approval_config.approve_all_for_session();
-                                                println!("  {} All tools will be auto-approved for this session",
-                                                    style("✓").green());
-                                                let _ = session_manager_clone
-                                                    .push_message(&session_id, SessionInput::approve_tool(&id))
-                                                    .await;
-                                            }
-                                            _ => {
-                                                let _ = session_manager_clone
-                                                    .push_message(&session_id, SessionInput::reject_tool(&id, None))
-                                                    .await;
-                                            }
-                                        }
-                                    }
-                                }
-                                SessionOutput::ToolDone { name, success, .. } => {
-                                    if let Some(s) = spinner.take() {
-                                        s.finish_and_clear();
-                                    }
-                                    // Only show status indicator, not the full result
-                                    if success {
-                                        println!("  {} {}", style("✓").green(), style(format!("{} completed", name)).dim());
-                                    } else {
-                                        println!("  {} {}", style("✗").red(), style(format!("{} failed", name)).dim());
-                                    }
-                                }
-                                SessionOutput::Question { request_id, questions } => {
-                                    if let Some(s) = spinner.take() {
-                                        s.finish_and_clear();
-                                    }
-                                    // Visual separator for question
-                                    println!();
-                                    println!("{}", style("┌─ Question ───────────────────────────────────────").bold().cyan());
-                                    // Handle ask_user_question interactively
-                                    match handle_questions_interactive(&questions) {
-                                        Ok(answers) => {
-                                            println!("{}", style("└─────────────────────────────────────────────────").dim().cyan());
-                                            let _ = session_manager_clone
-                                                .push_message(&session_id, SessionInput::answer_question(request_id, answers))
-                                                .await;
-                                        }
-                                        Err(e) => {
-                                            println!("{}", style("└─────────────────────────────────────────────────").dim().cyan());
-                                            println!("{}", style(format!("Error handling question: {}", e)).red());
-                                        }
-                                    }
-                                }
-                                SessionOutput::Error { message } => {
-                                    if let Some(s) = spinner.take() {
-                                        s.finish_and_clear();
-                                    }
-                                    println!("{}", style(format!("Error: {}", message)).red());
-                                }
-                            }
-                        }
-                        None => {
-                            // Channel closed - session ended
-                            break;
-                        }
-                    }
-                }
-                // Handle approval decisions from main thread
-                decision = approval_rx.recv() => {
-                    if decision.is_none() {
-                        break;
-                    }
-                }
-            }
-        }
-    });
 
     // Set up readline with history and slash command completion
     let rl_config = Config::builder()
@@ -781,16 +534,20 @@ async fn run_chat(
                 session_manager
                     .push_message(session_id, SessionInput::user_message(input))
                     .await?;
+
+                // Process outputs until Idle (blocking single-threaded design)
+                process_outputs_until_idle(
+                    &session_manager,
+                    session_id,
+                    &mut output_rx,
+                    &mut approval_config,
+                ).await?;
             }
         }
-
-        println!();
     }
 
     // Stop session and clean up
     let _ = session_manager.stop_all().await;
-    drop(approval_tx);
-    let _ = output_handle.await;
 
     // Save history on exit
     if let Some(parent) = history_path.parent() {
@@ -801,13 +558,235 @@ async fn run_chat(
     Ok(())
 }
 
-/// Approval decision from user
-#[derive(Debug)]
-enum ApprovalDecision {
-    #[allow(dead_code)]
-    Approve(String),
-    #[allow(dead_code)]
-    Reject(String, Option<String>),
+/// Process session outputs until Idle is received (blocking single-threaded design)
+async fn process_outputs_until_idle(
+    session_manager: &SessionManager,
+    session_id: &str,
+    output_rx: &mut cowork_core::session::OutputReceiver,
+    approval_config: &mut ToolApprovalConfig,
+) -> anyhow::Result<()> {
+    let mut spinner: Option<ProgressBar> = None;
+
+    while let Some((sid, output)) = output_rx.recv().await {
+        // Only process outputs for our session
+        if sid != session_id {
+            continue;
+        }
+
+        match output {
+            SessionOutput::Ready => {
+                // Session ready, nothing to display
+            }
+            SessionOutput::Idle => {
+                // Clear spinner if any
+                if let Some(s) = spinner.take() {
+                    s.finish_and_clear();
+                }
+                // Done processing, return to prompt
+                println!();
+                break;
+            }
+            SessionOutput::UserMessage { .. } => {
+                // User message echo - we already printed it
+            }
+            SessionOutput::Thinking { content } => {
+                // Clear previous spinner if any
+                if let Some(s) = spinner.take() {
+                    s.finish_and_clear();
+                }
+
+                // Display thinking content if available
+                if !content.is_empty() {
+                    println!();
+                    println!("{}", style("┌─ Thinking ──────────────────────────────────────").dim().blue());
+                    // Truncate thinking content for display
+                    let max_lines = 20;
+                    let lines: Vec<&str> = content.lines().collect();
+                    let display_lines = if lines.len() > max_lines {
+                        &lines[..max_lines]
+                    } else {
+                        &lines[..]
+                    };
+                    for line in display_lines {
+                        println!("│ {}", style(line).dim());
+                    }
+                    if lines.len() > max_lines {
+                        println!("│ {}", style(format!("... ({} more lines)", lines.len() - max_lines)).dim().italic());
+                    }
+                    println!("{}", style("└─────────────────────────────────────────────────").dim().blue());
+                }
+
+                // Show spinner for ongoing thinking
+                let s = ProgressBar::new_spinner();
+                s.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.blue} {msg}")
+                        .unwrap(),
+                );
+                s.set_message("Thinking...");
+                s.enable_steady_tick(std::time::Duration::from_millis(100));
+                spinner = Some(s);
+            }
+            SessionOutput::AssistantMessage { content, .. } => {
+                if let Some(s) = spinner.take() {
+                    s.finish_and_clear();
+                }
+                if !content.is_empty() {
+                    println!("{}: {}", style("Assistant").bold().green(), content);
+                }
+            }
+            SessionOutput::ToolStart { name, arguments, .. } => {
+                if let Some(s) = spinner.take() {
+                    s.finish_and_clear();
+                }
+                println!();
+                println!("{}", style("┌─ Tool Executing ────────────────────────────────").dim());
+                println!("│ {} {}", style("Tool:").bold(), style(&name).yellow().bold());
+                let args_str = serde_json::to_string_pretty(&arguments)
+                    .unwrap_or_else(|_| arguments.to_string());
+                for (i, line) in args_str.lines().enumerate() {
+                    if i == 0 {
+                        println!("│ {} {}", style("Args:").bold(), line);
+                    } else {
+                        println!("│       {}", line);
+                    }
+                }
+                println!("{}", style("└─────────────────────────────────────────────────").dim());
+
+                // Show executing spinner
+                let s = ProgressBar::new_spinner();
+                s.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.blue} Executing...")
+                        .unwrap(),
+                );
+                s.enable_steady_tick(std::time::Duration::from_millis(100));
+                spinner = Some(s);
+            }
+            SessionOutput::ToolPending { id, name, arguments, .. } => {
+                if let Some(s) = spinner.take() {
+                    s.finish_and_clear();
+                }
+
+                // Display tool call in a formatted box
+                println!();
+                println!("{}", style("┌─ Tool Call (Needs Approval) ────────────────────").dim());
+                println!("│ {} {}", style("Tool:").bold(), style(&name).yellow().bold());
+                let args_str = serde_json::to_string_pretty(&arguments)
+                    .unwrap_or_else(|_| arguments.to_string());
+                for (i, line) in args_str.lines().enumerate() {
+                    if i == 0 {
+                        println!("│ {} {}", style("Args:").bold(), line);
+                    } else {
+                        println!("│       {}", line);
+                    }
+                }
+                println!("{}", style("└─────────────────────────────────────────────────").dim());
+
+                // Check if should auto-approve based on session state
+                if approval_config.should_auto_approve(&name) {
+                    println!("  {} {}", style("✓").green(), style("Auto-approved").dim());
+                    session_manager
+                        .push_message(session_id, SessionInput::approve_tool(&id))
+                        .await?;
+                } else {
+                    // Need user approval - show options
+                    let options: Vec<String> = vec![
+                        "Yes - approve this call".to_string(),
+                        "No - reject this call".to_string(),
+                        format!("Always - auto-approve '{}' for session", name),
+                        "Approve all - auto-approve everything for session".to_string(),
+                    ];
+
+                    let selection = Select::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Approve?")
+                        .items(&options)
+                        .default(0)
+                        .interact()
+                        .unwrap_or(1); // Default to reject on error
+
+                    match selection {
+                        0 => {
+                            // Yes - approve this call
+                            session_manager
+                                .push_message(session_id, SessionInput::approve_tool(&id))
+                                .await?;
+                        }
+                        1 => {
+                            // No - reject
+                            session_manager
+                                .push_message(session_id, SessionInput::reject_tool(&id, None))
+                                .await?;
+                            println!("  {}", style("✗ Rejected by user").yellow());
+                        }
+                        2 => {
+                            // Always - add to session approved
+                            approval_config.approve_for_session(name.clone());
+                            println!("  {} '{}' will be auto-approved for this session",
+                                style("✓").green(), name);
+                            session_manager
+                                .push_message(session_id, SessionInput::approve_tool(&id))
+                                .await?;
+                        }
+                        3 => {
+                            // Approve all
+                            approval_config.approve_all_for_session();
+                            println!("  {} All tools will be auto-approved for this session",
+                                style("✓").green());
+                            session_manager
+                                .push_message(session_id, SessionInput::approve_tool(&id))
+                                .await?;
+                        }
+                        _ => {
+                            session_manager
+                                .push_message(session_id, SessionInput::reject_tool(&id, None))
+                                .await?;
+                        }
+                    }
+                }
+            }
+            SessionOutput::ToolDone { name, success, .. } => {
+                if let Some(s) = spinner.take() {
+                    s.finish_and_clear();
+                }
+                // Only show status indicator, not the full result
+                if success {
+                    println!("  {} {}", style("✓").green(), style(format!("{} completed", name)).dim());
+                } else {
+                    println!("  {} {}", style("✗").red(), style(format!("{} failed", name)).dim());
+                }
+            }
+            SessionOutput::Question { request_id, questions } => {
+                if let Some(s) = spinner.take() {
+                    s.finish_and_clear();
+                }
+                // Visual separator for question
+                println!();
+                println!("{}", style("┌─ Question ───────────────────────────────────────").bold().cyan());
+                // Handle ask_user_question interactively
+                match handle_questions_interactive(&questions) {
+                    Ok(answers) => {
+                        println!("{}", style("└─────────────────────────────────────────────────").dim().cyan());
+                        session_manager
+                            .push_message(session_id, SessionInput::answer_question(request_id, answers))
+                            .await?;
+                    }
+                    Err(e) => {
+                        println!("{}", style("└─────────────────────────────────────────────────").dim().cyan());
+                        println!("{}", style(format!("Error handling question: {}", e)).red());
+                    }
+                }
+            }
+            SessionOutput::Error { message } => {
+                if let Some(s) = spinner.take() {
+                    s.finish_and_clear();
+                }
+                println!("{}", style(format!("Error: {}", message)).red());
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Handle questions from ask_user_question tool interactively
