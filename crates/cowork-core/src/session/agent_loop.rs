@@ -28,6 +28,11 @@ use crate::tools::{ToolDefinition, ToolRegistry};
 /// Maximum number of agentic turns per user message
 const MAX_ITERATIONS: usize = 100;
 
+/// Maximum size for a single tool result in characters
+/// This prevents a single tool output from exceeding the context limit
+/// ~30k chars ≈ ~10k tokens, leaving room for conversation history
+const MAX_TOOL_RESULT_SIZE: usize = 30_000;
+
 /// Result from an LLM call
 struct LlmCallResult {
     content: Option<String>,
@@ -503,17 +508,28 @@ impl AgentLoop {
                 output
             };
 
-            // Emit tool done
+            // Truncate large results to prevent context overflow
+            let truncated_output = truncate_tool_result(&final_output, MAX_TOOL_RESULT_SIZE);
+            if truncated_output.len() < final_output.len() {
+                info!(
+                    "Truncated {} result from {} to {} chars",
+                    tool_call.name,
+                    final_output.len(),
+                    truncated_output.len()
+                );
+            }
+
+            // Emit tool done (with truncated output for display too)
             self.emit(SessionOutput::tool_done(
                 &tool_call.id,
                 &tool_call.name,
                 success,
-                final_output.clone(),
+                truncated_output.clone(),
             ))
             .await;
 
-            // Collect result for batching
-            results.push((tool_call.id.clone(), final_output, !success));
+            // Collect result for batching (truncated to prevent context overflow)
+            results.push((tool_call.id.clone(), truncated_output, !success));
         }
 
         // Add all tool results as a single batched message
@@ -584,16 +600,27 @@ impl AgentLoop {
             final_result.1 = format!("{}\n\n<post-tool-hook>\n{}\n</post-tool-hook>", result.1, additional_context);
         }
 
-        // Add tool result to session with proper error flag
-        let is_error = !final_result.0;
-        self.session.add_tool_result_with_error(&tool_call.id, &final_result.1, is_error);
+        // Truncate large results to prevent context overflow
+        let truncated_result = truncate_tool_result(&final_result.1, MAX_TOOL_RESULT_SIZE);
+        if truncated_result.len() < final_result.1.len() {
+            info!(
+                "Truncated {} result from {} to {} chars",
+                tool_call.name,
+                final_result.1.len(),
+                truncated_result.len()
+            );
+        }
 
-        // Emit tool done
+        // Add tool result to session with proper error flag (truncated to prevent context overflow)
+        let is_error = !final_result.0;
+        self.session.add_tool_result_with_error(&tool_call.id, &truncated_result, is_error);
+
+        // Emit tool done (with truncated result)
         self.emit(SessionOutput::tool_done(
             &tool_call.id,
             &tool_call.name,
             final_result.0,
-            final_result.1,
+            truncated_result,
         ))
         .await;
     }
@@ -1051,6 +1078,32 @@ pub fn list_saved_sessions() -> Result<Vec<SavedSession>> {
     // Sort by updated_at descending (most recent first)
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     Ok(sessions)
+}
+
+/// Truncate a tool result to prevent context overflow
+///
+/// Large tool outputs (e.g., listing 3000+ files) can exceed the model's
+/// context limit in a single response. This function truncates results
+/// to a safe size while preserving useful information.
+fn truncate_tool_result(result: &str, max_size: usize) -> String {
+    if result.len() <= max_size {
+        return result.to_string();
+    }
+
+    // Find a safe truncation point (avoid cutting mid-character)
+    let truncate_at = result
+        .char_indices()
+        .take_while(|(i, _)| *i < max_size)
+        .last()
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(max_size);
+
+    format!(
+        "{}...\n\n[Result truncated - {} chars total, showing first {}]",
+        &result[..truncate_at],
+        result.len(),
+        truncate_at
+    )
 }
 
 #[cfg(test)]

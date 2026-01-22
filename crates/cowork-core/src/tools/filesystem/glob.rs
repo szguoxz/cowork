@@ -40,6 +40,10 @@ impl Tool for GlobFiles {
                 "path": {
                     "type": "string",
                     "description": "The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of files to return (default: 100). Use a smaller limit for large directories to avoid context overflow."
                 }
             },
             "required": ["pattern"]

@@ -2,6 +2,14 @@
 //!
 //! Uses the genai framework to support multiple LLM providers with manual tool control.
 //! This gives us the ability to implement approval flows for tool execution.
+//!
+//! ## LLM Request/Response Logging
+//!
+//! Set the `LLM_LOG_FILE` environment variable to enable detailed logging of all
+//! LLM requests and responses to a JSON file. This is useful for debugging context
+//! issues, token usage, and model behavior.
+//!
+//! Example: `LLM_LOG_FILE=/tmp/llm.log cowork`
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -9,10 +17,79 @@ use genai::chat::{ChatMessage, ChatRequest, ChatStreamEvent, Tool, ToolCall, Too
 use genai::resolver::{AuthData, AuthResolver};
 use genai::Client;
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use tokio::sync::mpsc;
+use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
 use crate::tools::ToolDefinition;
+
+/// Log LLM request/response to file if LLM_LOG_FILE is set
+fn log_llm_interaction(
+    model: &str,
+    messages: &[LlmMessage],
+    tools: Option<&[ToolDefinition]>,
+    result: Option<&CompletionResult>,
+    error: Option<&str>,
+) {
+    let log_file = match std::env::var("LLM_LOG_FILE") {
+        Ok(path) => path,
+        Err(_) => return, // No logging if env var not set
+    };
+
+    let entry = serde_json::json!({
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "model": model,
+        "request": {
+            "messages": messages,
+            "message_count": messages.len(),
+            "tools": tools.map(|t| t.iter().map(|tool| &tool.name).collect::<Vec<_>>()),
+            "tool_count": tools.map(|t| t.len()).unwrap_or(0),
+            // Estimate request size
+            "estimated_chars": messages.iter()
+                .map(|m| m.content_as_text().len())
+                .sum::<usize>(),
+        },
+        "response": result.map(|r| match r {
+            CompletionResult::Message(content) => serde_json::json!({
+                "type": "message",
+                "content_length": content.len(),
+                "content_preview": if content.len() > 500 {
+                    format!("{}...", &content[..500])
+                } else {
+                    content.clone()
+                }
+            }),
+            CompletionResult::ToolCalls(calls) => serde_json::json!({
+                "type": "tool_calls",
+                "calls": calls.iter().map(|c| serde_json::json!({
+                    "name": c.name,
+                    "call_id": c.call_id,
+                    "arguments": c.arguments
+                })).collect::<Vec<_>>()
+            }),
+        }),
+        "error": error,
+    });
+
+    // Append to log file
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+    {
+        Ok(mut file) => {
+            if let Err(e) = writeln!(file, "{}", serde_json::to_string(&entry).unwrap_or_default()) {
+                warn!("Failed to write to LLM log file: {}", e);
+            }
+        }
+        Err(e) => {
+            warn!("Failed to open LLM log file {}: {}", log_file, e);
+        }
+    }
+
+    debug!("Logged LLM interaction to {}", log_file);
+}
 
 use super::{ContentBlock, LlmMessage, LlmProvider, LlmRequest, LlmResponse, MessageContent, TokenUsage};
 
@@ -379,6 +456,10 @@ impl GenAIProvider {
         messages: Vec<LlmMessage>,
         tools: Option<Vec<ToolDefinition>>,
     ) -> Result<CompletionResult> {
+        // Keep copies for logging
+        let messages_for_log = messages.clone();
+        let tools_for_log = tools.clone();
+
         let mut chat_req = ChatRequest::default();
 
         // Add system prompt if set
@@ -431,18 +512,45 @@ impl GenAIProvider {
         let chat_res = self
             .client
             .exec_chat(&self.model, chat_req, None)
-            .await
-            .map_err(|e| Error::Provider(format!("GenAI error: {}", e)))?;
+            .await;
 
-        // Check for tool calls first (need to clone since into_tool_calls consumes)
-        let tool_calls = chat_res.clone().into_tool_calls();
-        if !tool_calls.is_empty() {
-            let pending: Vec<PendingToolCall> = tool_calls.into_iter().map(Into::into).collect();
-            Ok(CompletionResult::ToolCalls(pending))
-        } else {
-            // Get text content
-            let content = chat_res.first_text().unwrap_or("").to_string();
-            Ok(CompletionResult::Message(content))
+        // Handle result and log
+        match chat_res {
+            Ok(res) => {
+                // Check for tool calls first (need to clone since into_tool_calls consumes)
+                let tool_calls = res.clone().into_tool_calls();
+                let result = if !tool_calls.is_empty() {
+                    let pending: Vec<PendingToolCall> = tool_calls.into_iter().map(Into::into).collect();
+                    CompletionResult::ToolCalls(pending)
+                } else {
+                    // Get text content
+                    let content = res.first_text().unwrap_or("").to_string();
+                    CompletionResult::Message(content)
+                };
+
+                // Log successful interaction
+                log_llm_interaction(
+                    &self.model,
+                    &messages_for_log,
+                    tools_for_log.as_deref(),
+                    Some(&result),
+                    None,
+                );
+
+                Ok(result)
+            }
+            Err(e) => {
+                let error_msg = format!("GenAI error: {}", e);
+                // Log failed interaction
+                log_llm_interaction(
+                    &self.model,
+                    &messages_for_log,
+                    tools_for_log.as_deref(),
+                    None,
+                    Some(&error_msg),
+                );
+                Err(Error::Provider(error_msg))
+            }
         }
     }
 

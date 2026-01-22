@@ -47,6 +47,11 @@ impl Tool for ListDirectory {
                     "type": "boolean",
                     "description": "Include hidden files (starting with .)",
                     "default": false
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of entries to return (default: 200). Use a smaller limit for large directories.",
+                    "default": 200
                 }
             }
         })
@@ -57,11 +62,13 @@ impl Tool for ListDirectory {
             let path_str = params["path"].as_str().unwrap_or(".");
             let recursive = params["recursive"].as_bool().unwrap_or(false);
             let include_hidden = params["include_hidden"].as_bool().unwrap_or(false);
+            let limit = params["limit"].as_u64().unwrap_or(200) as usize;
 
             let path = self.workspace.join(path_str);
             let validated = validate_path(&path, &self.workspace)?;
 
             let mut entries = Vec::new();
+            let mut total_found = 0usize;
 
             if recursive {
                 for entry in walkdir::WalkDir::new(&validated)
@@ -71,6 +78,11 @@ impl Tool for ListDirectory {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if !include_hidden && name.starts_with('.') {
                         continue;
+                    }
+
+                    total_found += 1;
+                    if entries.len() >= limit {
+                        continue; // Keep counting but don't add more
                     }
 
                     let metadata = entry.metadata().ok();
@@ -92,6 +104,11 @@ impl Tool for ListDirectory {
                         continue;
                     }
 
+                    total_found += 1;
+                    if entries.len() >= limit {
+                        continue; // Keep counting but don't add more
+                    }
+
                     let metadata = entry.metadata().await.ok();
                     let file_type = entry.file_type().await.ok();
 
@@ -106,9 +123,17 @@ impl Tool for ListDirectory {
                 }
             }
 
+            let truncated = total_found > limit;
             Ok(ToolOutput::success(json!({
                 "entries": entries,
-                "count": entries.len()
+                "count": entries.len(),
+                "total_found": total_found,
+                "truncated": truncated,
+                "message": if truncated {
+                    format!("Showing {} of {} entries. Use a larger limit or filter by pattern.", entries.len(), total_found)
+                } else {
+                    String::new()
+                }
             })))
         })
     }
