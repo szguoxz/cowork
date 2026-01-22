@@ -202,14 +202,14 @@ impl ToolApprovalConfig {
 
         // Read-only file operations (PascalCase tool names)
         auto_approve.insert("Read".to_string());
-        auto_approve.insert("list_directory".to_string());
-        auto_approve.insert("search_files".to_string());
+        auto_approve.insert("ListDirectory".to_string());
+        auto_approve.insert("SearchFiles".to_string());
         auto_approve.insert("Glob".to_string());
         auto_approve.insert("Grep".to_string());
 
         // Document parsing (read-only)
-        auto_approve.insert("read_pdf".to_string());
-        auto_approve.insert("read_office_doc".to_string());
+        auto_approve.insert("ReadPdf".to_string());
+        auto_approve.insert("ReadOfficeDoc".to_string());
 
         // Web operations (read-only)
         auto_approve.insert("WebFetch".to_string());
@@ -226,14 +226,14 @@ impl ToolApprovalConfig {
         auto_approve.insert("AskUserQuestion".to_string());
 
         // Browser read-only operations
-        auto_approve.insert("browser_get_page_content".to_string());
-        auto_approve.insert("browser_screenshot".to_string());
+        auto_approve.insert("BrowserGetContent".to_string());
+        auto_approve.insert("BrowserScreenshot".to_string());
 
         // Destructive tools that always require approval
         let mut always_require = std::collections::HashSet::new();
         always_require.insert("Write".to_string());
         always_require.insert("Edit".to_string());
-        always_require.insert("delete_file".to_string());
+        always_require.insert("DeleteFile".to_string());
         always_require.insert("Bash".to_string());
 
         Self {

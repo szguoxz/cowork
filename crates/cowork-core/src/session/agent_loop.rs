@@ -732,6 +732,9 @@ impl AgentLoop {
     // ========================================================================
 
     /// Convert ChatMessages to context Messages for token counting
+    ///
+    /// IMPORTANT: This includes content_blocks and tool_calls in the content
+    /// because they contribute significantly to the actual token count sent to the LLM.
     fn chat_messages_to_context_messages(&self) -> Vec<Message> {
         self.session
             .messages
@@ -743,7 +746,27 @@ impl AgentLoop {
                     "system" => MessageRole::System,
                     _ => MessageRole::Tool,
                 };
-                Message::with_timestamp(role, &cm.content, cm.timestamp)
+
+                // Build full content including content_blocks and tool_calls
+                let mut full_content = cm.content.clone();
+
+                // Add content blocks (tool_result, text, etc.)
+                for block in &cm.content_blocks {
+                    if let Ok(json) = serde_json::to_string(block) {
+                        full_content.push_str(&json);
+                    }
+                }
+
+                // Add tool calls (tool_use blocks)
+                for tc in &cm.tool_calls {
+                    // Tool calls include name and arguments
+                    full_content.push_str(&tc.name);
+                    if let Ok(json) = serde_json::to_string(&tc.arguments) {
+                        full_content.push_str(&json);
+                    }
+                }
+
+                Message::with_timestamp(role, &full_content, cm.timestamp)
             })
             .collect()
     }
@@ -756,10 +779,15 @@ impl AgentLoop {
     /// - Uses LLM-powered summarization when possible, falls back to heuristics
     async fn check_and_compact_context(&mut self) -> Result<()> {
         let messages = self.chat_messages_to_context_messages();
+
+        // Serialize tool definitions to count their tokens
+        // Tool definitions are sent with every request and can be quite large
+        let tool_defs_json = serde_json::to_string(&self.tool_definitions).unwrap_or_default();
+
         let usage = self.context_monitor.calculate_usage(
             &messages,
             &self.session.system_prompt,
-            None, // No memory content for now
+            Some(&tool_defs_json), // Include tool definitions in token count
         );
 
         debug!(
