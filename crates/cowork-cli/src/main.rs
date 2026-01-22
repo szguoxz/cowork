@@ -224,12 +224,13 @@ fn parse_provider_type(provider_str: &str) -> ProviderType {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Setup logging
+    // Setup logging - use warn level by default to avoid interfering with CLI prompt
+    // Use --verbose for info/debug level logs
     tracing_subscriber::fmt()
         .with_env_filter(if cli.verbose {
-            "debug"
+            "info,cowork_core=debug"
         } else {
-            "info"
+            "warn"
         })
         .init();
 
