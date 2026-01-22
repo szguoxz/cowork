@@ -73,19 +73,8 @@ pub struct SavedSession {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Current state of the agent loop
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum AgentState {
-    /// Waiting for user message
-    Idle,
-    /// Waiting for user interaction (approval or answer)
-    AwaitingInteraction,
-}
-
 /// The unified agent loop
 pub struct AgentLoop {
-    /// Current state
-    state: AgentState,
     /// Session identifier
     session_id: SessionId,
     /// Message receiver (questions from user)
@@ -223,7 +212,6 @@ impl AgentLoop {
         let (_, dummy_rx) = mpsc::channel(1);
 
         Ok(Self {
-            state: AgentState::Idle,
             session_id,
             input_rx: dummy_rx, 
             message_rx,
@@ -414,8 +402,6 @@ impl AgentLoop {
             // If we have pending questions or approvals, wait for answers
             // This blocks the agent loop but leaves the main loop free to queue new messages
             if has_question || !self.pending_approvals.is_empty() {
-                self.state = AgentState::AwaitingInteraction;
-                
                 while !self.pending_approvals.is_empty() {
                     // Wait for an answer
                     if let Some(input) = self.answer_rx.recv().await {
@@ -442,8 +428,6 @@ impl AgentLoop {
                         return Ok(());
                     }
                 }
-                
-                self.state = AgentState::Idle;
             }
 
             // If all tools auto-approved, continue loop
