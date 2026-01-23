@@ -373,8 +373,8 @@ impl Tool for TaskTool {
                 "message": format!("Agent '{}' started in background. Use TaskOutput to check progress.", description)
             })))
         } else {
-            // Execute agent synchronously
-            let result = executor::execute_agent_loop(
+            // Execute agent synchronously using the shared AgentLoop
+            let result = executor::run_subagent(
                 &agent_type,
                 &model,
                 prompt,

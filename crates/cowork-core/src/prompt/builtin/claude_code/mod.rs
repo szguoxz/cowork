@@ -87,6 +87,9 @@ pub mod tools {
 
     /// ExitPlanMode tool - exit planning mode
     pub const EXIT_PLAN_MODE: &str = include_str!("tools/exitplanmode.md");
+
+    /// LSP tool - code intelligence via Language Server Protocol
+    pub const LSP: &str = include_str!("tools/lsp.md");
 }
 
 /// Agent definitions
@@ -183,6 +186,7 @@ mod tests {
         assert!(!tools::WEBSEARCH.is_empty());
         assert!(!tools::ENTER_PLAN_MODE.is_empty());
         assert!(!tools::EXIT_PLAN_MODE.is_empty());
+        assert!(!tools::LSP.is_empty());
     }
 
     #[test]
@@ -223,6 +227,7 @@ mod tests {
             ("tools::WEBSEARCH", tools::WEBSEARCH),
             ("tools::ENTER_PLAN_MODE", tools::ENTER_PLAN_MODE),
             ("tools::EXIT_PLAN_MODE", tools::EXIT_PLAN_MODE),
+            ("tools::LSP", tools::LSP),
             ("agents::EXPLORE", agents::EXPLORE),
             ("agents::PLAN", agents::PLAN),
             ("agents::BASH", agents::BASH),

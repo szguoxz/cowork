@@ -1,36 +1,33 @@
 //! Agent execution engine for TaskTool subagents
 //!
-//! This module provides the core agentic loop that powers subagent execution.
-//! Each agent type gets a specific set of tools and a tailored system prompt.
+//! Subagents reuse the shared `AgentLoop` from `crate::session`, configured with
+//! scoped tools (via `ToolScope`), trust-all approval, no hooks, and no persistence.
+//! This gives subagents automatic tool result truncation, context monitoring,
+//! and auto-compaction for free.
 //!
-//! The executor supports two modes:
-//! 1. Legacy hardcoded agents (Bash, Explore, Plan, GeneralPurpose)
-//! 2. Dynamic agents from the prompt system (loaded from registry)
-//!
-//! Dynamic agents take precedence when a matching name is found in the registry.
+//! Dynamic agents from the prompt system take precedence when a matching name
+//! is found in the component registry.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
+use tracing::info;
 
+use crate::approval::ToolApprovalConfig;
 use crate::config::ModelTiers;
 use crate::error::Result;
-use crate::prompt::{AgentDefinition, ComponentRegistry, ModelPreference};
-use crate::provider::{create_provider, CompletionResult, LlmMessage, ProviderType};
+use crate::orchestration::ToolScope;
+use crate::prompt::{
+    builtin, parse_frontmatter, AgentDefinition, ComponentRegistry, ModelPreference,
+};
+use crate::provider::ProviderType;
+use crate::session::{AgentLoop, SessionConfig, SessionInput, SessionOutput};
 
 /// Maximum result size for subagent output (to prevent context bloat)
 /// Results exceeding this will be truncated with a note
 const MAX_RESULT_SIZE: usize = 10000;
-use crate::tools::filesystem::{
-    EditFile, GlobFiles, GrepFiles, ListDirectory, ReadFile, SearchFiles, WriteFile,
-};
-use crate::tools::lsp::LspTool;
-use crate::tools::shell::ExecuteCommand;
-use crate::tools::task::TodoWrite;
-use crate::tools::web::{WebFetch, WebSearch};
-use crate::tools::ToolRegistry;
 
 use super::{AgentInstanceRegistry, AgentStatus, AgentType, ModelTier};
 
@@ -91,106 +88,21 @@ impl AgentExecutionConfig {
     }
 }
 
-/// System prompt for Bash agent
-const BASH_SYSTEM_PROMPT: &str = r#"You are a Bash command execution specialist. Your role is to help execute shell commands efficiently and safely.
+/// Get the embedded agent prompt content for a given agent type.
+///
+/// Parses the built-in `.md` file (stripping YAML frontmatter) to extract
+/// the system prompt body. This is the single source of truth for agent prompts.
+fn get_builtin_prompt(agent_type: &AgentType) -> String {
+    let source = match agent_type {
+        AgentType::Bash => builtin::agents::BASH,
+        AgentType::Explore => builtin::agents::EXPLORE,
+        AgentType::Plan => builtin::agents::PLAN,
+        AgentType::GeneralPurpose => builtin::agents::GENERAL,
+    };
 
-## Your Capabilities
-- Execute shell commands using Bash tool
-- Read files to understand context using Read tool
-- Write files when needed using Write tool
-- List directories to explore the filesystem
-
-## Guidelines
-- Be careful with destructive commands (rm, mv with overwrite, etc.)
-- Prefer read-only operations when exploring
-- Chain commands efficiently with && or ||
-- Always verify important operations
-- Report command output clearly and concisely
-
-## Response Format
-When you complete a task:
-1. Summarize what commands were executed
-2. Report the outcome
-3. Note any errors or warnings"#;
-
-/// System prompt for Explore agent
-const EXPLORE_SYSTEM_PROMPT: &str = r#"You are a fast codebase exploration specialist. Your role is to quickly find and analyze code patterns, files, and structures.
-
-## Your Capabilities
-- Search for files using glob patterns (Glob tool)
-- Search file contents using regex (Grep tool)
-- Read files to examine code (Read tool)
-- List directories to understand structure
-- Use LSP for code intelligence (definitions, references, hover info)
-- Search files by name or content
-
-## Guidelines
-- You are READ-ONLY - do not modify any files
-- Use efficient search patterns
-- Start broad, then narrow down
-- Combine multiple tools for thorough analysis
-- Report findings clearly with file paths and line numbers
-
-## Response Format
-Provide a clear summary of your findings including:
-- Relevant file paths
-- Code snippets when helpful
-- Patterns and structures discovered"#;
-
-/// System prompt for Plan agent
-const PLAN_SYSTEM_PROMPT: &str = r#"You are a software architect and implementation planner. Your role is to explore codebases and design implementation plans.
-
-## Your Capabilities
-- All exploration tools (Glob, Grep, Read, list_directory, search_files, LSP)
-- Task tracking with TodoWrite
-
-## Guidelines
-- Thoroughly understand existing code before planning
-- Consider edge cases and error handling
-- Identify dependencies and potential conflicts
-- Create clear, actionable implementation steps
-- Note any architectural concerns
-
-## Response Format
-Provide a structured implementation plan:
-1. Current State Analysis
-2. Proposed Changes
-3. Step-by-Step Implementation
-4. Testing Strategy
-5. Potential Risks"#;
-
-/// System prompt for GeneralPurpose agent
-const GENERAL_PURPOSE_SYSTEM_PROMPT: &str = r#"You are a general-purpose AI coding assistant with full capabilities. You can research, modify code, and execute commands.
-
-## Your Capabilities
-- File operations: Read, Write, Edit, delete, move
-- Code search: Glob, Grep, search_files
-- Shell execution: Bash
-- Web access: WebFetch, WebSearch
-- Code intelligence: LSP
-- Task tracking: TodoWrite
-
-## Guidelines
-- Understand before modifying - read files first
-- Use the Edit tool for surgical changes (preferred over Write)
-- Verify changes after making them
-- Test when possible
-- Keep the user informed of progress
-
-## Response Format
-1. Explain what you're going to do
-2. Execute the necessary operations
-3. Summarize the results
-4. Note any issues or follow-up needed"#;
-
-/// Get the system prompt for an agent type
-pub fn get_system_prompt(agent_type: &AgentType) -> &'static str {
-    match agent_type {
-        AgentType::Bash => BASH_SYSTEM_PROMPT,
-        AgentType::Explore => EXPLORE_SYSTEM_PROMPT,
-        AgentType::Plan => PLAN_SYSTEM_PROMPT,
-        AgentType::GeneralPurpose => GENERAL_PURPOSE_SYSTEM_PROMPT,
-    }
+    parse_frontmatter(source)
+        .map(|doc| doc.content)
+        .unwrap_or_else(|_| source.to_string())
 }
 
 /// Try to get an agent definition from the registry by name
@@ -224,8 +136,8 @@ pub fn get_system_prompt_dynamic(
         return agent_def.system_prompt.clone();
     }
 
-    // Fall back to hardcoded prompts
-    get_system_prompt(agent_type).to_string()
+    // Fall back to parsing the embedded .md files directly
+    get_builtin_prompt(agent_type)
 }
 
 /// Get the model preference for an agent from the registry
@@ -284,58 +196,6 @@ pub fn get_model_for_tier(tier: &ModelTier, model_tiers: &ModelTiers) -> String 
         ModelTier::Balanced => model_tiers.balanced.clone(),
         ModelTier::Powerful => model_tiers.powerful.clone(),
     }
-}
-
-/// Create a tool registry for a specific agent type
-pub fn create_agent_tool_registry(agent_type: &AgentType, workspace: &Path) -> ToolRegistry {
-    let mut registry = ToolRegistry::new();
-    let workspace = workspace.to_path_buf();
-
-    match agent_type {
-        AgentType::Bash => {
-            // Bash agent: Bash, Read, Write, list_directory
-            registry.register(Arc::new(ExecuteCommand::new(workspace.clone())));
-            registry.register(Arc::new(ReadFile::new(workspace.clone())));
-            registry.register(Arc::new(WriteFile::new(workspace.clone())));
-            registry.register(Arc::new(ListDirectory::new(workspace.clone())));
-        }
-        AgentType::Explore => {
-            // Explore agent: read-only tools
-            registry.register(Arc::new(ReadFile::new(workspace.clone())));
-            registry.register(Arc::new(GlobFiles::new(workspace.clone())));
-            registry.register(Arc::new(GrepFiles::new(workspace.clone())));
-            registry.register(Arc::new(ListDirectory::new(workspace.clone())));
-            registry.register(Arc::new(SearchFiles::new(workspace.clone())));
-            registry.register(Arc::new(LspTool::new(workspace.clone())));
-        }
-        AgentType::Plan => {
-            // Plan agent: same as Explore + TodoWrite
-            registry.register(Arc::new(ReadFile::new(workspace.clone())));
-            registry.register(Arc::new(GlobFiles::new(workspace.clone())));
-            registry.register(Arc::new(GrepFiles::new(workspace.clone())));
-            registry.register(Arc::new(ListDirectory::new(workspace.clone())));
-            registry.register(Arc::new(SearchFiles::new(workspace.clone())));
-            registry.register(Arc::new(LspTool::new(workspace.clone())));
-            registry.register(Arc::new(TodoWrite::new()));
-        }
-        AgentType::GeneralPurpose => {
-            // GeneralPurpose agent: all tools except nested TaskTool
-            registry.register(Arc::new(ReadFile::new(workspace.clone())));
-            registry.register(Arc::new(WriteFile::new(workspace.clone())));
-            registry.register(Arc::new(EditFile::new(workspace.clone())));
-            registry.register(Arc::new(GlobFiles::new(workspace.clone())));
-            registry.register(Arc::new(GrepFiles::new(workspace.clone())));
-            registry.register(Arc::new(ListDirectory::new(workspace.clone())));
-            registry.register(Arc::new(SearchFiles::new(workspace.clone())));
-            registry.register(Arc::new(ExecuteCommand::new(workspace.clone())));
-            registry.register(Arc::new(WebFetch::new()));
-            registry.register(Arc::new(WebSearch::new()));
-            registry.register(Arc::new(LspTool::new(workspace.clone())));
-            registry.register(Arc::new(TodoWrite::new()));
-        }
-    }
-
-    registry
 }
 
 /// Build environment info to append to system prompts
@@ -402,14 +262,21 @@ fn get_os_version() -> String {
     }
 }
 
-/// Execute the main agentic loop for a subagent
+/// Map an AgentType to the corresponding ToolScope
+fn tool_scope_for(agent_type: &AgentType) -> ToolScope {
+    match agent_type {
+        AgentType::Bash => ToolScope::Bash,
+        AgentType::Explore => ToolScope::Explore,
+        AgentType::Plan => ToolScope::Plan,
+        AgentType::GeneralPurpose => ToolScope::GeneralPurpose,
+    }
+}
+
+/// Run a subagent using the shared AgentLoop infrastructure
 ///
-/// This runs the agent until it completes (returns a message without tool calls)
-/// or reaches the maximum number of turns.
-///
-/// If a ComponentRegistry is available in the config, it will try to load
-/// the agent definition dynamically. Otherwise, it falls back to hardcoded prompts.
-pub async fn execute_agent_loop(
+/// This replaces the hand-rolled loop with the same AgentLoop used by the main session,
+/// giving subagents automatic tool result truncation, context monitoring, and auto-compaction.
+pub async fn run_subagent(
     agent_type: &AgentType,
     model: &ModelTier,
     prompt: &str,
@@ -417,117 +284,80 @@ pub async fn execute_agent_loop(
     registry: Arc<AgentInstanceRegistry>,
     agent_id: &str,
 ) -> Result<String> {
-    // Create provider with appropriate model (config-driven)
     let model_str = get_model_for_tier(model, &config.model_tiers);
 
-    // Get system prompt - try registry first, then fall back to hardcoded
+    // Get system prompt (registry-aware) + environment info
     let base_prompt = get_system_prompt_dynamic(
         agent_type,
         config.registry.as_ref().map(|r| r.as_ref()),
     );
-
-    // Append environment info (platform, workspace, etc.) to the system prompt
     let env_info = build_environment_info(&config.workspace);
     let system_prompt = format!("{}{}", base_prompt, env_info);
 
-    let provider = create_provider(
-        config.provider_type,
-        config.api_key.as_deref(),
-        Some(&model_str),
-        Some(&system_prompt),
-    )?;
+    // Build SessionConfig: trust-all approval, scoped tools, no hooks, no save
+    let session_config = SessionConfig::new(config.workspace.clone())
+        .with_provider(config.provider_type)
+        .with_model(model_str)
+        .with_system_prompt(system_prompt)
+        .with_approval_config(ToolApprovalConfig::trust_all())
+        .with_tool_scope(tool_scope_for(agent_type))
+        .with_enable_hooks(false)
+        .with_save_session(false);
 
-    // Create tool registry for this agent type
-    let tool_registry = create_agent_tool_registry(agent_type, &config.workspace);
-    let tool_definitions = tool_registry.list();
+    let session_config = if let Some(ref key) = config.api_key {
+        session_config.with_api_key(key.clone())
+    } else {
+        session_config
+    };
 
-    // Initialize conversation with the prompt
-    let mut messages: Vec<LlmMessage> = vec![LlmMessage::user(prompt)];
+    // Create channels
+    let (input_tx, input_rx) = tokio::sync::mpsc::channel::<SessionInput>(32);
+    let (output_tx, mut output_rx) =
+        tokio::sync::mpsc::channel::<(String, SessionOutput)>(128);
 
-    let mut turns = 0u64;
-    let final_result: String;
+    // Create and spawn agent loop
+    let agent_loop = AgentLoop::new(
+        agent_id.to_string(),
+        input_rx,
+        output_tx,
+        session_config,
+    )
+    .await
+    .map_err(|e| crate::error::Error::Agent(format!("Failed to create subagent loop: {}", e)))?;
 
-    // Agentic loop
-    loop {
-        if turns >= config.max_turns {
-            final_result = format!(
-                "Agent reached maximum turns limit ({}). Last state: partial completion.",
-                config.max_turns
-            );
-            break;
-        }
+    tokio::spawn(agent_loop.run());
 
-        turns += 1;
+    // Send the prompt
+    input_tx
+        .send(SessionInput::user_message(prompt))
+        .await
+        .map_err(|e| crate::error::Error::Agent(format!("Failed to send prompt: {}", e)))?;
 
-        // Call the provider
-        let result = provider
-            .chat(messages.clone(), Some(tool_definitions.clone()))
-            .await;
-
-        match result {
-            Ok(CompletionResult::Message(text)) => {
-                // Agent completed with a final message
-                final_result = text;
-                break;
+    // Collect output until Idle
+    let mut last_content = String::new();
+    while let Some((_sid, output)) = output_rx.recv().await {
+        match output {
+            SessionOutput::Idle => break,
+            SessionOutput::AssistantMessage { content, .. } => {
+                last_content = content;
             }
-            Ok(CompletionResult::ToolCalls(calls)) => {
-                // Execute tool calls and continue
-                let mut tool_results = Vec::new();
-
-                for call in &calls {
-                    let tool_result = if let Some(tool) = tool_registry.get(&call.name) {
-                        match tool.execute(call.arguments.clone()).await {
-                            Ok(output) => {
-                                if output.success {
-                                    output.content.to_string()
-                                } else {
-                                    format!(
-                                        "Tool error: {}",
-                                        output.error.unwrap_or_else(|| "Unknown error".to_string())
-                                    )
-                                }
-                            }
-                            Err(e) => format!("Tool execution failed: {}", e),
-                        }
-                    } else {
-                        format!("Unknown tool: {}", call.name)
-                    };
-
-                    tool_results.push((call.name.clone(), tool_result));
-                }
-
-                // Format tool results as a message for the conversation
-                let results_summary: Vec<String> = tool_results
-                    .iter()
-                    .map(|(name, result)| {
-                        format!("[Tool '{}' result]\n{}", name, result)
-                    })
-                    .collect();
-
-                messages.push(LlmMessage::user(format!(
-                    "Tool execution results:\n\n{}\n\nContinue with the task.",
-                    results_summary.join("\n\n")
-                )));
+            SessionOutput::Error { message } => {
+                info!("Subagent error: {}", message);
             }
-            Err(e) => {
-                final_result = format!("Agent error: {}", e);
-                registry
-                    .update_status(agent_id, AgentStatus::Failed, Some(final_result.clone()))
-                    .await;
-                return Err(e);
-            }
+            _ => {} // Ignore ToolStart, ToolDone, Thinking, etc.
         }
     }
 
-    // Truncate result if too large (prevents context bloat in main conversation)
-    let truncated_result = truncate_result(&final_result, MAX_RESULT_SIZE);
+    // Drop input_tx to signal shutdown
+    drop(input_tx);
 
-    // Update registry with completed status
+    // Truncate and update registry
+    let truncated = truncate_result(&last_content, MAX_RESULT_SIZE);
     registry
-        .update_status(agent_id, AgentStatus::Completed, Some(truncated_result.clone()))
+        .update_status(agent_id, AgentStatus::Completed, Some(truncated.clone()))
         .await;
 
-    Ok(truncated_result)
+    Ok(truncated)
 }
 
 /// Execute an agent in the background
@@ -580,8 +410,8 @@ pub fn execute_agent_background(
         );
         let _ = file.write_all(header.as_bytes()).await;
 
-        // Execute the agent loop
-        let result = execute_agent_loop(
+        // Execute the agent loop using the shared AgentLoop
+        let result = run_subagent(
             &agent_type,
             &model,
             &prompt,
@@ -598,7 +428,7 @@ pub fn execute_agent_background(
         };
         let _ = file.write_all(result_text.as_bytes()).await;
 
-        // Status already updated by execute_agent_loop
+        // Status already updated by run_subagent
     });
 }
 
@@ -639,19 +469,19 @@ mod tests {
     }
 
     #[test]
-    fn test_get_system_prompt() {
-        let bash_prompt = get_system_prompt(&AgentType::Bash);
+    fn test_get_builtin_prompt() {
+        let bash_prompt = get_builtin_prompt(&AgentType::Bash);
         assert!(bash_prompt.contains("Bash"));
 
-        let explore_prompt = get_system_prompt(&AgentType::Explore);
+        let explore_prompt = get_builtin_prompt(&AgentType::Explore);
         assert!(explore_prompt.contains("exploration"));
         assert!(explore_prompt.contains("READ-ONLY"));
 
-        let plan_prompt = get_system_prompt(&AgentType::Plan);
+        let plan_prompt = get_builtin_prompt(&AgentType::Plan);
         assert!(plan_prompt.contains("architect"));
-        assert!(plan_prompt.contains("TodoWrite"));
+        assert!(plan_prompt.contains("implementation"));
 
-        let gp_prompt = get_system_prompt(&AgentType::GeneralPurpose);
+        let gp_prompt = get_builtin_prompt(&AgentType::GeneralPurpose);
         assert!(gp_prompt.contains("general-purpose"));
     }
 
@@ -696,41 +526,51 @@ mod tests {
     }
 
     #[test]
-    fn test_create_agent_tool_registry() {
+    fn test_tool_scope_via_builder() {
+        use crate::orchestration::ToolRegistryBuilder;
+
         let workspace = PathBuf::from("/tmp/test");
 
-        // Bash agent tools (PascalCase names)
-        let bash_registry = create_agent_tool_registry(&AgentType::Bash, &workspace);
+        // Bash scope
+        let bash_registry = ToolRegistryBuilder::new(workspace.clone())
+            .with_tool_scope(ToolScope::Bash)
+            .build();
         assert!(bash_registry.get("Bash").is_some());
         assert!(bash_registry.get("Read").is_some());
         assert!(bash_registry.get("Write").is_some());
         assert!(bash_registry.get("ListDirectory").is_some());
-        assert!(bash_registry.get("Glob").is_none()); // Bash doesn't have glob
+        assert!(bash_registry.get("Glob").is_none());
 
-        // Explore agent tools (read-only)
-        let explore_registry = create_agent_tool_registry(&AgentType::Explore, &workspace);
+        // Explore scope (read-only)
+        let explore_registry = ToolRegistryBuilder::new(workspace.clone())
+            .with_tool_scope(ToolScope::Explore)
+            .build();
         assert!(explore_registry.get("Read").is_some());
         assert!(explore_registry.get("Glob").is_some());
         assert!(explore_registry.get("Grep").is_some());
         assert!(explore_registry.get("LSP").is_some());
-        assert!(explore_registry.get("Write").is_none()); // Explore can't write
-        assert!(explore_registry.get("Bash").is_none()); // Explore can't execute
+        assert!(explore_registry.get("Write").is_none());
+        assert!(explore_registry.get("Bash").is_none());
 
-        // Plan agent tools
-        let plan_registry = create_agent_tool_registry(&AgentType::Plan, &workspace);
+        // Plan scope
+        let plan_registry = ToolRegistryBuilder::new(workspace.clone())
+            .with_tool_scope(ToolScope::Plan)
+            .build();
         assert!(plan_registry.get("Read").is_some());
         assert!(plan_registry.get("Glob").is_some());
         assert!(plan_registry.get("TodoWrite").is_some());
-        assert!(plan_registry.get("Write").is_none()); // Plan can't write
+        assert!(plan_registry.get("Write").is_none());
 
-        // GeneralPurpose agent tools
-        let gp_registry = create_agent_tool_registry(&AgentType::GeneralPurpose, &workspace);
+        // GeneralPurpose scope
+        let gp_registry = ToolRegistryBuilder::new(workspace.clone())
+            .with_tool_scope(ToolScope::GeneralPurpose)
+            .build();
         assert!(gp_registry.get("Read").is_some());
         assert!(gp_registry.get("Write").is_some());
         assert!(gp_registry.get("Edit").is_some());
         assert!(gp_registry.get("Bash").is_some());
         assert!(gp_registry.get("WebFetch").is_some());
-        assert!(gp_registry.get("Task").is_none()); // No recursive task tool
+        assert!(gp_registry.get("Task").is_none());
     }
 
     #[test]
@@ -758,7 +598,7 @@ mod tests {
 
     #[test]
     fn test_get_system_prompt_dynamic_fallback() {
-        // Without registry, should fall back to hardcoded prompts
+        // Without registry, should fall back to parsing embedded .md files
         let prompt = get_system_prompt_dynamic(&AgentType::Bash, None);
         assert!(prompt.contains("Bash"));
 

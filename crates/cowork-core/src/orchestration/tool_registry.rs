@@ -23,6 +23,19 @@ use crate::tools::task::{AgentInstanceRegistry, TaskOutputTool, TaskTool, TodoWr
 use crate::tools::web::{supports_native_search, WebFetch, WebSearch};
 use crate::tools::ToolRegistry;
 
+/// Defines which subset of tools a subagent should have access to
+#[derive(Debug, Clone)]
+pub enum ToolScope {
+    /// Bash, Read, Write, ListDirectory
+    Bash,
+    /// Read-only exploration: Read, Glob, Grep, ListDirectory, SearchFiles, LSP
+    Explore,
+    /// Explore + TodoWrite
+    Plan,
+    /// Everything except TaskTool and AskUserQuestion
+    GeneralPurpose,
+}
+
 /// Builder for creating a tool registry with customizable options
 pub struct ToolRegistryBuilder {
     workspace: PathBuf,
@@ -40,6 +53,7 @@ pub struct ToolRegistryBuilder {
     include_task: bool,
     include_planning: bool,
     include_interaction: bool,
+    tool_scope: Option<ToolScope>,
 }
 
 impl ToolRegistryBuilder {
@@ -61,7 +75,14 @@ impl ToolRegistryBuilder {
             include_task: true,
             include_planning: true,
             include_interaction: true,
+            tool_scope: None,
         }
+    }
+
+    /// Set a tool scope — when set, `build()` will use scoped tool registration
+    pub fn with_tool_scope(mut self, scope: ToolScope) -> Self {
+        self.tool_scope = Some(scope);
+        self
     }
 
     /// Set the provider type (required for task tools)
@@ -150,6 +171,10 @@ impl ToolRegistryBuilder {
 
     /// Build the tool registry with the configured options
     pub fn build(self) -> ToolRegistry {
+        if let Some(scope) = self.tool_scope.clone() {
+            return self.build_scoped(scope);
+        }
+
         let mut registry = ToolRegistry::new();
 
         // Filesystem tools
@@ -265,6 +290,63 @@ impl ToolRegistryBuilder {
                 registry.register(Arc::new(task_tool));
                 registry.register(Arc::new(TaskOutputTool::new(agent_registry)));
             }
+
+        registry
+    }
+
+    /// Build a scoped tool registry for subagents
+    ///
+    /// Registers only the tools appropriate for the given scope,
+    /// replacing `create_agent_tool_registry()` in executor.rs.
+    fn build_scoped(self, scope: ToolScope) -> ToolRegistry {
+        let mut registry = ToolRegistry::new();
+        let workspace = self.workspace;
+
+        match scope {
+            ToolScope::Bash => {
+                let shell_registry = Arc::new(ShellProcessRegistry::new());
+                registry.register(Arc::new(
+                    ExecuteCommand::new(workspace.clone()).with_registry(shell_registry),
+                ));
+                registry.register(Arc::new(ReadFile::new(workspace.clone())));
+                registry.register(Arc::new(WriteFile::new(workspace.clone())));
+                registry.register(Arc::new(ListDirectory::new(workspace)));
+            }
+            ToolScope::Explore => {
+                registry.register(Arc::new(ReadFile::new(workspace.clone())));
+                registry.register(Arc::new(GlobFiles::new(workspace.clone())));
+                registry.register(Arc::new(GrepFiles::new(workspace.clone())));
+                registry.register(Arc::new(ListDirectory::new(workspace.clone())));
+                registry.register(Arc::new(SearchFiles::new(workspace.clone())));
+                registry.register(Arc::new(LspTool::new(workspace)));
+            }
+            ToolScope::Plan => {
+                registry.register(Arc::new(ReadFile::new(workspace.clone())));
+                registry.register(Arc::new(GlobFiles::new(workspace.clone())));
+                registry.register(Arc::new(GrepFiles::new(workspace.clone())));
+                registry.register(Arc::new(ListDirectory::new(workspace.clone())));
+                registry.register(Arc::new(SearchFiles::new(workspace.clone())));
+                registry.register(Arc::new(LspTool::new(workspace)));
+                registry.register(Arc::new(TodoWrite::new()));
+            }
+            ToolScope::GeneralPurpose => {
+                registry.register(Arc::new(ReadFile::new(workspace.clone())));
+                registry.register(Arc::new(WriteFile::new(workspace.clone())));
+                registry.register(Arc::new(EditFile::new(workspace.clone())));
+                registry.register(Arc::new(GlobFiles::new(workspace.clone())));
+                registry.register(Arc::new(GrepFiles::new(workspace.clone())));
+                registry.register(Arc::new(ListDirectory::new(workspace.clone())));
+                registry.register(Arc::new(SearchFiles::new(workspace.clone())));
+                let shell_registry = Arc::new(ShellProcessRegistry::new());
+                registry.register(Arc::new(
+                    ExecuteCommand::new(workspace.clone()).with_registry(shell_registry),
+                ));
+                registry.register(Arc::new(WebFetch::new()));
+                registry.register(Arc::new(WebSearch::new()));
+                registry.register(Arc::new(LspTool::new(workspace)));
+                registry.register(Arc::new(TodoWrite::new()));
+            }
+        }
 
         registry
     }

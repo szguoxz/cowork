@@ -24,6 +24,9 @@ fn test_config() -> SessionConfig {
         web_search_config: None,
         prompt_config: Default::default(),
         component_registry: None,
+        tool_scope: None,
+        enable_hooks: None,
+        save_session: true,
     }
 }
 

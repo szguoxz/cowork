@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::config::PromptSystemConfig;
+use crate::orchestration::ToolScope;
 use crate::prompt::ComponentRegistry;
 
 /// Unique identifier for a session
@@ -230,6 +231,12 @@ pub struct SessionConfig {
     pub prompt_config: PromptSystemConfig,
     /// Component registry (agents, commands, skills, hooks)
     pub component_registry: Option<Arc<ComponentRegistry>>,
+    /// Tool scope — restricts which tools are registered (for subagents)
+    pub tool_scope: Option<ToolScope>,
+    /// Override whether hooks are enabled (None = use prompt_config default)
+    pub enable_hooks: Option<bool>,
+    /// Whether to persist the session to disk on exit (default: true)
+    pub save_session: bool,
 }
 
 impl Default for SessionConfig {
@@ -244,6 +251,9 @@ impl Default for SessionConfig {
             web_search_config: None,
             prompt_config: PromptSystemConfig::default(),
             component_registry: None,
+            tool_scope: None,
+            enable_hooks: None,
+            save_session: true,
         }
     }
 }
@@ -302,6 +312,24 @@ impl SessionConfig {
     /// Set the component registry
     pub fn with_component_registry(mut self, registry: Arc<ComponentRegistry>) -> Self {
         self.component_registry = Some(registry);
+        self
+    }
+
+    /// Set the tool scope (restricts available tools for subagents)
+    pub fn with_tool_scope(mut self, scope: ToolScope) -> Self {
+        self.tool_scope = Some(scope);
+        self
+    }
+
+    /// Override hook enablement
+    pub fn with_enable_hooks(mut self, enabled: bool) -> Self {
+        self.enable_hooks = Some(enabled);
+        self
+    }
+
+    /// Set whether to save the session to disk on exit
+    pub fn with_save_session(mut self, save: bool) -> Self {
+        self.save_session = save;
         self
     }
 }

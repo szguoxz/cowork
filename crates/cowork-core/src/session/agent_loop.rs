@@ -114,6 +114,8 @@ pub struct AgentLoop {
     /// Component registry for agents, commands, skills
     #[allow(dead_code)]
     component_registry: Option<Arc<ComponentRegistry>>,
+    /// Whether to persist the session on exit
+    save_session: bool,
     /// When the session was created
     created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -190,6 +192,11 @@ impl AgentLoop {
             tool_builder = tool_builder.with_web_search_config(ws_config);
         }
 
+        // Apply tool scope if set (for subagents)
+        if let Some(scope) = config.tool_scope.clone() {
+            tool_builder = tool_builder.with_tool_scope(scope);
+        }
+
         let tool_registry = tool_builder.build();
 
         let tool_definitions = tool_registry.list();
@@ -210,7 +217,7 @@ impl AgentLoop {
             .as_ref()
             .map(|r| r.get_hooks().clone())
             .unwrap_or_default();
-        let hooks_enabled = config.prompt_config.enable_hooks;
+        let hooks_enabled = config.enable_hooks.unwrap_or(config.prompt_config.enable_hooks);
 
         // Re-create input_rx to satisfy struct requirement (it's unused but kept for type consistency if needed)
         let (_, dummy_rx) = mpsc::channel(1);
@@ -234,6 +241,7 @@ impl AgentLoop {
             hooks_config,
             hooks_enabled,
             component_registry: config.component_registry.clone(),
+            save_session: config.save_session,
             created_at: chrono::Utc::now(),
         })
     }
@@ -262,10 +270,12 @@ impl AgentLoop {
             self.emit(SessionOutput::idle()).await;
         }
 
-        // Channel closed - save session before exiting
-        info!("Saving session {} before exit", self.session_id);
-        if let Err(e) = self.save_session().await {
-            error!("Failed to save session {}: {}", self.session_id, e);
+        // Channel closed - save session before exiting (if enabled)
+        if self.save_session {
+            info!("Saving session {} before exit", self.session_id);
+            if let Err(e) = self.save_session().await {
+                error!("Failed to save session {}: {}", self.session_id, e);
+            }
         }
 
         info!("Agent loop ended for session: {}", self.session_id);
