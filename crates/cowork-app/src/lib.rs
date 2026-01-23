@@ -18,7 +18,7 @@ use tauri_plugin_updater::UpdaterExt;
 use cowork_core::orchestration::SystemPrompt;
 use cowork_core::prompt::TemplateVars;
 use cowork_core::session::{OutputReceiver, SessionConfig, SessionManager, SessionOutput};
-use cowork_core::{AgentRegistry, ApprovalLevel, ConfigManager, Context, Workspace};
+use cowork_core::{ApprovalLevel, ConfigManager, Context, Workspace};
 use state::AppState;
 
 /// Build the system prompt with all template variables properly substituted
@@ -74,7 +74,6 @@ pub fn init_state(
 ) -> (AppState, OutputReceiver) {
     let workspace = Workspace::new(&workspace_path);
     let context = Context::new(workspace);
-    let registry = AgentRegistry::new();
 
     // Get provider config for session creation - clone everything we need
     let default_provider = config_manager.config().get_default_provider().cloned();
@@ -118,7 +117,6 @@ pub fn init_state(
 
     let state = AppState {
         context: Arc::new(RwLock::new(context)),
-        registry: Arc::new(RwLock::new(registry)),
         workspace_path,
         config_manager: Arc::new(RwLock::new(config_manager)),
         session_manager: Arc::new(session_manager),

@@ -1,6 +1,5 @@
 //! MCP Server implementation
 
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -8,7 +7,7 @@ use crate::protocol::{methods, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Re
 use crate::{McpPrompt, McpResource, McpTool, ServerCapabilities, PROTOCOL_VERSION};
 
 /// Handler for MCP requests
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait McpHandler: Send + Sync {
     /// List available tools
     async fn list_tools(&self) -> Vec<McpTool>;
@@ -60,15 +59,15 @@ pub struct PromptMessage {
 }
 
 /// MCP Server
-pub struct McpServer {
-    handler: Arc<dyn McpHandler>,
+pub struct McpServer<H: McpHandler> {
+    handler: Arc<H>,
     capabilities: ServerCapabilities,
     server_name: String,
     server_version: String,
 }
 
-impl McpServer {
-    pub fn new(handler: Arc<dyn McpHandler>) -> Self {
+impl<H: McpHandler> McpServer<H> {
+    pub fn new(handler: Arc<H>) -> Self {
         Self {
             handler,
             capabilities: ServerCapabilities {

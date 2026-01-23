@@ -165,7 +165,7 @@ impl ConversationSummarizer {
     pub async fn summarize(
         &self,
         messages: &[Message],
-        provider: &dyn LlmProvider,
+        provider: &impl LlmProvider,
     ) -> Result<(Message, Vec<Message>)> {
         if messages.len() <= self.config.keep_recent {
             // Nothing to summarize
@@ -324,12 +324,12 @@ impl ConversationSummarizer {
     ///
     /// This is the main entry point for context compaction, supporting both
     /// auto-compact and manual `/compact` command scenarios.
-    pub async fn compact(
+    pub async fn compact<P: LlmProvider>(
         &self,
         messages: &[Message],
         counter: &TokenCounter,
         config: CompactConfig,
-        provider: Option<&dyn LlmProvider>,
+        provider: Option<&P>,
     ) -> Result<CompactResult> {
         let tokens_before = counter.count_messages(messages);
 
@@ -375,7 +375,7 @@ impl ConversationSummarizer {
     async fn generate_llm_compact_summary(
         &self,
         messages: &[Message],
-        provider: &dyn LlmProvider,
+        provider: &impl LlmProvider,
         config: &CompactConfig,
     ) -> Result<Message> {
         let conversation_text = format_for_summarization(messages);

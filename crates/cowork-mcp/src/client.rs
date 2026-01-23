@@ -9,14 +9,14 @@ use crate::transport::Transport;
 use crate::{McpResource, McpTool, ServerCapabilities, PROTOCOL_VERSION};
 
 /// MCP Client for connecting to MCP servers
-pub struct McpClient {
-    transport: Arc<Mutex<Box<dyn Transport>>>,
+pub struct McpClient<T: Transport> {
+    transport: Arc<Mutex<T>>,
     request_id: AtomicI64,
     server_capabilities: Option<ServerCapabilities>,
 }
 
-impl McpClient {
-    pub fn new(transport: Box<dyn Transport>) -> Self {
+impl<T: Transport> McpClient<T> {
+    pub fn new(transport: T) -> Self {
         Self {
             transport: Arc::new(Mutex::new(transport)),
             request_id: AtomicI64::new(1),

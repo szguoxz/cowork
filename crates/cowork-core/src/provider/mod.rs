@@ -27,7 +27,6 @@ pub use genai_provider::{
 
 pub use model_listing::{get_known_models, get_model_context_limit, ModelInfo};
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
@@ -300,7 +299,7 @@ pub struct TokenUsage {
 }
 
 /// Trait for LLM providers
-#[async_trait]
+#[allow(async_fn_in_trait)] // All impls are internal and Send
 pub trait LlmProvider: Send + Sync {
     /// Provider name (e.g., "openai", "anthropic")
     fn name(&self) -> &str;
@@ -353,7 +352,6 @@ impl Default for MockProvider {
     }
 }
 
-#[async_trait]
 impl LlmProvider for MockProvider {
     fn name(&self) -> &str {
         &self.name

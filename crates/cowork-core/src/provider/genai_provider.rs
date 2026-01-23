@@ -11,7 +11,6 @@
 //!
 //! Example: `LLM_LOG_FILE=/tmp/llm.log cowork`
 
-use async_trait::async_trait;
 use futures::StreamExt;
 use genai::chat::{ChatMessage, ChatRequest, ChatStreamEvent, Tool, ToolCall, ToolResponse};
 use genai::resolver::{AuthData, AuthResolver};
@@ -778,7 +777,6 @@ pub enum StreamChunk {
 }
 
 // Implement LlmProvider trait for compatibility with existing code
-#[async_trait]
 impl LlmProvider for GenAIProvider {
     fn name(&self) -> &str {
         match self.provider_type {

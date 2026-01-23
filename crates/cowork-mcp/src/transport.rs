@@ -1,14 +1,12 @@
 //! MCP Transport layer implementations
 
-use async_trait::async_trait;
 use serde_json::Value;
 use std::io;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
-
 /// Transport trait for MCP communication
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait Transport: Send + Sync {
     async fn send(&mut self, message: Value) -> io::Result<()>;
     async fn receive(&mut self) -> io::Result<Option<Value>>;
@@ -41,7 +39,6 @@ impl StdioTransport {
     }
 }
 
-#[async_trait]
 impl Transport for StdioTransport {
     async fn send(&mut self, message: Value) -> io::Result<()> {
         let stdin = self.child.stdin.as_mut().ok_or_else(|| {
@@ -93,7 +90,6 @@ impl SseTransport {
     }
 }
 
-#[async_trait]
 impl Transport for SseTransport {
     async fn send(&mut self, message: Value) -> io::Result<()> {
         self.client

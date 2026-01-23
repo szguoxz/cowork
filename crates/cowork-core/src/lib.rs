@@ -7,7 +7,6 @@
 //! - Human-in-the-loop approval system
 //! - Context management
 
-pub mod agent;
 pub mod approval;
 pub mod config;
 pub mod context;
@@ -18,11 +17,9 @@ pub mod prompt;
 pub mod provider;
 pub mod session;
 pub mod skills;
-pub mod task;
 pub mod tools;
 pub mod update;
 
-pub use agent::{Agent, AgentRegistry};
 pub use approval::{ApprovalLevel, ApprovalPolicy, ApprovalRequest, ToolApprovalConfig};
 pub use config::{defaults, Config, ConfigManager, McpServerConfig, ModelTiers, ProviderConfig};
 pub use context::{messages_from_ui, Context, Message, MessageRole, Workspace};
@@ -33,7 +30,6 @@ pub use provider::{
     get_api_key, get_model_tiers, has_api_key_configured, ProviderType,
 };
 pub use skills::{Skill, SkillContext, SkillRegistry, SkillResult};
-pub use task::{Task, TaskExecutor, TaskPlanner, TaskStatus, TaskStep};
 pub use tools::{standard_tool_definitions, Tool, ToolDefinition, ToolOutput, ToolRegistry};
 
 // Prompt system exports
