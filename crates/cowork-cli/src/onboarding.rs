@@ -37,7 +37,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Versatile and widely supported",
             signup_url: "https://platform.openai.com/",
             env_var: "OPENAI_API_KEY",
-            default_model: "gpt-4o",
+            default_model: "gpt-4.1",
         },
         ProviderType::Gemini => ProviderInfo {
             name: "gemini",
@@ -45,7 +45,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Large context window (1M tokens)",
             signup_url: "https://aistudio.google.com/",
             env_var: "GEMINI_API_KEY",
-            default_model: "gemini-2.0-flash",
+            default_model: "gemini-2.5-flash",
         },
         ProviderType::Groq => ProviderInfo {
             name: "groq",

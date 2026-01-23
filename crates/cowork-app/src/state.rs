@@ -110,7 +110,7 @@ impl From<&Config> for Settings {
                 (
                     "anthropic".to_string(),
                     None,
-                    "claude-opus-4-20250514".to_string(),
+                    "claude-opus-4-5-20251101".to_string(),
                     None,
                 )
             };

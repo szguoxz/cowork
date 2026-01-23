@@ -361,9 +361,9 @@ impl ModelPreference {
     pub fn model_id(&self) -> Option<&str> {
         match self {
             ModelPreference::Inherit => None,
-            ModelPreference::Opus => Some("claude-3-opus"),
-            ModelPreference::Sonnet => Some("claude-3-sonnet"),
-            ModelPreference::Haiku => Some("claude-3-haiku"),
+            ModelPreference::Opus => Some("claude-opus-4-5-20251101"),
+            ModelPreference::Sonnet => Some("claude-sonnet-4-20250514"),
+            ModelPreference::Haiku => Some("claude-3-5-haiku-20241022"),
             ModelPreference::Custom(id) => Some(id),
         }
     }
@@ -726,9 +726,9 @@ mod tests {
         #[test]
         fn test_model_id() {
             assert_eq!(ModelPreference::Inherit.model_id(), None);
-            assert_eq!(ModelPreference::Opus.model_id(), Some("claude-3-opus"));
-            assert_eq!(ModelPreference::Sonnet.model_id(), Some("claude-3-sonnet"));
-            assert_eq!(ModelPreference::Haiku.model_id(), Some("claude-3-haiku"));
+            assert_eq!(ModelPreference::Opus.model_id(), Some("claude-opus-4-5-20251101"));
+            assert_eq!(ModelPreference::Sonnet.model_id(), Some("claude-sonnet-4-20250514"));
+            assert_eq!(ModelPreference::Haiku.model_id(), Some("claude-3-5-haiku-20241022"));
             assert_eq!(
                 ModelPreference::Custom("custom-model".to_string()).model_id(),
                 Some("custom-model")

@@ -365,7 +365,7 @@ Command Line Options:
 
   Examples:
     cowork                              # Start interactive chat
-    cowork -p openai -m gpt-4o          # Use OpenAI with GPT-4o
+    cowork -p openai -m gpt-4.1          # Use OpenAI with GPT-4.1
     cowork --one-shot "explain main.rs" # Single prompt, then exit
     cowork tools                        # List available tools
     cowork config                       # Show current config
@@ -389,7 +389,7 @@ Configuration:
 
     [providers.openai]
     provider_type = "openai"
-    model = "gpt-4o"
+    model = "gpt-4.1"
     api_key_env = "OPENAI_API_KEY"
 
     [approval]

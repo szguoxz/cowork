@@ -510,7 +510,7 @@ mod tests {
                 metadata: AssemblyMetadata::default(),
             };
 
-            assert_eq!(prompt.model_id(), Some("claude-3-haiku"));
+            assert_eq!(prompt.model_id(), Some("claude-3-5-haiku-20241022"));
         }
     }
 

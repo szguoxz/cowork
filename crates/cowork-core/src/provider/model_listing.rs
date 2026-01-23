@@ -88,6 +88,9 @@ fn get_groq_context_window(model: &str) -> Option<usize> {
 fn get_open_source_context_window(model: &str) -> Option<usize> {
     // Common open source models hosted on Together, Fireworks, etc.
     if model.contains("llama") {
+        if model.contains("llama-4") || model.contains("llama4") {
+            return Some(1_000_000); // Llama 4 Maverick: 1M context
+        }
         if model.contains("3.1") || model.contains("3.2") || model.contains("3.3") {
             return Some(128_000);
         }
@@ -241,37 +244,42 @@ async fn fetch_openai_models(client: &Client, api_key: &str) -> Result<Vec<Model
     let mut models = sort_models(chat_models);
 
     // Ensure we have at least the known good models at the top
-    ensure_model_exists_with_context(&mut models, "gpt-5", true, 256_000);
-    ensure_model_exists_with_context(&mut models, "gpt-4o", false, 128_000);
-    ensure_model_exists_with_context(&mut models, "gpt-4o-mini", false, 128_000);
-    ensure_model_exists_with_context(&mut models, "o1", false, 200_000);
+    ensure_model_exists_with_context(&mut models, "gpt-4.1", true, 1_000_000);
+    ensure_model_exists_with_context(&mut models, "gpt-4.1-mini", false, 1_000_000);
+    ensure_model_exists_with_context(&mut models, "o3", false, 200_000);
+    ensure_model_exists_with_context(&mut models, "o4-mini", false, 200_000);
 
     Ok(models)
 }
 
 fn is_openai_chat_model(id: &str) -> bool {
-    // Include GPT-5, GPT-4, GPT-3.5, o1/o3 models, exclude embeddings, whisper, dall-e, etc.
-    (id.starts_with("gpt-5") || id.starts_with("gpt-4") || id.starts_with("gpt-3.5") || id.starts_with("o1") || id.starts_with("o3"))
+    // Include GPT-5, GPT-4, GPT-3.5, o1/o3/o4 models, exclude embeddings, whisper, dall-e, etc.
+    (id.starts_with("gpt-5") || id.starts_with("gpt-4") || id.starts_with("gpt-3.5") || id.starts_with("o1") || id.starts_with("o3") || id.starts_with("o4"))
         && !id.contains("instruct")
         && !id.contains("vision")
         && !id.contains("realtime")
 }
 
 fn is_openai_recommended(id: &str) -> bool {
-    id == "gpt-5" || id.starts_with("gpt-5-") || id == "gpt-4o" || id == "o1"
+    id == "gpt-4.1" || id.starts_with("gpt-4.1-") || id == "o3" || id == "gpt-5" || id.starts_with("gpt-5-")
 }
 
 /// Get context window for an OpenAI model
 fn get_openai_context_window(model_id: &str) -> Option<u32> {
     let id = model_id.to_lowercase();
 
-    // GPT-5 series (estimated based on typical progression)
+    // GPT-5 series
     if id.starts_with("gpt-5") {
         return Some(256_000);
     }
 
-    // o1/o3 reasoning models
-    if id.starts_with("o1") || id.starts_with("o3") {
+    // GPT-4.1 series (1M context window)
+    if id.starts_with("gpt-4.1") {
+        return Some(1_000_000);
+    }
+
+    // o-series reasoning models
+    if id.starts_with("o1") || id.starts_with("o3") || id.starts_with("o4") {
         return Some(200_000);
     }
 
@@ -367,27 +375,21 @@ async fn fetch_anthropic_models(client: &Client, api_key: &str) -> Result<Vec<Mo
 
 fn get_anthropic_known_models() -> Vec<ModelInfo> {
     vec![
-        ModelInfo::new("claude-opus-4-20250514")
+        ModelInfo::new("claude-opus-4-5-20251101")
             .with_name("Claude Opus 4.5")
-            .with_context_window(200_000)
-            .recommended(),
+            .with_context_window(200_000),
         ModelInfo::new("claude-sonnet-4-20250514")
             .with_name("Claude Sonnet 4")
-            .with_context_window(200_000),
-        ModelInfo::new("claude-3-5-sonnet-20241022")
-            .with_name("Claude 3.5 Sonnet")
-            .with_context_window(200_000),
+            .with_context_window(200_000)
+            .recommended(),
         ModelInfo::new("claude-3-5-haiku-20241022")
             .with_name("Claude 3.5 Haiku")
-            .with_context_window(200_000),
-        ModelInfo::new("claude-3-opus-20240229")
-            .with_name("Claude 3 Opus")
             .with_context_window(200_000),
     ]
 }
 
 fn is_anthropic_recommended(id: &str) -> bool {
-    id.contains("sonnet-4") || id.contains("claude-3-5-sonnet")
+    id.contains("sonnet-4") || id.contains("opus-4-5")
 }
 
 // ============================================================================
@@ -461,7 +463,7 @@ fn is_gemini_chat_model(name: &str) -> bool {
 }
 
 fn is_gemini_recommended(id: &str) -> bool {
-    id == "gemini-2.0-flash" || id == "gemini-1.5-pro"
+    id == "gemini-2.5-flash" || id == "gemini-2.5-pro"
 }
 
 // ============================================================================
@@ -829,13 +831,13 @@ mod tests {
 
     #[test]
     fn test_model_info() {
-        let model = ModelInfo::new("gpt-4o")
-            .with_name("GPT-4o")
-            .with_description("Latest GPT-4 model")
+        let model = ModelInfo::new("gpt-4.1")
+            .with_name("GPT-4.1")
+            .with_description("Latest GPT-4.1 model")
             .recommended();
 
-        assert_eq!(model.id, "gpt-4o");
-        assert_eq!(model.display_name(), "GPT-4o");
+        assert_eq!(model.id, "gpt-4.1");
+        assert_eq!(model.display_name(), "GPT-4.1");
         assert!(model.recommended);
     }
 

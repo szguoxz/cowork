@@ -23,7 +23,7 @@ async fn validate_anthropic_key() -> bool {
         return false;
     }
 
-    let provider = GenAIProvider::new(ProviderType::Anthropic, Some("claude-3-haiku-20240307"));
+    let provider = GenAIProvider::new(ProviderType::Anthropic, Some("claude-3-5-haiku-20241022"));
     let messages = vec![LlmMessage::user("Hi")];
 
     provider.chat(messages, None).await.is_ok()
@@ -35,7 +35,7 @@ async fn validate_openai_key() -> bool {
         return false;
     }
 
-    let provider = GenAIProvider::new(ProviderType::OpenAI, Some("gpt-4o-mini"));
+    let provider = GenAIProvider::new(ProviderType::OpenAI, Some("gpt-4.1-nano"));
     let messages = vec![LlmMessage::user("Hi")];
 
     provider.chat(messages, None).await.is_ok()
@@ -144,8 +144,8 @@ mod provider_creation_tests {
 
     #[test]
     fn test_provider_with_custom_model() {
-        let provider = GenAIProvider::new(ProviderType::Anthropic, Some("claude-3-opus-20240229"));
-        assert_eq!(provider.model(), "claude-3-opus-20240229");
+        let provider = GenAIProvider::new(ProviderType::Anthropic, Some("claude-opus-4-5-20251101"));
+        assert_eq!(provider.model(), "claude-opus-4-5-20251101");
     }
 
     #[test]

@@ -166,8 +166,8 @@ pub async fn fetch_provider_models(provider_type: String) -> Result<Vec<ModelInf
                 description: "Best balance of speed and capability".to_string(),
             },
             ModelInfo {
-                id: "claude-opus-4-20250514".to_string(),
-                name: "Claude Opus 4".to_string(),
+                id: "claude-opus-4-5-20251101".to_string(),
+                name: "Claude Opus 4.5".to_string(),
                 description: "Most capable model".to_string(),
             },
             ModelInfo {
@@ -178,14 +178,19 @@ pub async fn fetch_provider_models(provider_type: String) -> Result<Vec<ModelInf
         ],
         ProviderType::OpenAI => vec![
             ModelInfo {
-                id: "gpt-4o".to_string(),
-                name: "GPT-4o".to_string(),
-                description: "Latest GPT-4 model".to_string(),
+                id: "gpt-4.1".to_string(),
+                name: "GPT-4.1".to_string(),
+                description: "Latest GPT-4.1 model with 1M context".to_string(),
             },
             ModelInfo {
-                id: "gpt-4-turbo".to_string(),
-                name: "GPT-4 Turbo".to_string(),
-                description: "Fast GPT-4".to_string(),
+                id: "gpt-4.1-mini".to_string(),
+                name: "GPT-4.1 Mini".to_string(),
+                description: "Fast and efficient GPT-4.1".to_string(),
+            },
+            ModelInfo {
+                id: "o3".to_string(),
+                name: "o3".to_string(),
+                description: "Advanced reasoning model".to_string(),
             },
         ],
         _ => vec![],

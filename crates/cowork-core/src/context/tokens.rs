@@ -280,6 +280,10 @@ mod tests {
         let claude_haiku = TokenCounter::with_model(ProviderType::Anthropic, "claude-3-haiku");
         assert_eq!(claude_haiku.context_limit(), 200_000);
 
+        // GPT-4.1 models
+        let gpt41 = TokenCounter::with_model(ProviderType::OpenAI, "gpt-4.1");
+        assert_eq!(gpt41.context_limit(), 1_000_000);
+
         // GPT-4 models
         let gpt4o = TokenCounter::with_model(ProviderType::OpenAI, "gpt-4o");
         assert_eq!(gpt4o.context_limit(), 128_000);
@@ -326,6 +330,7 @@ mod tests {
 
         // Test via the centralized function
         assert_eq!(get_model_context_limit(ProviderType::Anthropic, "claude-3-opus"), Some(200_000));
+        assert_eq!(get_model_context_limit(ProviderType::OpenAI, "gpt-4.1"), Some(1_000_000));
         assert_eq!(get_model_context_limit(ProviderType::OpenAI, "gpt-4o-mini"), Some(128_000));
         assert_eq!(get_model_context_limit(ProviderType::OpenAI, "gpt-5"), Some(256_000));
         assert_eq!(get_model_context_limit(ProviderType::OpenAI, "o1-preview"), Some(200_000));

@@ -236,11 +236,11 @@ impl Config {
 /// Maps capability tiers to specific model names for each provider
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelTiers {
-    /// Fast model for quick, simple tasks (e.g., Haiku, gpt-4o-mini)
+    /// Fast model for quick, simple tasks (e.g., Haiku, gpt-4.1-mini)
     pub fast: String,
-    /// Balanced model for general tasks (e.g., Sonnet, gpt-4o)
+    /// Balanced model for general tasks (e.g., Sonnet, gpt-4.1)
     pub balanced: String,
-    /// Powerful model for complex reasoning (e.g., Opus, o1)
+    /// Powerful model for complex reasoning (e.g., Opus, o3)
     pub powerful: String,
 }
 
@@ -249,24 +249,24 @@ impl ModelTiers {
     pub fn anthropic() -> Self {
         Self {
             fast: "claude-3-5-haiku-20241022".to_string(),
-            balanced: "claude-opus-4-20250514".to_string(),
-            powerful: "claude-opus-4-20250514".to_string(),
+            balanced: "claude-sonnet-4-20250514".to_string(),
+            powerful: "claude-opus-4-5-20251101".to_string(),
         }
     }
 
     /// Default tiers for OpenAI
     pub fn openai() -> Self {
         Self {
-            fast: "gpt-4o-mini".to_string(),
-            balanced: "gpt-5".to_string(),
-            powerful: "gpt-5".to_string(),
+            fast: "gpt-4.1-mini".to_string(),
+            balanced: "gpt-4.1".to_string(),
+            powerful: "o3".to_string(),
         }
     }
 
     /// Default tiers for Gemini
     pub fn gemini() -> Self {
         Self {
-            fast: "gemini-2.0-flash".to_string(),
+            fast: "gemini-2.5-flash".to_string(),
             balanced: "gemini-2.5-pro".to_string(),
             powerful: "gemini-2.5-pro".to_string(),
         }
@@ -293,9 +293,9 @@ impl ModelTiers {
     /// Default tiers for xAI (Grok)
     pub fn xai() -> Self {
         Self {
-            fast: "grok-2".to_string(),
-            balanced: "grok-2".to_string(),
-            powerful: "grok-3".to_string(),
+            fast: "grok-3-mini-beta".to_string(),
+            balanced: "grok-3-beta".to_string(),
+            powerful: "grok-3-beta".to_string(),
         }
     }
 
@@ -311,9 +311,9 @@ impl ModelTiers {
     /// Default tiers for Perplexity
     pub fn perplexity() -> Self {
         Self {
-            fast: "llama-3.1-sonar-small-128k-online".to_string(),
-            balanced: "llama-3.1-sonar-large-128k-online".to_string(),
-            powerful: "llama-3.1-sonar-huge-128k-online".to_string(),
+            fast: "sonar".to_string(),
+            balanced: "sonar-pro".to_string(),
+            powerful: "sonar-reasoning".to_string(),
         }
     }
 
@@ -329,8 +329,8 @@ impl ModelTiers {
     /// Default tiers for Together AI
     pub fn together() -> Self {
         Self {
-            fast: "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free".to_string(),
-            balanced: "meta-llama/Llama-3.3-70B-Instruct-Turbo".to_string(),
+            fast: "meta-llama/Llama-3.3-70B-Instruct-Turbo".to_string(),
+            balanced: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8".to_string(),
             powerful: "deepseek-ai/DeepSeek-R1".to_string(),
         }
     }
@@ -451,7 +451,7 @@ impl ProviderConfig {
             provider_type: "anthropic".to_string(),
             api_key: None,
             api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
-            model: "claude-opus-4-20250514".to_string(),
+            model: "claude-sonnet-4-20250514".to_string(),
             model_tiers: None, // Uses ModelTiers::anthropic() as default
             base_url: None,
             default_max_tokens: 4096,
@@ -465,7 +465,7 @@ impl ProviderConfig {
             provider_type: "openai".to_string(),
             api_key: None,
             api_key_env: Some("OPENAI_API_KEY".to_string()),
-            model: "gpt-5".to_string(),
+            model: "gpt-4.1".to_string(),
             model_tiers: None, // Uses ModelTiers::openai() as default
             base_url: None,
             default_max_tokens: 4096,
@@ -535,7 +535,7 @@ impl ProviderConfig {
             provider_type: "together".to_string(),
             api_key: None,
             api_key_env: Some("TOGETHER_API_KEY".to_string()),
-            model: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo".to_string(),
+            model: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8".to_string(),
             model_tiers: None,
             base_url: None,
             default_max_tokens: 4096,
@@ -549,7 +549,7 @@ impl ProviderConfig {
             provider_type: "fireworks".to_string(),
             api_key: None,
             api_key_env: Some("FIREWORKS_API_KEY".to_string()),
-            model: "accounts/fireworks/models/llama-v3p1-70b-instruct".to_string(),
+            model: "accounts/fireworks/models/llama-v3p3-70b-instruct".to_string(),
             model_tiers: None,
             base_url: None,
             default_max_tokens: 4096,
@@ -1067,7 +1067,7 @@ mod tests {
         // Check default provider settings
         let anthropic = config.get_default_provider().unwrap();
         assert_eq!(anthropic.provider_type, "anthropic");
-        assert_eq!(anthropic.model, "claude-opus-4-20250514");
+        assert_eq!(anthropic.model, "claude-sonnet-4-20250514");
     }
 
     #[test]
@@ -1076,10 +1076,10 @@ mod tests {
 
         // Check each provider
         let anthropic = config.get_provider("anthropic").unwrap();
-        assert_eq!(anthropic.model, "claude-opus-4-20250514");
+        assert_eq!(anthropic.model, "claude-sonnet-4-20250514");
 
         let openai = config.get_provider("openai").unwrap();
-        assert_eq!(openai.model, "gpt-5");
+        assert_eq!(openai.model, "gpt-4.1");
 
         let gemini = config.get_provider("gemini").unwrap();
         assert_eq!(gemini.model, "gemini-2.5-pro");

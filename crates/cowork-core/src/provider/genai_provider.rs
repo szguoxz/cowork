@@ -180,16 +180,16 @@ impl ProviderType {
     /// Get the default model for this provider
     pub fn default_model(&self) -> &'static str {
         match self {
-            ProviderType::OpenAI => "gpt-5",
-            ProviderType::Anthropic => "claude-opus-4-20250514",
-            ProviderType::Gemini => "gemini-2.0-flash",
+            ProviderType::OpenAI => "gpt-4.1",
+            ProviderType::Anthropic => "claude-sonnet-4-20250514",
+            ProviderType::Gemini => "gemini-2.5-flash",
             ProviderType::Cohere => "command-r-plus",
-            ProviderType::Perplexity => "llama-3.1-sonar-large-128k-online",
+            ProviderType::Perplexity => "sonar-pro",
             ProviderType::Groq => "llama-3.3-70b-versatile",
-            ProviderType::XAI => "grok-2",
+            ProviderType::XAI => "grok-3-beta",
             ProviderType::DeepSeek => "deepseek-chat",
-            ProviderType::Together => "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-            ProviderType::Fireworks => "accounts/fireworks/models/llama-v3p1-70b-instruct",
+            ProviderType::Together => "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+            ProviderType::Fireworks => "accounts/fireworks/models/llama-v3p3-70b-instruct",
             ProviderType::Zai => "glm-4-plus",
             ProviderType::Nebius => "meta-llama/Meta-Llama-3.1-70B-Instruct",
             ProviderType::MIMO => "mimo-v2-flash",
@@ -882,26 +882,24 @@ pub fn create_provider(
 pub mod models {
     /// OpenAI models
     pub mod openai {
-        pub const GPT_4O: &str = "gpt-4o";
-        pub const GPT_4O_MINI: &str = "gpt-4o-mini";
-        pub const GPT_4_TURBO: &str = "gpt-4-turbo";
-        pub const O1: &str = "o1";
-        pub const O1_MINI: &str = "o1-mini";
+        pub const GPT_4_1: &str = "gpt-4.1";
+        pub const GPT_4_1_MINI: &str = "gpt-4.1-mini";
+        pub const GPT_4_1_NANO: &str = "gpt-4.1-nano";
+        pub const O3: &str = "o3";
+        pub const O4_MINI: &str = "o4-mini";
     }
 
     /// Anthropic models
     pub mod anthropic {
+        pub const CLAUDE_OPUS_4_5: &str = "claude-opus-4-5-20251101";
         pub const CLAUDE_SONNET_4: &str = "claude-sonnet-4-20250514";
-        pub const CLAUDE_3_5_SONNET: &str = "claude-3-5-sonnet-20241022";
         pub const CLAUDE_3_5_HAIKU: &str = "claude-3-5-haiku-20241022";
-        pub const CLAUDE_3_OPUS: &str = "claude-3-opus-20240229";
     }
 
     /// Google Gemini models
     pub mod gemini {
-        pub const GEMINI_2_0_FLASH: &str = "gemini-2.0-flash";
-        pub const GEMINI_1_5_PRO: &str = "gemini-1.5-pro";
-        pub const GEMINI_1_5_FLASH: &str = "gemini-1.5-flash";
+        pub const GEMINI_2_5_PRO: &str = "gemini-2.5-pro";
+        pub const GEMINI_2_5_FLASH: &str = "gemini-2.5-flash";
     }
 
     /// Cohere models

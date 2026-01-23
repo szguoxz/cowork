@@ -61,12 +61,12 @@ impl std::str::FromStr for AgentType {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelTier {
-    /// Fast model for quick tasks (e.g., Haiku, gpt-4o-mini)
+    /// Fast model for quick tasks (e.g., Haiku, gpt-4.1-mini)
     Fast,
-    /// Balanced model for general tasks (e.g., Sonnet, gpt-4o)
+    /// Balanced model for general tasks (e.g., Sonnet, gpt-4.1)
     #[default]
     Balanced,
-    /// Powerful model for complex reasoning (e.g., Opus, o1)
+    /// Powerful model for complex reasoning (e.g., Opus, o3)
     Powerful,
 }
 

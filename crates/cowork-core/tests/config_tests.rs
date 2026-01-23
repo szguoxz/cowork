@@ -132,7 +132,7 @@ default_temperature = 0.7
 
 [providers.openai]
 provider_type = "openai"
-model = "gpt-4o"
+model = "gpt-4.1"
 default_max_tokens = 8192
 default_temperature = 0.5
 
@@ -157,7 +157,7 @@ telemetry = true
         assert_eq!(config.default_provider, "openai");
 
         let openai = config.get_provider("openai").unwrap();
-        assert_eq!(openai.model, "gpt-4o");
+        assert_eq!(openai.model, "gpt-4.1");
 
         let anthropic = config.get_provider("anthropic").unwrap();
         assert_eq!(anthropic.model, "claude-sonnet-4-20250514");
@@ -175,7 +175,7 @@ telemetry = true
         let toml_content = r#"
 [provider]
 provider_type = "openai"
-model = "gpt-4o"
+model = "gpt-4.1"
 default_max_tokens = 8192
 default_temperature = 0.5
 
@@ -193,7 +193,7 @@ timeout_secs = 600
         assert!(config.provider.is_some());
         let provider = config.provider.as_ref().unwrap();
         assert_eq!(provider.provider_type, "openai");
-        assert_eq!(provider.model, "gpt-4o");
+        assert_eq!(provider.model, "gpt-4.1");
     }
 
     #[test]
