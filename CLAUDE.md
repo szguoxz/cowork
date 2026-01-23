@@ -6,6 +6,7 @@
 - No hand-rolled loops when a shared abstraction exists (e.g., use `AgentLoop` for subagents).
 - Tool result truncation and context management happen in one place (`AgentLoop`).
 - Subagents use the same infrastructure as the main session, configured via `ToolScope`, trust-all approval, disabled hooks, and no persistence.
+- Avoid `async_trait` — we use Rust edition 2024 (requires rustc 1.85+), which supports native `async fn` in traits. Use `impl Future` or `async fn` directly in trait definitions instead of the `#[async_trait]` macro.
 
 ## Architecture Notes
 

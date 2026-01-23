@@ -26,4 +26,4 @@ Welcome to the Cowork documentation! This guide covers everything you need to kn
 
 ## License
 
-MIT License - See [LICENSE](../LICENSE) for details.
+Apache-2.0 License - See [LICENSE](../LICENSE) for details.

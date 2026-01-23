@@ -25,7 +25,7 @@ pub use genai_provider::{
     StreamChunk,
 };
 
-pub use model_listing::{fetch_models, get_model_context_limit, ModelInfo};
+pub use model_listing::{get_known_models, get_model_context_limit, ModelInfo};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

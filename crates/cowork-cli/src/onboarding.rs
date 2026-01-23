@@ -4,10 +4,10 @@
 //! and initial setup.
 
 use console::style;
-use dialoguer::{theme::ColorfulTheme, Input, Password, Select};
+use dialoguer::{theme::ColorfulTheme, Password, Select};
 
 use cowork_core::config::{ConfigManager, ProviderConfig};
-use cowork_core::provider::{fetch_models, model_catalog, GenAIProvider, ModelInfo, ProviderType};
+use cowork_core::provider::{model_catalog, GenAIProvider, ProviderType};
 
 /// Provider information for display
 pub struct ProviderInfo {
@@ -16,8 +16,10 @@ pub struct ProviderInfo {
     pub description: &'static str,
     pub signup_url: &'static str,
     pub env_var: &'static str,
-    #[allow(dead_code)] // Kept for reference, models now fetched from API
+    /// Default model ID (balanced tier from model_catalog)
     pub default_model: &'static str,
+    /// Default base URL (from model_catalog, can be overridden in config)
+    pub base_url: &'static str,
 }
 
 /// Get provider info for a provider type
@@ -30,6 +32,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "https://console.anthropic.com/",
             env_var: "ANTHROPIC_API_KEY",
             default_model: model_catalog::ANTHROPIC_BALANCED.0,
+            base_url: model_catalog::ANTHROPIC_BASE_URL,
         },
         ProviderType::OpenAI => ProviderInfo {
             name: "openai",
@@ -38,6 +41,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "https://platform.openai.com/",
             env_var: "OPENAI_API_KEY",
             default_model: model_catalog::OPENAI_BALANCED.0,
+            base_url: model_catalog::OPENAI_BASE_URL,
         },
         ProviderType::Gemini => ProviderInfo {
             name: "gemini",
@@ -45,7 +49,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Large context window (1M tokens)",
             signup_url: "https://aistudio.google.com/",
             env_var: "GEMINI_API_KEY",
-            default_model: model_catalog::GEMINI_FAST.0,
+            default_model: model_catalog::GEMINI_BALANCED.0,
+            base_url: model_catalog::GEMINI_BASE_URL,
         },
         ProviderType::Groq => ProviderInfo {
             name: "groq",
@@ -54,6 +59,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "https://console.groq.com/",
             env_var: "GROQ_API_KEY",
             default_model: model_catalog::GROQ_BALANCED.0,
+            base_url: model_catalog::GROQ_BASE_URL,
         },
         ProviderType::DeepSeek => ProviderInfo {
             name: "deepseek",
@@ -62,6 +68,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "https://platform.deepseek.com/",
             env_var: "DEEPSEEK_API_KEY",
             default_model: model_catalog::DEEPSEEK_BALANCED.0,
+            base_url: model_catalog::DEEPSEEK_BASE_URL,
         },
         ProviderType::XAI => ProviderInfo {
             name: "xai",
@@ -70,6 +77,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "https://x.ai/api",
             env_var: "XAI_API_KEY",
             default_model: model_catalog::XAI_BALANCED.0,
+            base_url: model_catalog::XAI_BASE_URL,
         },
         ProviderType::Together => ProviderInfo {
             name: "together",
@@ -78,6 +86,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "https://api.together.xyz/",
             env_var: "TOGETHER_API_KEY",
             default_model: model_catalog::TOGETHER_BALANCED.0,
+            base_url: model_catalog::TOGETHER_BASE_URL,
         },
         ProviderType::Fireworks => ProviderInfo {
             name: "fireworks",
@@ -86,6 +95,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "https://fireworks.ai/",
             env_var: "FIREWORKS_API_KEY",
             default_model: model_catalog::FIREWORKS_BALANCED.0,
+            base_url: model_catalog::FIREWORKS_BASE_URL,
         },
         ProviderType::Zai => ProviderInfo {
             name: "zai",
@@ -94,6 +104,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "https://z.ai/",
             env_var: "ZAI_API_KEY",
             default_model: model_catalog::ZAI_BALANCED.0,
+            base_url: model_catalog::ZAI_BASE_URL,
         },
         ProviderType::Nebius => ProviderInfo {
             name: "nebius",
@@ -102,6 +113,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "https://studio.nebius.ai/",
             env_var: "NEBIUS_API_KEY",
             default_model: model_catalog::NEBIUS_BALANCED.0,
+            base_url: model_catalog::NEBIUS_BASE_URL,
         },
         ProviderType::MIMO => ProviderInfo {
             name: "mimo",
@@ -110,6 +122,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "https://xiaomimimo.com/",
             env_var: "MIMO_API_KEY",
             default_model: model_catalog::MIMO_BALANCED.0,
+            base_url: model_catalog::MIMO_BASE_URL,
         },
         ProviderType::BigModel => ProviderInfo {
             name: "bigmodel",
@@ -118,6 +131,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "https://open.bigmodel.cn/",
             env_var: "BIGMODEL_API_KEY",
             default_model: model_catalog::BIGMODEL_BALANCED.0,
+            base_url: model_catalog::BIGMODEL_BASE_URL,
         },
         ProviderType::Ollama => ProviderInfo {
             name: "ollama",
@@ -126,6 +140,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "https://ollama.ai/",
             env_var: "",
             default_model: model_catalog::OLLAMA_BALANCED.0,
+            base_url: model_catalog::OLLAMA_BASE_URL,
         },
         _ => ProviderInfo {
             name: "unknown",
@@ -134,6 +149,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             signup_url: "",
             env_var: "API_KEY",
             default_model: "",
+            base_url: "",
         },
     }
 }
@@ -189,6 +205,7 @@ impl OnboardingWizard {
         // Step 1: Provider selection
         let provider_type = self.select_provider()?;
         let provider_info = get_provider_info(provider_type);
+        let model = provider_info.default_model;
 
         // Loop for API key retry
         loop {
@@ -199,24 +216,19 @@ impl OnboardingWizard {
                 Some(self.input_api_key(&provider_info)?)
             };
 
-            // Step 3: Model selection (fetches from API)
-            let model = self
-                .select_model(provider_type, api_key.as_deref())
-                .await?;
-
-            // Step 4: Connection test (skip for Ollama)
+            // Step 3: Connection test (skip for Ollama)
             if let Some(ref key) = api_key
-                && !self.test_connection(provider_type, key, &model).await? {
+                && !self.test_connection(provider_type, key, model).await? {
                     // User chose to try again - loop back to step 2
                     println!("{}", style("Let's try again...").dim());
                     println!();
                     continue;
                 }
 
-            // Step 5: Save configuration
-            self.save_config(provider_type, &provider_info, api_key.as_deref(), &model)?;
+            // Save configuration
+            self.save_config(provider_type, &provider_info, api_key.as_deref())?;
 
-            // Step 6: Show completion
+            // Show completion
             self.show_completion(&provider_info);
 
             break;
@@ -271,7 +283,7 @@ impl OnboardingWizard {
     fn select_provider(&self) -> anyhow::Result<ProviderType> {
         println!(
             "{} {}",
-            style("Step 1 of 4:").bold().cyan(),
+            style("Step 1 of 3:").bold().cyan(),
             style("Choose your AI provider").bold()
         );
         println!();
@@ -301,7 +313,7 @@ impl OnboardingWizard {
     fn input_api_key(&self, provider_info: &ProviderInfo) -> anyhow::Result<String> {
         println!(
             "{} {}",
-            style("Step 2 of 4:").bold().cyan(),
+            style("Step 2 of 3:").bold().cyan(),
             style("Enter your API key").bold()
         );
         println!();
@@ -328,113 +340,6 @@ impl OnboardingWizard {
         Ok(api_key)
     }
 
-    async fn select_model(
-        &self,
-        provider_type: ProviderType,
-        api_key: Option<&str>,
-    ) -> anyhow::Result<String> {
-        println!(
-            "{} {}",
-            style("Step 3 of 4:").bold().cyan(),
-            style("Choose model").bold()
-        );
-        println!();
-
-        // Fetch available models from the provider API
-        let models = self.fetch_model_list(provider_type, api_key).await;
-
-        if models.is_empty() {
-            // Fallback to manual input if no models fetched
-            println!(
-                "  {}",
-                style("Could not fetch models. Please enter model name manually.").yellow()
-            );
-            println!();
-
-            let default_model = provider_type.default_model();
-            let model: String = Input::with_theme(&ColorfulTheme::default())
-                .with_prompt("Model name")
-                .default(default_model.to_string())
-                .interact_text()?;
-
-            println!();
-            return Ok(model);
-        }
-
-        // Build selection list
-        let items: Vec<String> = models
-            .iter()
-            .map(|m| {
-                let name = m.name.as_deref().unwrap_or(&m.id);
-                if m.recommended {
-                    format!("{} {}", name, style("(recommended)").green())
-                } else {
-                    name.to_string()
-                }
-            })
-            .collect();
-
-        let selection = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt("Select a model")
-            .items(&items)
-            .default(0)
-            .interact()?;
-
-        let model = models[selection].id.clone();
-        println!();
-        Ok(model)
-    }
-
-    async fn fetch_model_list(
-        &self,
-        provider_type: ProviderType,
-        api_key: Option<&str>,
-    ) -> Vec<ModelInfo> {
-        let Some(key) = api_key else {
-            // For Ollama, try to fetch without key
-            if provider_type == ProviderType::Ollama {
-                match fetch_models(provider_type, "").await {
-                    Ok(models) => return models,
-                    Err(_) => return Vec::new(),
-                }
-            }
-            return Vec::new();
-        };
-
-        let spinner = indicatif::ProgressBar::new_spinner();
-        spinner.set_style(
-            indicatif::ProgressStyle::default_spinner()
-                .template("{spinner:.blue} {msg}")
-                .unwrap(),
-        );
-        spinner.set_message("Fetching available models...");
-        spinner.enable_steady_tick(std::time::Duration::from_millis(100));
-
-        let result = fetch_models(provider_type, key).await;
-        spinner.finish_and_clear();
-
-        match result {
-            Ok(models) => {
-                println!(
-                    "  {} Found {} models",
-                    style("✓").green(),
-                    models.len()
-                );
-                println!();
-                models
-            }
-            Err(e) => {
-                println!(
-                    "  {} Could not fetch models: {}",
-                    style("⚠").yellow(),
-                    style(e.to_string()).dim()
-                );
-                println!();
-                Vec::new()
-            }
-        }
-    }
-
     async fn test_connection(
         &self,
         provider_type: ProviderType,
@@ -443,7 +348,7 @@ impl OnboardingWizard {
     ) -> anyhow::Result<bool> {
         println!(
             "{} {}",
-            style("Step 4 of 4:").bold().cyan(),
+            style("Step 3 of 3:").bold().cyan(),
             style("Testing connection").bold()
         );
         println!();
@@ -522,7 +427,6 @@ impl OnboardingWizard {
         provider_type: ProviderType,
         provider_info: &ProviderInfo,
         api_key: Option<&str>,
-        model: &str,
     ) -> anyhow::Result<()> {
         // Update or create provider config
         let provider_name = provider_info.name;
@@ -542,10 +446,12 @@ impl OnboardingWizard {
                 _ => ProviderConfig::anthropic(),
             });
 
-        provider_config.model = model.to_string();
+        provider_config.model = provider_info.default_model.to_string();
         if let Some(key) = api_key {
             provider_config.api_key = Some(key.to_string());
         }
+        // base_url defaults to None (uses the provider's default endpoint).
+        // Pro users can set a custom base_url in the config file.
 
         // Set provider and make it default
         self.config_manager
@@ -602,9 +508,11 @@ impl OnboardingWizard {
         );
         println!(
             "  Model:    {}",
-            style(&self.config_manager.config().providers.get(provider_info.name)
-                .map(|p| p.model.as_str())
-                .unwrap_or("default")).green()
+            style(provider_info.default_model).green()
+        );
+        println!(
+            "  Base URL: {}",
+            style(provider_info.base_url).dim()
         );
         println!();
 

@@ -1,12 +1,33 @@
 //! Centralized model catalog
 //!
-//! Single source of truth for all model IDs, display names, and context windows.
-//! All other files import from here. Update this file when models change.
+//! Single source of truth for all model IDs, display names, context windows,
+//! and default base URLs. All other files import from here.
+//! Update this file when models change.
 //!
-//! Each constant is a tuple: (model_id, display_name, context_window)
+//! Each model constant is a tuple: (model_id, display_name, context_window)
 
 /// Model entry: (model_id, display_name, context_window)
 pub type ModelEntry = (&'static str, &'static str, usize);
+
+// ============================================================================
+// Default base URLs per provider
+// ============================================================================
+
+pub const ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
+pub const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+pub const GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
+pub const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
+pub const GROQ_BASE_URL: &str = "https://api.groq.com/openai/v1";
+pub const XAI_BASE_URL: &str = "https://api.x.ai/v1";
+pub const COHERE_BASE_URL: &str = "https://api.cohere.com/v2";
+pub const PERPLEXITY_BASE_URL: &str = "https://api.perplexity.ai";
+pub const TOGETHER_BASE_URL: &str = "https://api.together.xyz/v1";
+pub const FIREWORKS_BASE_URL: &str = "https://api.fireworks.ai/inference/v1";
+pub const ZAI_BASE_URL: &str = "https://open.bigmodel.cn/api/paas/v4";
+pub const NEBIUS_BASE_URL: &str = "https://api.studio.nebius.ai/v1";
+pub const MIMO_BASE_URL: &str = "https://api.xiaomimimo.com/v1";
+pub const BIGMODEL_BASE_URL: &str = "https://open.bigmodel.cn/api/paas/v4";
+pub const OLLAMA_BASE_URL: &str = "http://localhost:11434";
 
 // ============================================================================
 // Anthropic
