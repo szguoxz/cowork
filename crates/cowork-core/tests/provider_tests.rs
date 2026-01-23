@@ -401,3 +401,47 @@ mod integration_tests {
         }
     }
 }
+
+mod subagent_tests {
+    use std::sync::Arc;
+    use cowork_core::provider::ProviderType;
+    use cowork_core::tools::task::{AgentExecutionConfig, AgentInstanceRegistry, AgentType, ModelTier};
+    use cowork_core::tools::task::executor::run_subagent;
+
+    fn has_anthropic_key() -> bool {
+        std::env::var("ANTHROPIC_API_KEY").is_ok()
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_subagent_explore() {
+        if !has_anthropic_key() {
+            eprintln!("Skipping: ANTHROPIC_API_KEY not set");
+            return;
+        }
+
+        let workspace = std::env::current_dir().unwrap();
+        let registry = Arc::new(AgentInstanceRegistry::new());
+
+        let config = AgentExecutionConfig::new(workspace)
+            .with_provider(ProviderType::Anthropic)
+            .with_max_turns(3);
+
+        let result = run_subagent(
+            &AgentType::Explore,
+            &ModelTier::Fast,
+            "List the files in the current directory. Just return the listing.",
+            &config,
+            registry.clone(),
+            "test-subagent-explore",
+        )
+        .await;
+
+        println!("Subagent result: {:?}", result);
+        assert!(result.is_ok(), "Subagent failed: {:?}", result.err());
+
+        let output = result.unwrap();
+        assert!(!output.is_empty(), "Subagent returned empty output");
+        println!("Subagent output:\n{}", output);
+    }
+}
