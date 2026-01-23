@@ -20,6 +20,7 @@ pub mod session;
 pub mod skills;
 pub mod task;
 pub mod tools;
+pub mod update;
 
 pub use agent::{Agent, AgentRegistry};
 pub use approval::{ApprovalLevel, ApprovalPolicy, ApprovalRequest, ToolApprovalConfig};

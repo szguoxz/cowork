@@ -189,7 +189,13 @@ async fn main() -> anyhow::Result<()> {
         return run_one_shot(&workspace, provider_type, cli.model.as_deref(), &prompt, cli.auto_approve).await;
     }
 
-    // Background version check (skip if user is already running `update`)
+    // Apply staged update if available (skip if user is running `update`)
+    if !matches!(cli.command, Some(Commands::Update { .. })) {
+        // apply_staged_update prints its own status messages
+        let _ = update::apply_staged_update();
+    }
+
+    // Background version check: downloads eligible updates to staging
     let _version_check = if !matches!(cli.command, Some(Commands::Update { .. })) {
         Some(update::spawn_startup_check())
     } else {

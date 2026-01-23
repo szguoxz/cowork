@@ -9,8 +9,11 @@ pub mod state;
 pub mod streaming;
 
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::Manager;
 use tokio::sync::RwLock;
+
+use tauri_plugin_updater::UpdaterExt;
 
 use cowork_core::orchestration::SystemPrompt;
 use cowork_core::prompt::TemplateVars;
@@ -215,6 +218,38 @@ pub fn run() {
 
             // Spawn output handler to forward session outputs to frontend
             spawn_output_handler(app.handle().clone(), output_rx);
+
+            // Background update check: the Tauri updater only finds an update if
+            // latest.json exists on the release (which is only uploaded for [auto-update] releases).
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                // Delay to avoid blocking startup
+                tokio::time::sleep(Duration::from_secs(10)).await;
+
+                let updater = match handle.updater_builder().build() {
+                    Ok(u) => u,
+                    Err(e) => {
+                        tracing::debug!("Updater init failed: {}", e);
+                        return;
+                    }
+                };
+
+                match updater.check().await {
+                    Ok(Some(update)) => {
+                        tracing::info!("Update available: {}", update.version);
+                        // Download silently; applies on next app restart
+                        if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
+                            tracing::debug!("Update download/install failed: {}", e);
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::debug!("No update available");
+                    }
+                    Err(e) => {
+                        tracing::debug!("Update check failed: {}", e);
+                    }
+                }
+            });
 
             Ok(())
         })

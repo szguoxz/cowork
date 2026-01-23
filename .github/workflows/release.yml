@@ -8,6 +8,25 @@ permissions:
   contents: write
 
 jobs:
+  check-auto-update:
+    runs-on: ubuntu-latest
+    outputs:
+      is_auto_update: ${{ steps.check.outputs.result }}
+    steps:
+      - name: Check for [auto-update] marker
+        id: check
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data: release } = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag
+            });
+            return (release.body || '').includes('[auto-update]') ? 'true' : 'false';
+
   build-cli:
     strategy:
       fail-fast: false
@@ -61,6 +80,7 @@ jobs:
             cowork-cli-${{ matrix.target }}.zip
 
   build-app:
+    needs: check-auto-update
     strategy:
       fail-fast: false
       matrix:
@@ -116,3 +136,25 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: ${{ github.ref_name }}
           prerelease: true
+
+      - name: Remove updater manifest if not auto-update
+        if: needs.check-auto-update.outputs.is_auto_update != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = '${{ github.ref_name }}';
+            const { data: release } = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag
+            });
+            for (const asset of release.assets) {
+              if (asset.name === 'latest.json') {
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: asset.id
+                });
+                console.log('Removed latest.json (release does not have [auto-update] marker)');
+              }
+            }

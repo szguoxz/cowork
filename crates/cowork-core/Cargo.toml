@@ -50,6 +50,7 @@ chrono.workspace = true
 dirs = "6"
 zip = "7"
 dunce = "1"  # Cross-platform canonicalize without UNC prefix on Windows
+sha2 = "0.10"
 
 # Document parsing
 pdf-extract = "0.10"
