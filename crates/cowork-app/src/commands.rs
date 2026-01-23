@@ -9,7 +9,7 @@ use cowork_core::prompt::{
     AgentInfo, CommandInfo, ComponentRegistry, PluginInfo, RegistrySummary, SkillInfo,
 };
 use cowork_core::provider::{
-    create_provider_with_settings, LlmProvider, LlmRequest, ProviderType,
+    create_provider_with_settings, model_catalog, LlmProvider, LlmRequest, ProviderType,
 };
 use cowork_core::ApprovalLevel;
 
@@ -157,39 +157,39 @@ pub struct ModelInfo {
 pub async fn fetch_provider_models(provider_type: String) -> Result<Vec<ModelInfo>, String> {
     let ptype: ProviderType = provider_type.parse().map_err(|e: String| e)?;
 
-    // Return hardcoded models for now - could fetch from API later
+    // Return known models from catalog
     let models = match ptype {
         ProviderType::Anthropic => vec![
             ModelInfo {
-                id: "claude-sonnet-4-20250514".to_string(),
-                name: "Claude Sonnet 4".to_string(),
+                id: model_catalog::ANTHROPIC_BALANCED.0.to_string(),
+                name: model_catalog::ANTHROPIC_BALANCED.1.to_string(),
                 description: "Best balance of speed and capability".to_string(),
             },
             ModelInfo {
-                id: "claude-opus-4-5-20251101".to_string(),
-                name: "Claude Opus 4.5".to_string(),
+                id: model_catalog::ANTHROPIC_POWERFUL.0.to_string(),
+                name: model_catalog::ANTHROPIC_POWERFUL.1.to_string(),
                 description: "Most capable model".to_string(),
             },
             ModelInfo {
-                id: "claude-3-5-haiku-20241022".to_string(),
-                name: "Claude 3.5 Haiku".to_string(),
+                id: model_catalog::ANTHROPIC_FAST.0.to_string(),
+                name: model_catalog::ANTHROPIC_FAST.1.to_string(),
                 description: "Fast and efficient".to_string(),
             },
         ],
         ProviderType::OpenAI => vec![
             ModelInfo {
-                id: "gpt-4.1".to_string(),
-                name: "GPT-4.1".to_string(),
-                description: "Latest GPT-4.1 model with 1M context".to_string(),
+                id: model_catalog::OPENAI_BALANCED.0.to_string(),
+                name: model_catalog::OPENAI_BALANCED.1.to_string(),
+                description: "Latest GPT model".to_string(),
             },
             ModelInfo {
-                id: "gpt-4.1-mini".to_string(),
-                name: "GPT-4.1 Mini".to_string(),
-                description: "Fast and efficient GPT-4.1".to_string(),
+                id: model_catalog::OPENAI_FAST.0.to_string(),
+                name: model_catalog::OPENAI_FAST.1.to_string(),
+                description: "Fast and efficient".to_string(),
             },
             ModelInfo {
-                id: "o3".to_string(),
-                name: "o3".to_string(),
+                id: model_catalog::OPENAI_POWERFUL.0.to_string(),
+                name: model_catalog::OPENAI_POWERFUL.1.to_string(),
                 description: "Advanced reasoning model".to_string(),
             },
         ],

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::prompt::ComponentPaths;
+use crate::provider::model_catalog;
 
 use crate::error::{Error, Result};
 
@@ -236,9 +237,9 @@ impl Config {
 /// Maps capability tiers to specific model names for each provider
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelTiers {
-    /// Fast model for quick, simple tasks (e.g., Haiku, gpt-4.1-mini)
+    /// Fast model for quick, simple tasks (e.g., Haiku, GPT-5 Mini)
     pub fast: String,
-    /// Balanced model for general tasks (e.g., Sonnet, gpt-4.1)
+    /// Balanced model for general tasks (e.g., Sonnet, GPT-5.2)
     pub balanced: String,
     /// Powerful model for complex reasoning (e.g., Opus, o3)
     pub powerful: String,
@@ -248,135 +249,135 @@ impl ModelTiers {
     /// Default tiers for Anthropic
     pub fn anthropic() -> Self {
         Self {
-            fast: "claude-3-5-haiku-20241022".to_string(),
-            balanced: "claude-sonnet-4-20250514".to_string(),
-            powerful: "claude-opus-4-5-20251101".to_string(),
+            fast: model_catalog::ANTHROPIC_FAST.0.to_string(),
+            balanced: model_catalog::ANTHROPIC_BALANCED.0.to_string(),
+            powerful: model_catalog::ANTHROPIC_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for OpenAI
     pub fn openai() -> Self {
         Self {
-            fast: "gpt-4.1-mini".to_string(),
-            balanced: "gpt-4.1".to_string(),
-            powerful: "o3".to_string(),
+            fast: model_catalog::OPENAI_FAST.0.to_string(),
+            balanced: model_catalog::OPENAI_BALANCED.0.to_string(),
+            powerful: model_catalog::OPENAI_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for Gemini
     pub fn gemini() -> Self {
         Self {
-            fast: "gemini-2.5-flash".to_string(),
-            balanced: "gemini-2.5-pro".to_string(),
-            powerful: "gemini-2.5-pro".to_string(),
+            fast: model_catalog::GEMINI_FAST.0.to_string(),
+            balanced: model_catalog::GEMINI_BALANCED.0.to_string(),
+            powerful: model_catalog::GEMINI_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for DeepSeek
     pub fn deepseek() -> Self {
         Self {
-            fast: "deepseek-chat".to_string(),
-            balanced: "deepseek-chat".to_string(),
-            powerful: "deepseek-reasoner".to_string(),
+            fast: model_catalog::DEEPSEEK_FAST.0.to_string(),
+            balanced: model_catalog::DEEPSEEK_BALANCED.0.to_string(),
+            powerful: model_catalog::DEEPSEEK_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for Groq (fast inference)
     pub fn groq() -> Self {
         Self {
-            fast: "llama-3.1-8b-instant".to_string(),
-            balanced: "llama-3.3-70b-versatile".to_string(),
-            powerful: "llama-3.3-70b-versatile".to_string(),
+            fast: model_catalog::GROQ_FAST.0.to_string(),
+            balanced: model_catalog::GROQ_BALANCED.0.to_string(),
+            powerful: model_catalog::GROQ_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for xAI (Grok)
     pub fn xai() -> Self {
         Self {
-            fast: "grok-3-mini-beta".to_string(),
-            balanced: "grok-3-beta".to_string(),
-            powerful: "grok-3-beta".to_string(),
+            fast: model_catalog::XAI_FAST.0.to_string(),
+            balanced: model_catalog::XAI_BALANCED.0.to_string(),
+            powerful: model_catalog::XAI_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for Cohere
     pub fn cohere() -> Self {
         Self {
-            fast: "command-r".to_string(),
-            balanced: "command-r-plus".to_string(),
-            powerful: "command-r-plus".to_string(),
+            fast: model_catalog::COHERE_FAST.0.to_string(),
+            balanced: model_catalog::COHERE_BALANCED.0.to_string(),
+            powerful: model_catalog::COHERE_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for Perplexity
     pub fn perplexity() -> Self {
         Self {
-            fast: "sonar".to_string(),
-            balanced: "sonar-pro".to_string(),
-            powerful: "sonar-reasoning".to_string(),
+            fast: model_catalog::PERPLEXITY_FAST.0.to_string(),
+            balanced: model_catalog::PERPLEXITY_BALANCED.0.to_string(),
+            powerful: model_catalog::PERPLEXITY_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for Ollama (placeholder - users should configure)
     pub fn ollama() -> Self {
         Self {
-            fast: "llama3.2:3b".to_string(),
-            balanced: "llama3.2".to_string(),
-            powerful: "llama3.3:70b".to_string(),
+            fast: model_catalog::OLLAMA_FAST.0.to_string(),
+            balanced: model_catalog::OLLAMA_BALANCED.0.to_string(),
+            powerful: model_catalog::OLLAMA_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for Together AI
     pub fn together() -> Self {
         Self {
-            fast: "meta-llama/Llama-3.3-70B-Instruct-Turbo".to_string(),
-            balanced: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8".to_string(),
-            powerful: "deepseek-ai/DeepSeek-R1".to_string(),
+            fast: model_catalog::TOGETHER_FAST.0.to_string(),
+            balanced: model_catalog::TOGETHER_BALANCED.0.to_string(),
+            powerful: model_catalog::TOGETHER_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for Fireworks AI
     pub fn fireworks() -> Self {
         Self {
-            fast: "accounts/fireworks/models/llama-v3p3-70b-instruct".to_string(),
-            balanced: "accounts/fireworks/models/llama-v3p3-70b-instruct".to_string(),
-            powerful: "accounts/fireworks/models/deepseek-r1".to_string(),
+            fast: model_catalog::FIREWORKS_FAST.0.to_string(),
+            balanced: model_catalog::FIREWORKS_BALANCED.0.to_string(),
+            powerful: model_catalog::FIREWORKS_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for Zai (Zhipu AI)
     pub fn zai() -> Self {
         Self {
-            fast: "glm-4-flash".to_string(),
-            balanced: "glm-4-plus".to_string(),
-            powerful: "glm-4-plus".to_string(),
+            fast: model_catalog::ZAI_FAST.0.to_string(),
+            balanced: model_catalog::ZAI_BALANCED.0.to_string(),
+            powerful: model_catalog::ZAI_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for Nebius
     pub fn nebius() -> Self {
         Self {
-            fast: "meta-llama/Meta-Llama-3.1-8B-Instruct".to_string(),
-            balanced: "meta-llama/Meta-Llama-3.1-70B-Instruct".to_string(),
-            powerful: "deepseek-ai/DeepSeek-R1".to_string(),
+            fast: model_catalog::NEBIUS_FAST.0.to_string(),
+            balanced: model_catalog::NEBIUS_BALANCED.0.to_string(),
+            powerful: model_catalog::NEBIUS_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for MIMO
     pub fn mimo() -> Self {
         Self {
-            fast: "mimo-v2-flash".to_string(),
-            balanced: "mimo-v2-flash".to_string(),
-            powerful: "mimo-v2-flash".to_string(),
+            fast: model_catalog::MIMO_FAST.0.to_string(),
+            balanced: model_catalog::MIMO_BALANCED.0.to_string(),
+            powerful: model_catalog::MIMO_POWERFUL.0.to_string(),
         }
     }
 
     /// Default tiers for BigModel.cn
     pub fn bigmodel() -> Self {
         Self {
-            fast: "glm-4-flash".to_string(),
-            balanced: "glm-4-plus".to_string(),
-            powerful: "glm-4-plus".to_string(),
+            fast: model_catalog::BIGMODEL_FAST.0.to_string(),
+            balanced: model_catalog::BIGMODEL_BALANCED.0.to_string(),
+            powerful: model_catalog::BIGMODEL_POWERFUL.0.to_string(),
         }
     }
 
@@ -451,7 +452,7 @@ impl ProviderConfig {
             provider_type: "anthropic".to_string(),
             api_key: None,
             api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
-            model: "claude-sonnet-4-20250514".to_string(),
+            model: model_catalog::ANTHROPIC_BALANCED.0.to_string(),
             model_tiers: None, // Uses ModelTiers::anthropic() as default
             base_url: None,
             default_max_tokens: 4096,
@@ -465,7 +466,7 @@ impl ProviderConfig {
             provider_type: "openai".to_string(),
             api_key: None,
             api_key_env: Some("OPENAI_API_KEY".to_string()),
-            model: "gpt-4.1".to_string(),
+            model: model_catalog::OPENAI_BALANCED.0.to_string(),
             model_tiers: None, // Uses ModelTiers::openai() as default
             base_url: None,
             default_max_tokens: 4096,
@@ -479,7 +480,7 @@ impl ProviderConfig {
             provider_type: "gemini".to_string(),
             api_key: None,
             api_key_env: Some("GEMINI_API_KEY".to_string()),
-            model: "gemini-2.5-pro".to_string(),
+            model: model_catalog::GEMINI_BALANCED.0.to_string(),
             model_tiers: None, // Uses ModelTiers::gemini() as default
             base_url: None,
             default_max_tokens: 4096,
@@ -493,7 +494,7 @@ impl ProviderConfig {
             provider_type: "groq".to_string(),
             api_key: None,
             api_key_env: Some("GROQ_API_KEY".to_string()),
-            model: "llama-3.3-70b-versatile".to_string(),
+            model: model_catalog::GROQ_BALANCED.0.to_string(),
             model_tiers: None, // Uses ModelTiers::groq() as default
             base_url: None,
             default_max_tokens: 4096,
@@ -507,7 +508,7 @@ impl ProviderConfig {
             provider_type: "deepseek".to_string(),
             api_key: None,
             api_key_env: Some("DEEPSEEK_API_KEY".to_string()),
-            model: "deepseek-chat".to_string(),
+            model: model_catalog::DEEPSEEK_BALANCED.0.to_string(),
             model_tiers: None, // Uses ModelTiers::deepseek() as default
             base_url: None,
             default_max_tokens: 4096,
@@ -521,7 +522,7 @@ impl ProviderConfig {
             provider_type: "cohere".to_string(),
             api_key: None,
             api_key_env: Some("COHERE_API_KEY".to_string()),
-            model: "command-r-plus".to_string(),
+            model: model_catalog::COHERE_BALANCED.0.to_string(),
             model_tiers: None, // Uses ModelTiers::cohere() as default
             base_url: None,
             default_max_tokens: 4096,
@@ -535,7 +536,7 @@ impl ProviderConfig {
             provider_type: "together".to_string(),
             api_key: None,
             api_key_env: Some("TOGETHER_API_KEY".to_string()),
-            model: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8".to_string(),
+            model: model_catalog::TOGETHER_BALANCED.0.to_string(),
             model_tiers: None,
             base_url: None,
             default_max_tokens: 4096,
@@ -549,7 +550,7 @@ impl ProviderConfig {
             provider_type: "fireworks".to_string(),
             api_key: None,
             api_key_env: Some("FIREWORKS_API_KEY".to_string()),
-            model: "accounts/fireworks/models/llama-v3p3-70b-instruct".to_string(),
+            model: model_catalog::FIREWORKS_BALANCED.0.to_string(),
             model_tiers: None,
             base_url: None,
             default_max_tokens: 4096,
@@ -563,7 +564,7 @@ impl ProviderConfig {
             provider_type: "zai".to_string(),
             api_key: None,
             api_key_env: Some("ZAI_API_KEY".to_string()),
-            model: "glm-4-plus".to_string(),
+            model: model_catalog::ZAI_BALANCED.0.to_string(),
             model_tiers: None,
             base_url: None,
             default_max_tokens: 4096,
@@ -577,7 +578,7 @@ impl ProviderConfig {
             provider_type: "nebius".to_string(),
             api_key: None,
             api_key_env: Some("NEBIUS_API_KEY".to_string()),
-            model: "meta-llama/Meta-Llama-3.1-70B-Instruct".to_string(),
+            model: model_catalog::NEBIUS_BALANCED.0.to_string(),
             model_tiers: None,
             base_url: None,
             default_max_tokens: 4096,
@@ -591,7 +592,7 @@ impl ProviderConfig {
             provider_type: "mimo".to_string(),
             api_key: None,
             api_key_env: Some("MIMO_API_KEY".to_string()),
-            model: "mimo-v2-flash".to_string(),
+            model: model_catalog::MIMO_BALANCED.0.to_string(),
             model_tiers: None,
             base_url: None,
             default_max_tokens: 4096,
@@ -605,7 +606,7 @@ impl ProviderConfig {
             provider_type: "bigmodel".to_string(),
             api_key: None,
             api_key_env: Some("BIGMODEL_API_KEY".to_string()),
-            model: "glm-4-plus".to_string(),
+            model: model_catalog::BIGMODEL_BALANCED.0.to_string(),
             model_tiers: None,
             base_url: None,
             default_max_tokens: 4096,
@@ -1067,7 +1068,7 @@ mod tests {
         // Check default provider settings
         let anthropic = config.get_default_provider().unwrap();
         assert_eq!(anthropic.provider_type, "anthropic");
-        assert_eq!(anthropic.model, "claude-sonnet-4-20250514");
+        assert_eq!(anthropic.model, model_catalog::ANTHROPIC_BALANCED.0);
     }
 
     #[test]
@@ -1076,13 +1077,13 @@ mod tests {
 
         // Check each provider
         let anthropic = config.get_provider("anthropic").unwrap();
-        assert_eq!(anthropic.model, "claude-sonnet-4-20250514");
+        assert_eq!(anthropic.model, model_catalog::ANTHROPIC_BALANCED.0);
 
         let openai = config.get_provider("openai").unwrap();
-        assert_eq!(openai.model, "gpt-4.1");
+        assert_eq!(openai.model, model_catalog::OPENAI_BALANCED.0);
 
         let gemini = config.get_provider("gemini").unwrap();
-        assert_eq!(gemini.model, "gemini-2.5-pro");
+        assert_eq!(gemini.model, model_catalog::GEMINI_BALANCED.0);
     }
 
     #[test]

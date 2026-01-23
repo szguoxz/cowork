@@ -5,6 +5,7 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use super::model_catalog;
 use super::ProviderType;
 use crate::error::{Error, Result};
 
@@ -244,10 +245,9 @@ async fn fetch_openai_models(client: &Client, api_key: &str) -> Result<Vec<Model
     let mut models = sort_models(chat_models);
 
     // Ensure we have at least the known good models at the top
-    ensure_model_exists_with_context(&mut models, "gpt-4.1", true, 1_000_000);
-    ensure_model_exists_with_context(&mut models, "gpt-4.1-mini", false, 1_000_000);
-    ensure_model_exists_with_context(&mut models, "o3", false, 200_000);
-    ensure_model_exists_with_context(&mut models, "o4-mini", false, 200_000);
+    ensure_model_exists_with_context(&mut models, model_catalog::OPENAI_BALANCED.0, true, model_catalog::OPENAI_BALANCED.2 as u32);
+    ensure_model_exists_with_context(&mut models, model_catalog::OPENAI_FAST.0, false, model_catalog::OPENAI_FAST.2 as u32);
+    ensure_model_exists_with_context(&mut models, model_catalog::OPENAI_POWERFUL.0, false, model_catalog::OPENAI_POWERFUL.2 as u32);
 
     Ok(models)
 }
@@ -261,7 +261,10 @@ fn is_openai_chat_model(id: &str) -> bool {
 }
 
 fn is_openai_recommended(id: &str) -> bool {
-    id == "gpt-4.1" || id.starts_with("gpt-4.1-") || id == "o3" || id == "gpt-5" || id.starts_with("gpt-5-")
+    id == model_catalog::OPENAI_BALANCED.0
+        || id == model_catalog::OPENAI_FAST.0
+        || id == model_catalog::OPENAI_POWERFUL.0
+        || id.starts_with("gpt-5")
 }
 
 /// Get context window for an OpenAI model
@@ -270,7 +273,7 @@ fn get_openai_context_window(model_id: &str) -> Option<u32> {
 
     // GPT-5 series
     if id.starts_with("gpt-5") {
-        return Some(256_000);
+        return Some(model_catalog::OPENAI_BALANCED.2 as u32);
     }
 
     // GPT-4.1 series (1M context window)
@@ -375,16 +378,16 @@ async fn fetch_anthropic_models(client: &Client, api_key: &str) -> Result<Vec<Mo
 
 fn get_anthropic_known_models() -> Vec<ModelInfo> {
     vec![
-        ModelInfo::new("claude-opus-4-5-20251101")
-            .with_name("Claude Opus 4.5")
-            .with_context_window(200_000),
-        ModelInfo::new("claude-sonnet-4-20250514")
-            .with_name("Claude Sonnet 4")
-            .with_context_window(200_000)
+        ModelInfo::new(model_catalog::ANTHROPIC_POWERFUL.0)
+            .with_name(model_catalog::ANTHROPIC_POWERFUL.1)
+            .with_context_window(model_catalog::ANTHROPIC_POWERFUL.2 as u32),
+        ModelInfo::new(model_catalog::ANTHROPIC_BALANCED.0)
+            .with_name(model_catalog::ANTHROPIC_BALANCED.1)
+            .with_context_window(model_catalog::ANTHROPIC_BALANCED.2 as u32)
             .recommended(),
-        ModelInfo::new("claude-3-5-haiku-20241022")
-            .with_name("Claude 3.5 Haiku")
-            .with_context_window(200_000),
+        ModelInfo::new(model_catalog::ANTHROPIC_FAST.0)
+            .with_name(model_catalog::ANTHROPIC_FAST.1)
+            .with_context_window(model_catalog::ANTHROPIC_FAST.2 as u32),
     ]
 }
 
@@ -463,7 +466,7 @@ fn is_gemini_chat_model(name: &str) -> bool {
 }
 
 fn is_gemini_recommended(id: &str) -> bool {
-    id == "gemini-2.5-flash" || id == "gemini-2.5-pro"
+    id == model_catalog::GEMINI_FAST.0 || id == model_catalog::GEMINI_BALANCED.0
 }
 
 // ============================================================================
@@ -520,7 +523,7 @@ async fn fetch_groq_models(client: &Client, api_key: &str) -> Result<Vec<ModelIn
 }
 
 fn is_groq_recommended(id: &str) -> bool {
-    id.contains("llama-3.3") || id.contains("llama-3.1-70b")
+    id == model_catalog::GROQ_BALANCED.0 || id.contains("llama-3.3") || id.contains("llama-3.1-70b")
 }
 
 // ============================================================================
@@ -550,7 +553,7 @@ async fn fetch_deepseek_models(client: &Client, api_key: &str) -> Result<Vec<Mod
         .data
         .into_iter()
         .map(|m| {
-            let recommended = m.id == "deepseek-chat";
+            let recommended = m.id == model_catalog::DEEPSEEK_BALANCED.0;
             let mut info = ModelInfo::new(&m.id);
             if recommended {
                 info = info.recommended();
@@ -568,16 +571,13 @@ async fn fetch_deepseek_models(client: &Client, api_key: &str) -> Result<Vec<Mod
 
 fn get_deepseek_known_models() -> Vec<ModelInfo> {
     vec![
-        ModelInfo::new("deepseek-chat")
-            .with_name("DeepSeek Chat")
-            .with_context_window(131_072)
+        ModelInfo::new(model_catalog::DEEPSEEK_BALANCED.0)
+            .with_name(model_catalog::DEEPSEEK_BALANCED.1)
+            .with_context_window(model_catalog::DEEPSEEK_BALANCED.2 as u32)
             .recommended(),
-        ModelInfo::new("deepseek-reasoner")
-            .with_name("DeepSeek Reasoner (R1)")
-            .with_context_window(131_072),
-        ModelInfo::new("deepseek-coder")
-            .with_name("DeepSeek Coder")
-            .with_context_window(128_000),
+        ModelInfo::new(model_catalog::DEEPSEEK_POWERFUL.0)
+            .with_name(model_catalog::DEEPSEEK_POWERFUL.1)
+            .with_context_window(model_catalog::DEEPSEEK_POWERFUL.2 as u32),
     ]
 }
 
@@ -606,11 +606,11 @@ async fn fetch_xai_models(client: &Client, api_key: &str) -> Result<Vec<ModelInf
     if !response.status().is_success() {
         // Return known models if API fails
         return Ok(vec![
-            ModelInfo::new("grok-2")
-                .with_name("Grok 2")
+            ModelInfo::new(model_catalog::XAI_BALANCED.0)
+                .with_name(model_catalog::XAI_BALANCED.1)
                 .recommended(),
-            ModelInfo::new("grok-beta")
-                .with_name("Grok Beta"),
+            ModelInfo::new(model_catalog::XAI_FAST.0)
+                .with_name(model_catalog::XAI_FAST.1),
         ]);
     }
 
@@ -623,7 +623,7 @@ async fn fetch_xai_models(client: &Client, api_key: &str) -> Result<Vec<ModelInf
         .data
         .into_iter()
         .map(|m| {
-            let recommended = m.id == "grok-2";
+            let recommended = m.id == model_catalog::XAI_BALANCED.0;
             let mut info = ModelInfo::new(&m.id);
             if recommended {
                 info = info.recommended();
@@ -705,11 +705,11 @@ async fn fetch_fireworks_models(client: &Client, api_key: &str) -> Result<Vec<Mo
     if !response.status().is_success() {
         // Return known models
         return Ok(vec![
-            ModelInfo::new("accounts/fireworks/models/llama-v3p1-70b-instruct")
-                .with_name("Llama 3.1 70B")
+            ModelInfo::new(model_catalog::FIREWORKS_BALANCED.0)
+                .with_name(model_catalog::FIREWORKS_BALANCED.1)
                 .recommended(),
-            ModelInfo::new("accounts/fireworks/models/llama-v3p1-8b-instruct")
-                .with_name("Llama 3.1 8B"),
+            ModelInfo::new(model_catalog::FIREWORKS_FAST.0)
+                .with_name(model_catalog::FIREWORKS_FAST.1),
         ]);
     }
 

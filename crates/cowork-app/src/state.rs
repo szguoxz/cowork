@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use cowork_core::provider::model_catalog;
 use cowork_core::session::SessionManager;
 use cowork_core::{AgentRegistry, Config, ConfigManager, Context};
 
@@ -110,7 +111,7 @@ impl From<&Config> for Settings {
                 (
                     "anthropic".to_string(),
                     None,
-                    "claude-opus-4-5-20251101".to_string(),
+                    model_catalog::ANTHROPIC_BALANCED.0.to_string(),
                     None,
                 )
             };
@@ -141,7 +142,7 @@ impl Default for Settings {
             provider: ProviderSettings {
                 provider_type: "anthropic".to_string(),
                 api_key: None,
-                model: "claude-sonnet-4-20250514".to_string(),
+                model: model_catalog::ANTHROPIC_BALANCED.0.to_string(),
                 base_url: None,
             },
             approval: ApprovalSettings {

@@ -365,7 +365,7 @@ Command Line Options:
 
   Examples:
     cowork                              # Start interactive chat
-    cowork -p openai -m gpt-4.1          # Use OpenAI with GPT-4.1
+    cowork -p openai -m gpt-5.2          # Use OpenAI with GPT-5.2
     cowork --one-shot "explain main.rs" # Single prompt, then exit
     cowork tools                        # List available tools
     cowork config                       # Show current config
@@ -384,12 +384,12 @@ Configuration:
 
     [providers.anthropic]
     provider_type = "anthropic"
-    model = "claude-sonnet-4-20250514"
+    model = "claude-sonnet-4-5-20250929"
     api_key_env = "ANTHROPIC_API_KEY"
 
     [providers.openai]
     provider_type = "openai"
-    model = "gpt-4.1"
+    model = "gpt-5.2"
     api_key_env = "OPENAI_API_KEY"
 
     [approval]

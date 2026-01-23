@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::cmp::Ordering;
 
+use crate::provider::model_catalog;
+
 /// Tool specification for matching tools by name or pattern
 ///
 /// Patterns support glob-like syntax:
@@ -361,9 +363,9 @@ impl ModelPreference {
     pub fn model_id(&self) -> Option<&str> {
         match self {
             ModelPreference::Inherit => None,
-            ModelPreference::Opus => Some("claude-opus-4-5-20251101"),
-            ModelPreference::Sonnet => Some("claude-sonnet-4-20250514"),
-            ModelPreference::Haiku => Some("claude-3-5-haiku-20241022"),
+            ModelPreference::Opus => Some(model_catalog::ANTHROPIC_POWERFUL.0),
+            ModelPreference::Sonnet => Some(model_catalog::ANTHROPIC_BALANCED.0),
+            ModelPreference::Haiku => Some(model_catalog::ANTHROPIC_FAST.0),
             ModelPreference::Custom(id) => Some(id),
         }
     }
@@ -726,9 +728,9 @@ mod tests {
         #[test]
         fn test_model_id() {
             assert_eq!(ModelPreference::Inherit.model_id(), None);
-            assert_eq!(ModelPreference::Opus.model_id(), Some("claude-opus-4-5-20251101"));
-            assert_eq!(ModelPreference::Sonnet.model_id(), Some("claude-sonnet-4-20250514"));
-            assert_eq!(ModelPreference::Haiku.model_id(), Some("claude-3-5-haiku-20241022"));
+            assert_eq!(ModelPreference::Opus.model_id(), Some(model_catalog::ANTHROPIC_POWERFUL.0));
+            assert_eq!(ModelPreference::Sonnet.model_id(), Some(model_catalog::ANTHROPIC_BALANCED.0));
+            assert_eq!(ModelPreference::Haiku.model_id(), Some(model_catalog::ANTHROPIC_FAST.0));
             assert_eq!(
                 ModelPreference::Custom("custom-model".to_string()).model_id(),
                 Some("custom-model")

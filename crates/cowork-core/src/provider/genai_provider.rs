@@ -23,6 +23,7 @@ use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
 use crate::tools::ToolDefinition;
+use super::model_catalog;
 
 /// Log LLM request/response to file if LLM_LOG_FILE is set
 fn log_llm_interaction(
@@ -180,21 +181,21 @@ impl ProviderType {
     /// Get the default model for this provider
     pub fn default_model(&self) -> &'static str {
         match self {
-            ProviderType::OpenAI => "gpt-4.1",
-            ProviderType::Anthropic => "claude-sonnet-4-20250514",
-            ProviderType::Gemini => "gemini-2.5-flash",
-            ProviderType::Cohere => "command-r-plus",
-            ProviderType::Perplexity => "sonar-pro",
-            ProviderType::Groq => "llama-3.3-70b-versatile",
-            ProviderType::XAI => "grok-3-beta",
-            ProviderType::DeepSeek => "deepseek-chat",
-            ProviderType::Together => "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
-            ProviderType::Fireworks => "accounts/fireworks/models/llama-v3p3-70b-instruct",
-            ProviderType::Zai => "glm-4-plus",
-            ProviderType::Nebius => "meta-llama/Meta-Llama-3.1-70B-Instruct",
-            ProviderType::MIMO => "mimo-v2-flash",
-            ProviderType::BigModel => "glm-4-plus",
-            ProviderType::Ollama => "llama3.2",
+            ProviderType::OpenAI => model_catalog::OPENAI_BALANCED.0,
+            ProviderType::Anthropic => model_catalog::ANTHROPIC_BALANCED.0,
+            ProviderType::Gemini => model_catalog::GEMINI_FAST.0,
+            ProviderType::Cohere => model_catalog::COHERE_BALANCED.0,
+            ProviderType::Perplexity => model_catalog::PERPLEXITY_BALANCED.0,
+            ProviderType::Groq => model_catalog::GROQ_BALANCED.0,
+            ProviderType::XAI => model_catalog::XAI_BALANCED.0,
+            ProviderType::DeepSeek => model_catalog::DEEPSEEK_BALANCED.0,
+            ProviderType::Together => model_catalog::TOGETHER_BALANCED.0,
+            ProviderType::Fireworks => model_catalog::FIREWORKS_BALANCED.0,
+            ProviderType::Zai => model_catalog::ZAI_BALANCED.0,
+            ProviderType::Nebius => model_catalog::NEBIUS_BALANCED.0,
+            ProviderType::MIMO => model_catalog::MIMO_BALANCED.0,
+            ProviderType::BigModel => model_catalog::BIGMODEL_BALANCED.0,
+            ProviderType::Ollama => model_catalog::OLLAMA_BALANCED.0,
         }
     }
 
@@ -878,91 +879,3 @@ pub fn create_provider(
     Ok(provider)
 }
 
-/// Available models for each provider
-pub mod models {
-    /// OpenAI models
-    pub mod openai {
-        pub const GPT_4_1: &str = "gpt-4.1";
-        pub const GPT_4_1_MINI: &str = "gpt-4.1-mini";
-        pub const GPT_4_1_NANO: &str = "gpt-4.1-nano";
-        pub const O3: &str = "o3";
-        pub const O4_MINI: &str = "o4-mini";
-    }
-
-    /// Anthropic models
-    pub mod anthropic {
-        pub const CLAUDE_OPUS_4_5: &str = "claude-opus-4-5-20251101";
-        pub const CLAUDE_SONNET_4: &str = "claude-sonnet-4-20250514";
-        pub const CLAUDE_3_5_HAIKU: &str = "claude-3-5-haiku-20241022";
-    }
-
-    /// Google Gemini models
-    pub mod gemini {
-        pub const GEMINI_2_5_PRO: &str = "gemini-2.5-pro";
-        pub const GEMINI_2_5_FLASH: &str = "gemini-2.5-flash";
-    }
-
-    /// Cohere models
-    pub mod cohere {
-        pub const COMMAND_R_PLUS: &str = "command-r-plus";
-        pub const COMMAND_R: &str = "command-r";
-    }
-
-    /// Groq models
-    pub mod groq {
-        pub const LLAMA_3_3_70B: &str = "llama-3.3-70b-versatile";
-        pub const LLAMA_3_1_70B: &str = "llama-3.1-70b-versatile";
-        pub const MIXTRAL_8X7B: &str = "mixtral-8x7b-32768";
-    }
-
-    /// DeepSeek models
-    pub mod deepseek {
-        pub const DEEPSEEK_CHAT: &str = "deepseek-chat";
-        pub const DEEPSEEK_REASONER: &str = "deepseek-reasoner";
-    }
-
-    /// xAI models
-    pub mod xai {
-        pub const GROK_2: &str = "grok-2";
-        pub const GROK_BETA: &str = "grok-beta";
-    }
-
-    /// Together AI models
-    pub mod together {
-        pub const LLAMA_3_1_70B: &str = "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo";
-        pub const LLAMA_3_1_8B: &str = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo";
-        pub const MIXTRAL_8X7B: &str = "mistralai/Mixtral-8x7B-Instruct-v0.1";
-    }
-
-    /// Fireworks AI models
-    pub mod fireworks {
-        pub const LLAMA_3_1_70B: &str = "accounts/fireworks/models/llama-v3p1-70b-instruct";
-        pub const LLAMA_3_1_8B: &str = "accounts/fireworks/models/llama-v3p1-8b-instruct";
-        pub const QWEN_72B: &str = "accounts/fireworks/models/qwen2p5-72b-instruct";
-    }
-
-    /// Zai (Zhipu AI) models
-    pub mod zai {
-        pub const GLM_4_PLUS: &str = "glm-4-plus";
-        pub const GLM_4_6: &str = "glm-4.6";
-        pub const GLM_4_FLASH: &str = "glm-4-flash";
-    }
-
-    /// Nebius AI models
-    pub mod nebius {
-        pub const LLAMA_3_1_70B: &str = "meta-llama/Meta-Llama-3.1-70B-Instruct";
-        pub const QWEN_235B: &str = "Qwen/Qwen3-235B-A22B";
-        pub const DEEPSEEK_R1: &str = "deepseek-ai/DeepSeek-R1-0528";
-    }
-
-    /// MIMO models
-    pub mod mimo {
-        pub const MIMO_V2_FLASH: &str = "mimo-v2-flash";
-    }
-
-    /// BigModel.cn models
-    pub mod bigmodel {
-        pub const GLM_4_PLUS: &str = "glm-4-plus";
-        pub const GLM_4_FLASH: &str = "glm-4-flash";
-    }
-}

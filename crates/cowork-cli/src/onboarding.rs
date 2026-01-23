@@ -7,7 +7,7 @@ use console::style;
 use dialoguer::{theme::ColorfulTheme, Input, Password, Select};
 
 use cowork_core::config::{ConfigManager, ProviderConfig};
-use cowork_core::provider::{fetch_models, GenAIProvider, ModelInfo, ProviderType};
+use cowork_core::provider::{fetch_models, model_catalog, GenAIProvider, ModelInfo, ProviderType};
 
 /// Provider information for display
 pub struct ProviderInfo {
@@ -29,15 +29,15 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Best for code, writing, and reasoning",
             signup_url: "https://console.anthropic.com/",
             env_var: "ANTHROPIC_API_KEY",
-            default_model: "claude-sonnet-4-20250514",
+            default_model: model_catalog::ANTHROPIC_BALANCED.0,
         },
         ProviderType::OpenAI => ProviderInfo {
             name: "openai",
-            display_name: "OpenAI (GPT-4)",
+            display_name: "OpenAI (GPT-5)",
             description: "Versatile and widely supported",
             signup_url: "https://platform.openai.com/",
             env_var: "OPENAI_API_KEY",
-            default_model: "gpt-4.1",
+            default_model: model_catalog::OPENAI_BALANCED.0,
         },
         ProviderType::Gemini => ProviderInfo {
             name: "gemini",
@@ -45,7 +45,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Large context window (1M tokens)",
             signup_url: "https://aistudio.google.com/",
             env_var: "GEMINI_API_KEY",
-            default_model: "gemini-2.5-flash",
+            default_model: model_catalog::GEMINI_FAST.0,
         },
         ProviderType::Groq => ProviderInfo {
             name: "groq",
@@ -53,7 +53,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Ultra-fast inference",
             signup_url: "https://console.groq.com/",
             env_var: "GROQ_API_KEY",
-            default_model: "llama-3.3-70b-versatile",
+            default_model: model_catalog::GROQ_BALANCED.0,
         },
         ProviderType::DeepSeek => ProviderInfo {
             name: "deepseek",
@@ -61,7 +61,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Cost-effective reasoning",
             signup_url: "https://platform.deepseek.com/",
             env_var: "DEEPSEEK_API_KEY",
-            default_model: "deepseek-chat",
+            default_model: model_catalog::DEEPSEEK_BALANCED.0,
         },
         ProviderType::XAI => ProviderInfo {
             name: "xai",
@@ -69,7 +69,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Latest Grok models",
             signup_url: "https://x.ai/api",
             env_var: "XAI_API_KEY",
-            default_model: "grok-2",
+            default_model: model_catalog::XAI_BALANCED.0,
         },
         ProviderType::Together => ProviderInfo {
             name: "together",
@@ -77,7 +77,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "200+ open source models",
             signup_url: "https://api.together.xyz/",
             env_var: "TOGETHER_API_KEY",
-            default_model: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+            default_model: model_catalog::TOGETHER_BALANCED.0,
         },
         ProviderType::Fireworks => ProviderInfo {
             name: "fireworks",
@@ -85,7 +85,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Fast open source model inference",
             signup_url: "https://fireworks.ai/",
             env_var: "FIREWORKS_API_KEY",
-            default_model: "accounts/fireworks/models/llama-v3p1-70b-instruct",
+            default_model: model_catalog::FIREWORKS_BALANCED.0,
         },
         ProviderType::Zai => ProviderInfo {
             name: "zai",
@@ -93,7 +93,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "GLM-4 models from China",
             signup_url: "https://z.ai/",
             env_var: "ZAI_API_KEY",
-            default_model: "glm-4-plus",
+            default_model: model_catalog::ZAI_BALANCED.0,
         },
         ProviderType::Nebius => ProviderInfo {
             name: "nebius",
@@ -101,7 +101,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "30+ open source models",
             signup_url: "https://studio.nebius.ai/",
             env_var: "NEBIUS_API_KEY",
-            default_model: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+            default_model: model_catalog::NEBIUS_BALANCED.0,
         },
         ProviderType::MIMO => ProviderInfo {
             name: "mimo",
@@ -109,7 +109,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Xiaomi's MIMO models",
             signup_url: "https://xiaomimimo.com/",
             env_var: "MIMO_API_KEY",
-            default_model: "mimo-v2-flash",
+            default_model: model_catalog::MIMO_BALANCED.0,
         },
         ProviderType::BigModel => ProviderInfo {
             name: "bigmodel",
@@ -117,7 +117,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Zhipu AI China platform",
             signup_url: "https://open.bigmodel.cn/",
             env_var: "BIGMODEL_API_KEY",
-            default_model: "glm-4-plus",
+            default_model: model_catalog::BIGMODEL_BALANCED.0,
         },
         ProviderType::Ollama => ProviderInfo {
             name: "ollama",
@@ -125,7 +125,7 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Run models locally, no API key needed",
             signup_url: "https://ollama.ai/",
             env_var: "",
-            default_model: "llama3.2",
+            default_model: model_catalog::OLLAMA_BALANCED.0,
         },
         _ => ProviderInfo {
             name: "unknown",

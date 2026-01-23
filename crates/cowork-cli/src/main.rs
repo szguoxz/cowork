@@ -1120,7 +1120,7 @@ fn show_setup_instructions(provider_type: ProviderType) {
 
   [providers.anthropic]
   provider_type = "anthropic"
-  model = "claude-sonnet-4-20250514"
+  model = "claude-sonnet-4-5-20250929"
   api_key = "your-api-key-here"
 
   [approval]

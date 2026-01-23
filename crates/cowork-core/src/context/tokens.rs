@@ -158,7 +158,7 @@ impl TokenCounter {
     fn provider_default_limit(provider: ProviderType) -> usize {
         match provider {
             ProviderType::Anthropic => 200_000,  // Claude 4.5/Sonnet 4 default
-            ProviderType::OpenAI => 256_000,     // GPT-5 default
+            ProviderType::OpenAI => 400_000,     // GPT-5 default
             ProviderType::Gemini => 1_000_000,   // Gemini 2.x
             ProviderType::Cohere => 128_000,     // Command R+
             ProviderType::Groq => 128_000,       // Llama 3
@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(anthropic.context_limit(), 200_000);
 
         let openai = TokenCounter::new(ProviderType::OpenAI);
-        assert_eq!(openai.context_limit(), 256_000); // GPT-5 default
+        assert_eq!(openai.context_limit(), 400_000); // GPT-5 default
 
         let gemini = TokenCounter::new(ProviderType::Gemini);
         assert_eq!(gemini.context_limit(), 1_000_000);
@@ -302,7 +302,7 @@ mod tests {
 
         // GPT-5 models (new)
         let gpt5 = TokenCounter::with_model(ProviderType::OpenAI, "gpt-5");
-        assert_eq!(gpt5.context_limit(), 256_000);
+        assert_eq!(gpt5.context_limit(), 400_000);
 
         // DeepSeek models
         let deepseek = TokenCounter::with_model(ProviderType::DeepSeek, "deepseek-chat");
@@ -321,7 +321,7 @@ mod tests {
 
         // Unknown model should fall back to provider default
         let unknown = TokenCounter::with_model(ProviderType::OpenAI, "some-unknown-model");
-        assert_eq!(unknown.context_limit(), 256_000); // OpenAI default (GPT-5 era)
+        assert_eq!(unknown.context_limit(), 400_000); // OpenAI default (GPT-5 era)
     }
 
     #[test]
@@ -332,7 +332,7 @@ mod tests {
         assert_eq!(get_model_context_limit(ProviderType::Anthropic, "claude-3-opus"), Some(200_000));
         assert_eq!(get_model_context_limit(ProviderType::OpenAI, "gpt-4.1"), Some(1_000_000));
         assert_eq!(get_model_context_limit(ProviderType::OpenAI, "gpt-4o-mini"), Some(128_000));
-        assert_eq!(get_model_context_limit(ProviderType::OpenAI, "gpt-5"), Some(256_000));
+        assert_eq!(get_model_context_limit(ProviderType::OpenAI, "gpt-5"), Some(400_000));
         assert_eq!(get_model_context_limit(ProviderType::OpenAI, "o1-preview"), Some(200_000));
         assert_eq!(get_model_context_limit(ProviderType::DeepSeek, "deepseek-chat"), Some(131_072));
     }

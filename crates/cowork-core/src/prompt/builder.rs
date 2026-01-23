@@ -510,7 +510,7 @@ mod tests {
                 metadata: AssemblyMetadata::default(),
             };
 
-            assert_eq!(prompt.model_id(), Some("claude-3-5-haiku-20241022"));
+            assert_eq!(prompt.model_id(), Some(crate::provider::model_catalog::ANTHROPIC_FAST.0));
         }
     }
 

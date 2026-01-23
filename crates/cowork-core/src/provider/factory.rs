@@ -180,21 +180,24 @@ pub fn create_provider_from_provider_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::model_catalog;
     use crate::provider::LlmProvider;
     use tempfile::tempdir;
+
+    fn write_test_config(config_path: &std::path::Path) {
+        std::fs::write(config_path, format!(r#"
+            default_provider = "anthropic"
+            [providers.anthropic]
+            provider_type = "anthropic"
+            model = "{}"
+        "#, model_catalog::ANTHROPIC_BALANCED.0)).unwrap();
+    }
 
     #[test]
     fn test_get_api_key_from_env() {
         let temp_dir = tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
-
-        // Create minimal config without API key
-        std::fs::write(&config_path, r#"
-            default_provider = "anthropic"
-            [providers.anthropic]
-            provider_type = "anthropic"
-            model = "claude-sonnet-4-20250514"
-        "#).unwrap();
+        write_test_config(&config_path);
 
         let config_manager = ConfigManager::with_path(config_path).unwrap();
 
@@ -214,14 +217,7 @@ mod tests {
     fn test_has_api_key_configured_false() {
         let temp_dir = tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
-
-        // Create config without API key
-        std::fs::write(&config_path, r#"
-            default_provider = "anthropic"
-            [providers.anthropic]
-            provider_type = "anthropic"
-            model = "claude-sonnet-4-20250514"
-        "#).unwrap();
+        write_test_config(&config_path);
 
         let config_manager = ConfigManager::with_path(config_path).unwrap();
 
@@ -236,21 +232,14 @@ mod tests {
     fn test_get_model_tiers_default() {
         let temp_dir = tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
-
-        // Create minimal config
-        std::fs::write(&config_path, r#"
-            default_provider = "anthropic"
-            [providers.anthropic]
-            provider_type = "anthropic"
-            model = "claude-sonnet-4-20250514"
-        "#).unwrap();
+        write_test_config(&config_path);
 
         let config_manager = ConfigManager::with_path(config_path).unwrap();
 
         let tiers = get_model_tiers(&config_manager, ProviderType::Anthropic);
-        assert_eq!(tiers.fast, "claude-3-5-haiku-20241022");
-        assert_eq!(tiers.balanced, "claude-sonnet-4-20250514");
-        assert_eq!(tiers.powerful, "claude-opus-4-5-20251101");
+        assert_eq!(tiers.fast, model_catalog::ANTHROPIC_FAST.0);
+        assert_eq!(tiers.balanced, model_catalog::ANTHROPIC_BALANCED.0);
+        assert_eq!(tiers.powerful, model_catalog::ANTHROPIC_POWERFUL.0);
     }
 
     #[test]
@@ -258,7 +247,7 @@ mod tests {
         let provider = create_provider_with_settings(
             ProviderType::Anthropic,
             "test-key",
-            "claude-sonnet-4-20250514",
+            model_catalog::ANTHROPIC_BALANCED.0,
         );
         assert_eq!(provider.name(), "anthropic");
     }

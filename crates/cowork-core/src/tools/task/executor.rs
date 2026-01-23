@@ -487,41 +487,43 @@ mod tests {
 
     #[test]
     fn test_get_model_for_tier() {
+        use crate::provider::model_catalog;
+
         // Test with Anthropic tiers
         let anthropic_tiers = ModelTiers::anthropic();
         assert_eq!(
             get_model_for_tier(&ModelTier::Balanced, &anthropic_tiers),
-            "claude-sonnet-4-20250514"
+            model_catalog::ANTHROPIC_BALANCED.0
         );
         assert_eq!(
             get_model_for_tier(&ModelTier::Powerful, &anthropic_tiers),
-            "claude-opus-4-5-20251101"
+            model_catalog::ANTHROPIC_POWERFUL.0
         );
         assert_eq!(
             get_model_for_tier(&ModelTier::Fast, &anthropic_tiers),
-            "claude-3-5-haiku-20241022"
+            model_catalog::ANTHROPIC_FAST.0
         );
 
         // Test with OpenAI tiers
         let openai_tiers = ModelTiers::openai();
         assert_eq!(
             get_model_for_tier(&ModelTier::Balanced, &openai_tiers),
-            "gpt-4.1"
+            model_catalog::OPENAI_BALANCED.0
         );
         assert_eq!(
             get_model_for_tier(&ModelTier::Fast, &openai_tiers),
-            "gpt-4.1-mini"
+            model_catalog::OPENAI_FAST.0
         );
 
         // Test with DeepSeek tiers
         let deepseek_tiers = ModelTiers::deepseek();
         assert_eq!(
             get_model_for_tier(&ModelTier::Fast, &deepseek_tiers),
-            "deepseek-chat"
+            model_catalog::DEEPSEEK_FAST.0
         );
         assert_eq!(
             get_model_for_tier(&ModelTier::Powerful, &deepseek_tiers),
-            "deepseek-reasoner"
+            model_catalog::DEEPSEEK_POWERFUL.0
         );
     }
 
