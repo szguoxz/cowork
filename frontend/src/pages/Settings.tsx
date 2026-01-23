@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Settings as SettingsIcon, Save, RefreshCw, Sparkles } from 'lucide-react'
+import { Settings as SettingsIcon, Save, RefreshCw, Sparkles, ArrowUpCircle } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
+import UpdateChecker from '../components/UpdateChecker'
 
 interface Settings {
   provider: {
@@ -269,6 +270,22 @@ export default function SettingsPage() {
                   Show tool calls in chat
                 </span>
               </label>
+            </CardContent>
+          </Card>
+
+          {/* Updates */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ArrowUpCircle className="w-5 h-5 text-primary" />
+                Updates
+              </CardTitle>
+              <CardDescription>
+                Check for new versions of Cowork
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <UpdateChecker />
             </CardContent>
           </Card>
         </div>

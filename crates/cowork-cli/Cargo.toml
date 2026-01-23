@@ -33,3 +33,4 @@ crossterm = "0.28"
 tui-input = "0.12"  # Text input widget for ratatui
 unicode-width = "0.2"  # For proper text width calculation
 chrono = "0.4"  # For timestamps
+self_update = { version = "0.41", features = ["archive-tar", "archive-zip", "compression-flate2"] }

@@ -5,6 +5,7 @@
 
 mod onboarding;
 mod tui;
+mod update;
 
 use std::path::{Path, PathBuf};
 
@@ -37,7 +38,7 @@ use tui::{
 #[derive(Parser)]
 #[command(name = "cowork")]
 #[command(author = "Cowork Team")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Multi-agent AI assistant for desktop automation", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -78,6 +79,13 @@ enum Commands {
 
     /// Show configuration
     Config,
+
+    /// Check for updates and self-update the CLI binary
+    Update {
+        /// Only check for updates, don't install
+        #[arg(long)]
+        check: bool,
+    },
 
     /// Manage plugins
     #[command(subcommand)]
@@ -181,10 +189,18 @@ async fn main() -> anyhow::Result<()> {
         return run_one_shot(&workspace, provider_type, cli.model.as_deref(), &prompt, cli.auto_approve).await;
     }
 
+    // Background version check (skip if user is already running `update`)
+    let _version_check = if !matches!(cli.command, Some(Commands::Update { .. })) {
+        Some(update::spawn_startup_check())
+    } else {
+        None
+    };
+
     match cli.command {
         Some(Commands::Chat) => run_chat(&workspace, provider_type, cli.model.as_deref(), cli.auto_approve).await?,
         Some(Commands::Tools) => show_tools(),
         Some(Commands::Config) => show_config(&workspace),
+        Some(Commands::Update { check }) => update::run_update(check).await?,
         Some(Commands::Plugin(cmd)) => handle_plugin_command(&workspace, cmd)?,
         Some(Commands::Components(cmd)) => handle_component_command(&workspace, cmd)?,
         None => run_chat(&workspace, provider_type, cli.model.as_deref(), cli.auto_approve).await?,
