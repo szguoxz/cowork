@@ -14,7 +14,6 @@ pub enum MessageType {
     Error,
     ToolStart { name: String },
     ToolDone { name: String, success: bool },
-    Thinking,
 }
 
 /// A message displayed in the output area
@@ -22,7 +21,6 @@ pub enum MessageType {
 pub struct Message {
     pub message_type: MessageType,
     pub content: String,
-    pub timestamp: chrono::DateTime<chrono::Local>,
 }
 
 impl Message {
@@ -30,7 +28,6 @@ impl Message {
         Self {
             message_type,
             content: content.into(),
-            timestamp: chrono::Local::now(),
         }
     }
 
@@ -74,9 +71,6 @@ impl Message {
         )
     }
 
-    pub fn thinking(content: impl Into<String>) -> Self {
-        Self::new(MessageType::Thinking, content)
-    }
 }
 
 /// Pending tool approval request
@@ -267,13 +261,6 @@ impl App {
     /// Scroll down by one line
     pub fn scroll_down(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_add(1);
-    }
-
-    /// Get the current input value and clear it
-    pub fn take_input(&mut self) -> String {
-        let value = self.input.value().to_string();
-        self.input.reset();
-        value
     }
 
     /// Check if a tool should be auto-approved

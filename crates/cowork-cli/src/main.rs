@@ -327,7 +327,7 @@ async fn run_one_shot(
     }
 
     // Stop the session
-    session_manager.stop_session(session_id).await?;
+    session_manager.stop_session(session_id)?;
 
     Ok(())
 }
@@ -449,7 +449,7 @@ async fn run_chat_tui(
     terminal.show_cursor()?;
 
     // Stop session
-    let _ = session_manager.stop_all().await;
+    let _ = session_manager.stop_all();
 
     result
 }
@@ -680,7 +680,7 @@ async fn handle_user_input(
             app.add_message(Message::system("Available tools: read_file, write_file, edit, glob, grep, execute_command, web_fetch, task, and more"));
         }
         "/clear" => {
-            let _ = session_manager.stop_session(session_id).await;
+            let _ = session_manager.stop_session(session_id);
             app.messages.clear();
             app.add_message(Message::system("Conversation cleared"));
         }

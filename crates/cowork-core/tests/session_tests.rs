@@ -33,34 +33,34 @@ mod session_manager_tests {
     #[tokio::test]
     async fn test_manager_new() {
         let (manager, _output_rx) = SessionManager::new(test_config());
-        assert_eq!(manager.session_count().await, 0);
+        assert_eq!(manager.session_count(), 0);
     }
 
     #[tokio::test]
     async fn test_manager_list_sessions_empty() {
         let (manager, _output_rx) = SessionManager::new(test_config());
-        let sessions = manager.list_sessions().await;
+        let sessions = manager.list_sessions();
         assert!(sessions.is_empty());
     }
 
     #[tokio::test]
     async fn test_has_session_false() {
         let (manager, _output_rx) = SessionManager::new(test_config());
-        assert!(!manager.has_session("nonexistent").await);
+        assert!(!manager.has_session("nonexistent"));
     }
 
     #[tokio::test]
     async fn test_stop_nonexistent_session() {
         let (manager, _output_rx) = SessionManager::new(test_config());
         // Should not error when stopping a session that doesn't exist
-        let result = manager.stop_session("nonexistent").await;
+        let result = manager.stop_session("nonexistent");
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_stop_all_empty() {
         let (manager, _output_rx) = SessionManager::new(test_config());
-        let result = manager.stop_all().await;
+        let result = manager.stop_all();
         assert!(result.is_ok());
     }
 

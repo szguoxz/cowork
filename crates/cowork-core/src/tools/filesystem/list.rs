@@ -50,8 +50,8 @@ impl Tool for ListDirectory {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of entries to return (default: 200). Use a smaller limit for large directories.",
-                    "default": 200
+                    "description": "Maximum number of entries to return (default: 100). Use a smaller limit for large directories.",
+                    "default": 100
                 }
             }
         })
@@ -62,7 +62,7 @@ impl Tool for ListDirectory {
             let path_str = params["path"].as_str().unwrap_or(".");
             let recursive = params["recursive"].as_bool().unwrap_or(false);
             let include_hidden = params["include_hidden"].as_bool().unwrap_or(false);
-            let limit = params["limit"].as_u64().unwrap_or(200) as usize;
+            let limit = params["limit"].as_u64().unwrap_or(100) as usize;
 
             let path = self.workspace.join(path_str);
             let validated = validate_path(&path, &self.workspace)?;

@@ -14,6 +14,9 @@ tokio.workspace = true
 futures.workspace = true
 async-trait.workspace = true  # For dyn-compatible async traits (Agent, Tool, LlmProvider)
 
+# Synchronization
+parking_lot = "0.12"
+
 # Serialization
 serde.workspace = true
 serde_json.workspace = true

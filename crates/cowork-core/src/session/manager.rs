@@ -4,8 +4,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
-use tracing::{debug, info};
+use parking_lot::RwLock;
+use tokio::sync::mpsc;
+use tracing::info;
 
 use super::agent_loop::AgentLoop;
 use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
@@ -47,7 +48,7 @@ impl SessionManager {
     pub async fn push_message(&self, session_id: &str, input: SessionInput) -> Result<()> {
         // Try to get existing session first (read lock)
         let sender = {
-            let sessions = self.sessions.read().await;
+            let sessions = self.sessions.read();
             sessions.get(session_id).cloned()
         };
 
@@ -90,7 +91,6 @@ impl SessionManager {
         // Register the session
         self.sessions
             .write()
-            .await
             .insert(session_id.to_string(), input_tx.clone());
 
         // Emit ready notification
@@ -108,14 +108,14 @@ impl SessionManager {
     }
 
     /// List active session IDs
-    pub async fn list_sessions(&self) -> Vec<SessionId> {
-        let sessions = self.sessions.read().await;
+    pub fn list_sessions(&self) -> Vec<SessionId> {
+        let sessions = self.sessions.read();
         sessions.keys().cloned().collect()
     }
 
     /// Check if a session exists
-    pub async fn has_session(&self, session_id: &str) -> bool {
-        let sessions = self.sessions.read().await;
+    pub fn has_session(&self, session_id: &str) -> bool {
+        let sessions = self.sessions.read();
         sessions.contains_key(session_id)
     }
 
@@ -123,22 +123,22 @@ impl SessionManager {
     ///
     /// Simply removes the session from the registry, which drops the input sender.
     /// The agent loop will detect the closed channel and save the session before exiting.
-    pub async fn stop_session(&self, session_id: &str) -> Result<()> {
-        if self.sessions.write().await.remove(session_id).is_some() {
+    pub fn stop_session(&self, session_id: &str) -> Result<()> {
+        if self.sessions.write().remove(session_id).is_some() {
             info!("Stopped session: {}", session_id);
         }
         Ok(())
     }
 
     /// Stop all sessions
-    pub async fn stop_all(&self) -> Result<()> {
-        self.sessions.write().await.clear();
+    pub fn stop_all(&self) -> Result<()> {
+        self.sessions.write().clear();
         Ok(())
     }
 
     /// Get the number of active sessions
-    pub async fn session_count(&self) -> usize {
-        let sessions = self.sessions.read().await;
+    pub fn session_count(&self) -> usize {
+        let sessions = self.sessions.read();
         sessions.len()
     }
 }
@@ -165,8 +165,8 @@ mod tests {
     #[tokio::test]
     async fn test_session_manager_creation() {
         let (manager, _output_rx) = SessionManager::new(test_config());
-        assert_eq!(manager.session_count().await, 0);
-        assert!(manager.list_sessions().await.is_empty());
+        assert_eq!(manager.session_count(), 0);
+        assert!(manager.list_sessions().is_empty());
     }
 
     #[tokio::test]
@@ -174,7 +174,7 @@ mod tests {
         let (manager, _output_rx) = SessionManager::new(test_config());
 
         // Session shouldn't exist yet
-        assert!(!manager.has_session("test-session").await);
+        assert!(!manager.has_session("test-session"));
     }
 
     #[tokio::test]
@@ -182,7 +182,7 @@ mod tests {
         let (manager, _output_rx) = SessionManager::new(test_config());
 
         // Stopping a non-existent session should be a no-op
-        let result = manager.stop_session("nonexistent").await;
+        let result = manager.stop_session("nonexistent");
         assert!(result.is_ok());
     }
 
@@ -191,7 +191,7 @@ mod tests {
         let (manager, _output_rx) = SessionManager::new(test_config());
 
         // Stopping all when empty should be fine
-        let result = manager.stop_all().await;
+        let result = manager.stop_all();
         assert!(result.is_ok());
     }
 

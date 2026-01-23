@@ -123,10 +123,6 @@ fn message_to_lines(msg: &Message, max_width: usize) -> Vec<ListItem<'static>> {
                 Style::default().fg(color),
             )
         }
-        MessageType::Thinking => (
-            "💭 ",
-            Style::default().fg(Color::Magenta).add_modifier(Modifier::ITALIC),
-        ),
     };
 
     // Handle ToolStart and ToolDone with owned strings

@@ -80,7 +80,6 @@ pub async fn stop_loop(
             state
                 .session_manager
                 .stop_session(&id)
-                .await
                 .map_err(|e| e.to_string())
         }
         None => {
@@ -88,7 +87,6 @@ pub async fn stop_loop(
             state
                 .session_manager
                 .stop_all()
-                .await
                 .map_err(|e| e.to_string())
         }
     }
@@ -97,7 +95,7 @@ pub async fn stop_loop(
 /// Check if any sessions are running
 #[tauri::command]
 pub async fn is_loop_running(state: State<'_, AppState>) -> Result<bool, String> {
-    let count = state.session_manager.session_count().await;
+    let count = state.session_manager.session_count();
     Ok(count > 0)
 }
 
@@ -160,7 +158,7 @@ pub async fn answer_question(
 /// List active sessions
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    Ok(state.session_manager.list_sessions().await)
+    Ok(state.session_manager.list_sessions())
 }
 
 /// Create a new session
@@ -173,7 +171,7 @@ pub async fn create_session(
 
     // Sessions are created on-demand when first message is sent
     // This is a no-op but allows frontend to pre-register intent
-    if state.session_manager.has_session(&session_id).await {
+    if state.session_manager.has_session(&session_id) {
         return Err(format!("Session '{}' already exists", session_id));
     }
 
