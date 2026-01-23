@@ -46,32 +46,24 @@ impl SessionManager {
     /// If the session doesn't exist, it will be created automatically.
     /// Returns an error if the message couldn't be sent.
     pub async fn push_message(&self, session_id: &str, input: SessionInput) -> Result<()> {
-        // Try to get existing session first (read lock)
-        let sender = {
-            let sessions = self.sessions.read();
-            sessions.get(session_id).cloned()
-        };
-
-        // If not found, create new session (will take write lock)
-        let sender = match sender {
-            Some(tx) => tx,
-            None => self.create_session(session_id, self.base_config.clone()).await?,
-        };
-
-        // Send the input
-        sender
+         self.get_or_create_session(session_id).await?
             .send(input)
             .await
             .map_err(|e| crate::error::Error::Agent(format!("Failed to send input: {}", e)))
     }
 
     /// Create a new session with the given ID using the base config
-    async fn create_session(
+    async fn get_or_create_session(
         &self,
-        session_id: &str,
-        config: SessionConfig,
+        session_id: &str
     ) -> Result<mpsc::Sender<SessionInput>> {
+
+        if let Some(tx) = self.sessions.read().get(session_id) {
+            return Ok(tx.clone());
+        }
+
         info!("Creating new session: {}", session_id);
+
 
         // Create input channel for this session
         let (input_tx, input_rx) = mpsc::channel(256);
@@ -81,7 +73,7 @@ impl SessionManager {
             session_id.to_string(),
             input_rx,
             self.output_tx.clone(),
-            config,
+            self.base_config.clone(),
         )
         .await?;
 
