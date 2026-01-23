@@ -181,6 +181,10 @@ impl AgentLoop {
         let mut tool_builder = ToolRegistryBuilder::new(config.workspace_path.clone())
             .with_provider(config.provider_type);
 
+        if let Some(ref key) = config.api_key {
+            tool_builder = tool_builder.with_api_key(key.clone());
+        }
+
         // Add web search config if available
         if let Some(ws_config) = config.web_search_config.clone() {
             tool_builder = tool_builder.with_web_search_config(ws_config);
