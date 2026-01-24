@@ -27,6 +27,7 @@ fn test_config() -> SessionConfig {
         tool_scope: None,
         enable_hooks: None,
         save_session: true,
+        session_registry: None,
     }
 }
 

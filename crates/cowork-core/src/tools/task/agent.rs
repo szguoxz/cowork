@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, RwLock};
 
-use crate::session::SessionOutput;
+use crate::session::{SessionOutput, SessionRegistry};
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
@@ -186,6 +186,8 @@ pub struct TaskTool {
     progress_tx: Option<mpsc::Sender<(String, SessionOutput)>>,
     /// Parent session ID (used when forwarding events)
     parent_session_id: Option<String>,
+    /// Shared session registry for subagent approval routing
+    session_registry: Option<SessionRegistry>,
 }
 
 impl TaskTool {
@@ -199,7 +201,14 @@ impl TaskTool {
             model_tiers: None,
             progress_tx: None,
             parent_session_id: None,
+            session_registry: None,
         }
+    }
+
+    /// Set the shared session registry for subagent approval routing
+    pub fn with_session_registry(mut self, registry: SessionRegistry) -> Self {
+        self.session_registry = Some(registry);
+        self
     }
 
     /// Set the parent's output channel for forwarding subagent activity
@@ -371,6 +380,7 @@ impl Tool for TaskTool {
         // Forward parent's progress channel so subagent activity is visible
         config.progress_tx = self.progress_tx.clone();
         config.parent_session_id = self.parent_session_id.clone();
+        config.session_registry = self.session_registry.clone();
 
         if run_in_background {
             // Start agent in background

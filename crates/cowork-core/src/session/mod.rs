@@ -60,4 +60,5 @@ pub use agent_loop::{
 pub use manager::{OutputReceiver, SessionManager};
 pub use types::{
     QuestionInfo, QuestionOption, SessionConfig, SessionId, SessionInput, SessionOutput,
+    SessionRegistry,
 };

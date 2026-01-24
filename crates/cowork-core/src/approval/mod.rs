@@ -3,6 +3,8 @@
 //! The approval system allows users to control which operations
 //! are automatically approved vs require explicit confirmation.
 
+pub mod bash_safety;
+
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -254,6 +256,29 @@ impl ToolApprovalConfig {
         let mut config = Self::new(ApprovalLevel::Critical);
         config.session_approve_all = true;
         config
+    }
+
+    /// Check if a tool should be auto-approved, considering its arguments.
+    ///
+    /// For Bash tools, this parses the command to determine if it's read-only (safe).
+    /// For other tools, delegates to `should_auto_approve`.
+    pub fn should_auto_approve_with_args(&self, tool_name: &str, args: &serde_json::Value) -> bool {
+        if tool_name == "Bash" {
+            // Session-wide approval overrides everything
+            if self.session_approve_all {
+                return true;
+            }
+            if self.session_approved.contains(tool_name) {
+                return true;
+            }
+            // Parse the "command" argument and check safety
+            if let Some(command) = args.get("command").and_then(|v| v.as_str()) {
+                return bash_safety::is_safe_command(command);
+            }
+            // No command argument — require approval
+            return false;
+        }
+        self.should_auto_approve(tool_name)
     }
 
     /// Check if a tool should be auto-approved

@@ -1,9 +1,9 @@
 //! Agent execution engine for TaskTool subagents
 //!
 //! Subagents reuse the shared `AgentLoop` from `crate::session`, configured with
-//! scoped tools (via `ToolScope`), trust-all approval, no hooks, and no persistence.
-//! This gives subagents automatic tool result truncation, context monitoring,
-//! and auto-compaction for free.
+//! scoped tools (via `ToolScope`), default approval (safe Bash commands auto-approved),
+//! no hooks, and no persistence. Subagents register in the session registry so the
+//! frontend can route approval responses back to them.
 //!
 //! Dynamic agents from the prompt system take precedence when a matching name
 //! is found in the component registry.
@@ -25,7 +25,7 @@ use crate::prompt::{
     builtin, parse_frontmatter, AgentDefinition, ComponentRegistry, ModelPreference,
 };
 use crate::provider::ProviderType;
-use crate::session::{AgentLoop, SessionConfig, SessionInput, SessionOutput};
+use crate::session::{AgentLoop, SessionConfig, SessionInput, SessionOutput, SessionRegistry};
 
 /// Maximum result size for subagent output (to prevent context bloat)
 /// Results exceeding this will be truncated with a note
@@ -51,6 +51,8 @@ pub struct AgentExecutionConfig {
     pub progress_tx: Option<mpsc::Sender<(String, SessionOutput)>>,
     /// Parent session ID (used when forwarding events)
     pub parent_session_id: Option<String>,
+    /// Shared session registry for subagent approval routing
+    pub session_registry: Option<SessionRegistry>,
 }
 
 impl AgentExecutionConfig {
@@ -64,6 +66,7 @@ impl AgentExecutionConfig {
             registry: None,
             progress_tx: None,
             parent_session_id: None,
+            session_registry: None,
         }
     }
 
@@ -281,8 +284,9 @@ fn tool_scope_for(agent_type: &AgentType) -> ToolScope {
 
 /// Run a subagent using the shared AgentLoop infrastructure
 ///
-/// This replaces the hand-rolled loop with the same AgentLoop used by the main session,
-/// giving subagents automatic tool result truncation, context monitoring, and auto-compaction.
+/// Uses the same AgentLoop as the main session, with the default approval config
+/// (safe Bash commands auto-approved, dangerous ones forwarded to the UI for approval).
+/// Subagents register in the session registry so the frontend can route approvals back.
 pub async fn run_subagent(
     agent_type: &AgentType,
     model: &ModelTier,
@@ -301,12 +305,13 @@ pub async fn run_subagent(
     let env_info = build_environment_info(&config.workspace);
     let system_prompt = format!("{}{}", base_prompt, env_info);
 
-    // Build SessionConfig: trust-all approval, scoped tools, no hooks, no save
+    // Build SessionConfig: scoped tools, no hooks, no save
+    // Use default approval config so Bash commands get parsed for safety
     let session_config = SessionConfig::new(config.workspace.clone())
         .with_provider(config.provider_type)
         .with_model(model_str)
         .with_system_prompt(system_prompt)
-        .with_approval_config(ToolApprovalConfig::trust_all())
+        .with_approval_config(ToolApprovalConfig::default())
         .with_tool_scope(tool_scope_for(agent_type))
         .with_enable_hooks(false)
         .with_save_session(false);
@@ -321,6 +326,11 @@ pub async fn run_subagent(
     let (input_tx, input_rx) = tokio::sync::mpsc::channel::<SessionInput>(32);
     let (output_tx, mut output_rx) =
         tokio::sync::mpsc::channel::<(String, SessionOutput)>(128);
+
+    // Register subagent in session registry so approvals can be routed to it
+    if let Some(ref reg) = config.session_registry {
+        reg.write().insert(agent_id.to_string(), input_tx.clone());
+    }
 
     // Create and spawn agent loop
     let agent_loop = AgentLoop::new(
@@ -340,7 +350,7 @@ pub async fn run_subagent(
         .await
         .map_err(|e| crate::error::Error::Agent(format!("Failed to send prompt: {}", e)))?;
 
-    // Collect output until Idle, forwarding activity to parent
+    // Collect output until Idle, forwarding activity and approval events to parent
     let mut last_content = String::new();
     while let Some((_sid, output)) = output_rx.recv().await {
         match &output {
@@ -351,17 +361,24 @@ pub async fn run_subagent(
             SessionOutput::Error { message } => {
                 info!("Subagent error: {}", message);
             }
-            // Forward activity events to parent so TUI can show progress
-            SessionOutput::ToolStart { .. } | SessionOutput::Thinking { .. } => {
-                if let (Some(tx), Some(sid)) =
-                    (&config.progress_tx, &config.parent_session_id)
-                {
-                    let _ = tx.try_send((sid.clone(), output));
+            // Forward activity + approval events to parent UI
+            SessionOutput::ToolStart { .. }
+            | SessionOutput::Thinking { .. }
+            | SessionOutput::ToolPending { .. }
+            | SessionOutput::Question { .. } => {
+                if let Some(tx) = &config.progress_tx {
+                    // Use subagent's own ID so approvals route back here
+                    let _ = tx.try_send((agent_id.to_string(), output));
                     continue;
                 }
             }
             _ => {}
         }
+    }
+
+    // Unregister subagent from session registry
+    if let Some(ref reg) = config.session_registry {
+        reg.write().remove(agent_id);
     }
 
     // Drop input_tx to signal shutdown

@@ -212,6 +212,11 @@ impl AgentLoop {
         // Wire progress channel so subagent activity is forwarded to TUI
         tool_builder = tool_builder.with_progress_channel(output_tx.clone(), session_id.clone());
 
+        // Share session registry so subagents can register for approval routing
+        if let Some(reg) = config.session_registry.clone() {
+            tool_builder = tool_builder.with_session_registry(reg);
+        }
+
         let tool_registry = tool_builder.build();
 
         let tool_definitions = tool_registry.list();
@@ -385,10 +390,10 @@ impl AgentLoop {
 
             // Collect AskUserQuestion tool calls into pending (don't emit yet)
             for tool_call in &tool_calls {
-                if tool_call.name == "AskUserQuestion" {
-                    if self.parse_questions(&tool_call.arguments).is_some() {
-                        self.pending_approvals.push(tool_call.clone());
-                    }
+                if tool_call.name == "AskUserQuestion"
+                    && self.parse_questions(&tool_call.arguments).is_some()
+                {
+                    self.pending_approvals.push(tool_call.clone());
                 }
             }
 
@@ -527,7 +532,7 @@ impl AgentLoop {
         let mut needs_approval = Vec::new();
 
         for tc in tool_calls {
-            if self.approval_config.should_auto_approve(&tc.name) {
+            if self.approval_config.should_auto_approve_with_args(&tc.name, &tc.arguments) {
                 auto_approved.push(tc.id.clone());
             } else {
                 needs_approval.push(tc.id.clone());

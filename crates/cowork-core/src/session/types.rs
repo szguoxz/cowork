@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use crate::config::PromptSystemConfig;
 use crate::orchestration::ToolScope;
@@ -13,6 +14,11 @@ use crate::prompt::ComponentRegistry;
 
 /// Unique identifier for a session
 pub type SessionId = String;
+
+/// Shared registry of session input senders, keyed by session ID.
+///
+/// Used to route approval/answer inputs to both top-level sessions and subagents.
+pub type SessionRegistry = Arc<parking_lot::RwLock<HashMap<SessionId, mpsc::Sender<SessionInput>>>>;
 
 /// Input messages sent TO an agent session
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,6 +243,8 @@ pub struct SessionConfig {
     pub enable_hooks: Option<bool>,
     /// Whether to persist the session to disk on exit (default: true)
     pub save_session: bool,
+    /// Shared session registry for routing approvals to subagents
+    pub session_registry: Option<SessionRegistry>,
 }
 
 impl Default for SessionConfig {
@@ -254,6 +262,7 @@ impl Default for SessionConfig {
             tool_scope: None,
             enable_hooks: None,
             save_session: true,
+            session_registry: None,
         }
     }
 }
@@ -330,6 +339,12 @@ impl SessionConfig {
     /// Set whether to save the session to disk on exit
     pub fn with_save_session(mut self, save: bool) -> Self {
         self.save_session = save;
+        self
+    }
+
+    /// Set the shared session registry (for subagent approval routing)
+    pub fn with_session_registry(mut self, registry: SessionRegistry) -> Self {
+        self.session_registry = Some(registry);
         self
     }
 }

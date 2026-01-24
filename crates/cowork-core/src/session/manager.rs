@@ -18,7 +18,7 @@ pub type OutputReceiver = mpsc::Receiver<(SessionId, SessionOutput)>;
 /// Manages multiple concurrent agent sessions
 pub struct SessionManager {
     /// Map of session ID to input sender
-    sessions: Arc<RwLock<HashMap<SessionId, mpsc::Sender<SessionInput>>>>,
+    sessions: super::types::SessionRegistry,
     /// Channel for all session outputs (session_id, output)
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
     /// Base config used for new sessions
@@ -29,11 +29,16 @@ impl SessionManager {
     /// Create a new session manager with the given base config
     ///
     /// Returns the manager and an output receiver for consuming session outputs.
-    pub fn new(config: SessionConfig) -> (Self, OutputReceiver) {
+    pub fn new(mut config: SessionConfig) -> (Self, OutputReceiver) {
         let (output_tx, output_rx) = mpsc::channel(256);
 
+        let sessions = Arc::new(RwLock::new(HashMap::new()));
+
+        // Share the session registry so subagents can register themselves
+        config.session_registry = Some(sessions.clone());
+
         let manager = Self {
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+            sessions,
             output_tx,
             base_config: config,
         };
@@ -154,6 +159,7 @@ mod tests {
             tool_scope: None,
             enable_hooks: None,
             save_session: true,
+            session_registry: None,
         }
     }
 

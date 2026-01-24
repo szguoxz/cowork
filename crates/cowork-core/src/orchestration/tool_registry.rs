@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::config::{ModelTiers, WebSearchConfig};
 use crate::provider::ProviderType;
-use crate::session::SessionOutput;
+use crate::session::{SessionOutput, SessionRegistry};
 use crate::tools::filesystem::{EditFile, GlobFiles, GrepFiles, ReadFile, WriteFile};
 use crate::tools::interaction::AskUserQuestion;
 use crate::tools::lsp::LspTool;
@@ -58,6 +58,8 @@ pub struct ToolRegistryBuilder {
     progress_tx: Option<mpsc::Sender<(String, SessionOutput)>>,
     /// Parent session ID for progress forwarding
     progress_session_id: Option<String>,
+    /// Shared session registry for subagent approval routing
+    session_registry: Option<SessionRegistry>,
 }
 
 impl ToolRegistryBuilder {
@@ -82,7 +84,14 @@ impl ToolRegistryBuilder {
             plan_mode_state: None,
             progress_tx: None,
             progress_session_id: None,
+            session_registry: None,
         }
+    }
+
+    /// Set the shared session registry for subagent approval routing
+    pub fn with_session_registry(mut self, registry: SessionRegistry) -> Self {
+        self.session_registry = Some(registry);
+        self
     }
 
     /// Set a shared PlanModeState — used by the agent loop to share state
@@ -289,6 +298,9 @@ impl ToolRegistryBuilder {
                 }
                 if let (Some(tx), Some(sid)) = (self.progress_tx, self.progress_session_id) {
                     task_tool = task_tool.with_progress_channel(tx, sid);
+                }
+                if let Some(reg) = self.session_registry {
+                    task_tool = task_tool.with_session_registry(reg);
                 }
 
                 registry.register(Arc::new(task_tool));

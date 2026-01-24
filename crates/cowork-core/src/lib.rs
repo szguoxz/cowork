@@ -50,5 +50,5 @@ pub use orchestration::{
 // Session exports (unified agent loop architecture)
 pub use session::{
     AgentLoop, QuestionInfo, QuestionOption, SessionConfig, SessionId,
-    SessionInput, SessionManager, SessionOutput,
+    SessionInput, SessionManager, SessionOutput, SessionRegistry,
 };
