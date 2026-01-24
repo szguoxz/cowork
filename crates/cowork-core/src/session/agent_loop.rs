@@ -383,25 +383,17 @@ impl AgentLoop {
             // Categorize tool calls
             let (auto_approved, needs_approval) = self.categorize_tools(&tool_calls);
 
-            // Check for AskUserQuestion - it needs special handling
-            let mut has_question = false;
+            // Collect AskUserQuestion tool calls into pending (don't emit yet)
             for tool_call in &tool_calls {
                 if tool_call.name == "AskUserQuestion" {
-                    // Parse questions from arguments
-                    if let Some(questions) = self.parse_questions(&tool_call.arguments) {
-                        self.emit(SessionOutput::Question {
-                            request_id: tool_call.id.clone(),
-                            questions,
-                        })
-                        .await;
+                    if self.parse_questions(&tool_call.arguments).is_some() {
                         self.pending_approvals.push(tool_call.clone());
-                        has_question = true;
                     }
                 }
             }
 
             // Execute auto-approved tools and batch results
-            // Exclude AskUserQuestion — it's handled via the question/answer flow above
+            // Exclude AskUserQuestion — it's handled via the question/answer flow
             let auto_approved_tools: Vec<_> = tool_calls
                 .iter()
                 .filter(|tc| auto_approved.contains(&tc.id) && tc.name != "AskUserQuestion")
@@ -411,25 +403,19 @@ impl AgentLoop {
                 self.execute_tools_batched(&auto_approved_tools).await;
             }
 
-            // If there are tools needing approval, pause and wait
-            if !needs_approval.is_empty() {
-                for tool_call in &tool_calls {
-                    if needs_approval.contains(&tool_call.id) {
-                        self.emit(SessionOutput::tool_pending(
-                            &tool_call.id,
-                            &tool_call.name,
-                            tool_call.arguments.clone(),
-                            None,
-                        ))
-                        .await;
-                        self.pending_approvals.push(tool_call.clone());
-                    }
+            // Collect tools needing approval into pending (exclude AskUserQuestion, already added)
+            for tool_call in &tool_calls {
+                if needs_approval.contains(&tool_call.id) && tool_call.name != "AskUserQuestion" {
+                    self.pending_approvals.push(tool_call.clone());
                 }
             }
 
-            // If we have pending questions or approvals, wait for answers
-            // This blocks the agent loop but leaves the main loop free to queue new messages
-            if has_question || !self.pending_approvals.is_empty() {
+            // Process pending items one at a time
+            // Emit only the FIRST pending item, wait for resolution, then emit the next
+            if !self.pending_approvals.is_empty() {
+                // Emit the first pending item
+                self.emit_next_pending().await;
+
                 while !self.pending_approvals.is_empty() {
                     // Wait for an answer
                     if let Some(input) = self.answer_rx.recv().await {
@@ -450,6 +436,10 @@ impl AgentLoop {
                             _ => {
                                 warn!("Unexpected input type in waiting loop: {:?}", input);
                             }
+                        }
+                        // After resolving one item, emit the next pending item (if any)
+                        if !self.pending_approvals.is_empty() {
+                            self.emit_next_pending().await;
                         }
                     } else {
                         // Channel closed
@@ -825,6 +815,34 @@ impl AgentLoop {
         }
 
         Some(result)
+    }
+
+    /// Emit the appropriate modal event for the first pending item
+    ///
+    /// For AskUserQuestion: emits a Question event
+    /// For other tools: emits a ToolPending event
+    async fn emit_next_pending(&mut self) {
+        let Some(next) = self.pending_approvals.first() else {
+            return;
+        };
+
+        if next.name == "AskUserQuestion" {
+            if let Some(questions) = self.parse_questions(&next.arguments) {
+                self.emit(SessionOutput::Question {
+                    request_id: next.id.clone(),
+                    questions,
+                })
+                .await;
+            }
+        } else {
+            self.emit(SessionOutput::tool_pending(
+                &next.id,
+                &next.name,
+                next.arguments.clone(),
+                None,
+            ))
+            .await;
+        }
     }
 
     /// Handle tool approval
