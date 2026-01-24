@@ -6,8 +6,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use tokio::sync::mpsc;
+
 use crate::config::{ModelTiers, WebSearchConfig};
 use crate::provider::ProviderType;
+use crate::session::SessionOutput;
 use crate::tools::filesystem::{EditFile, GlobFiles, GrepFiles, ReadFile, WriteFile};
 use crate::tools::interaction::AskUserQuestion;
 use crate::tools::lsp::LspTool;
@@ -51,6 +54,10 @@ pub struct ToolRegistryBuilder {
     tool_scope: Option<ToolScope>,
     skill_registry: Option<Arc<SkillRegistry>>,
     plan_mode_state: Option<Arc<tokio::sync::RwLock<PlanModeState>>>,
+    /// Parent output channel for subagent progress forwarding
+    progress_tx: Option<mpsc::Sender<(String, SessionOutput)>>,
+    /// Parent session ID for progress forwarding
+    progress_session_id: Option<String>,
 }
 
 impl ToolRegistryBuilder {
@@ -73,6 +80,8 @@ impl ToolRegistryBuilder {
             tool_scope: None,
             skill_registry: None,
             plan_mode_state: None,
+            progress_tx: None,
+            progress_session_id: None,
         }
     }
 
@@ -86,6 +95,17 @@ impl ToolRegistryBuilder {
     /// Set a tool scope — when set, `build()` will use scoped tool registration
     pub fn with_tool_scope(mut self, scope: ToolScope) -> Self {
         self.tool_scope = Some(scope);
+        self
+    }
+
+    /// Set the progress channel for subagent activity forwarding
+    pub fn with_progress_channel(
+        mut self,
+        tx: mpsc::Sender<(String, SessionOutput)>,
+        session_id: String,
+    ) -> Self {
+        self.progress_tx = Some(tx);
+        self.progress_session_id = Some(session_id);
         self
     }
 
@@ -266,6 +286,9 @@ impl ToolRegistryBuilder {
                 }
                 if let Some(tiers) = self.model_tiers {
                     task_tool = task_tool.with_model_tiers(tiers);
+                }
+                if let (Some(tx), Some(sid)) = (self.progress_tx, self.progress_session_id) {
+                    task_tool = task_tool.with_progress_channel(tx, sid);
                 }
 
                 registry.register(Arc::new(task_tool));

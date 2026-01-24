@@ -734,7 +734,7 @@ Content
 
             let restrictions = agent.tool_restrictions();
             assert!(restrictions.is_allowed("Bash", &json!({})));
-            assert!(restrictions.is_allowed("KillShell", &json!({})));
+            assert!(!restrictions.is_allowed("KillShell", &json!({})));
             assert!(!restrictions.is_allowed("Read", &json!({})));
         }
 

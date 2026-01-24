@@ -15,6 +15,8 @@ use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
+use tokio::sync::mpsc;
+
 use crate::approval::ToolApprovalConfig;
 use crate::config::ModelTiers;
 use crate::error::Result;
@@ -32,7 +34,6 @@ const MAX_RESULT_SIZE: usize = 10000;
 use super::{AgentInstanceRegistry, AgentStatus, AgentType, ModelTier};
 
 /// Configuration for agent execution
-#[derive(Debug, Clone)]
 pub struct AgentExecutionConfig {
     /// Workspace root directory
     pub workspace: PathBuf,
@@ -46,6 +47,10 @@ pub struct AgentExecutionConfig {
     pub model_tiers: ModelTiers,
     /// Optional component registry for dynamic agent loading
     pub registry: Option<Arc<ComponentRegistry>>,
+    /// Parent session's output channel for forwarding subagent activity
+    pub progress_tx: Option<mpsc::Sender<(String, SessionOutput)>>,
+    /// Parent session ID (used when forwarding events)
+    pub parent_session_id: Option<String>,
 }
 
 impl AgentExecutionConfig {
@@ -57,6 +62,8 @@ impl AgentExecutionConfig {
             max_turns: 50,
             model_tiers: ModelTiers::anthropic(),
             registry: None,
+            progress_tx: None,
+            parent_session_id: None,
         }
     }
 
@@ -333,18 +340,27 @@ pub async fn run_subagent(
         .await
         .map_err(|e| crate::error::Error::Agent(format!("Failed to send prompt: {}", e)))?;
 
-    // Collect output until Idle
+    // Collect output until Idle, forwarding activity to parent
     let mut last_content = String::new();
     while let Some((_sid, output)) = output_rx.recv().await {
-        match output {
+        match &output {
             SessionOutput::Idle => break,
             SessionOutput::AssistantMessage { content, .. } => {
-                last_content = content;
+                last_content = content.clone();
             }
             SessionOutput::Error { message } => {
                 info!("Subagent error: {}", message);
             }
-            _ => {} // Ignore ToolStart, ToolDone, Thinking, etc.
+            // Forward activity events to parent so TUI can show progress
+            SessionOutput::ToolStart { .. } | SessionOutput::Thinking { .. } => {
+                if let (Some(tx), Some(sid)) =
+                    (&config.progress_tx, &config.parent_session_id)
+                {
+                    let _ = tx.try_send((sid.clone(), output));
+                    continue;
+                }
+            }
+            _ => {}
         }
     }
 

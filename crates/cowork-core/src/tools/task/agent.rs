@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
+
+use crate::session::SessionOutput;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
@@ -180,6 +182,10 @@ pub struct TaskTool {
     provider_type: ProviderType,
     api_key: Option<String>,
     model_tiers: Option<crate::config::ModelTiers>,
+    /// Parent session's output channel for forwarding subagent activity
+    progress_tx: Option<mpsc::Sender<(String, SessionOutput)>>,
+    /// Parent session ID (used when forwarding events)
+    parent_session_id: Option<String>,
 }
 
 impl TaskTool {
@@ -191,7 +197,20 @@ impl TaskTool {
             provider_type: ProviderType::Anthropic,
             api_key: None,
             model_tiers: None,
+            progress_tx: None,
+            parent_session_id: None,
         }
+    }
+
+    /// Set the parent's output channel for forwarding subagent activity
+    pub fn with_progress_channel(
+        mut self,
+        tx: mpsc::Sender<(String, SessionOutput)>,
+        session_id: String,
+    ) -> Self {
+        self.progress_tx = Some(tx);
+        self.parent_session_id = Some(session_id);
+        self
     }
 
     /// Set the provider type for subagent execution
@@ -348,6 +367,10 @@ impl Tool for TaskTool {
         if let Some(ref tiers) = self.model_tiers {
             config = config.with_model_tiers(tiers.clone());
         }
+
+        // Forward parent's progress channel so subagent activity is visible
+        config.progress_tx = self.progress_tx.clone();
+        config.parent_session_id = self.parent_session_id.clone();
 
         if run_in_background {
             // Start agent in background

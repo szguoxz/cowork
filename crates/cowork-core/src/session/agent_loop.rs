@@ -209,6 +209,9 @@ impl AgentLoop {
             tool_builder = tool_builder.with_tool_scope(scope);
         }
 
+        // Wire progress channel so subagent activity is forwarded to TUI
+        tool_builder = tool_builder.with_progress_channel(output_tx.clone(), session_id.clone());
+
         let tool_registry = tool_builder.build();
 
         let tool_definitions = tool_registry.list();
