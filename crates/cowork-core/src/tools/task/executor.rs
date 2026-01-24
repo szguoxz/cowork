@@ -533,13 +533,13 @@ mod tests {
 
         let workspace = PathBuf::from("/tmp/test");
 
-        // Bash scope
+        // Bash scope (only Bash)
         let bash_registry = ToolRegistryBuilder::new(workspace.clone())
             .with_tool_scope(ToolScope::Bash)
             .build();
         assert!(bash_registry.get("Bash").is_some());
-        assert!(bash_registry.get("Read").is_some());
-        assert!(bash_registry.get("Write").is_some());
+        assert!(bash_registry.get("Read").is_none());
+        assert!(bash_registry.get("Write").is_none());
         assert!(bash_registry.get("Glob").is_none());
 
         // Explore scope (all tools except Task, Edit, Write)
@@ -557,14 +557,20 @@ mod tests {
         assert!(explore_registry.get("Write").is_none());
         assert!(explore_registry.get("Edit").is_none());
 
-        // Plan scope
+        // Plan scope (same as Explore: all except Task, Edit, Write)
         let plan_registry = ToolRegistryBuilder::new(workspace.clone())
             .with_tool_scope(ToolScope::Plan)
             .build();
         assert!(plan_registry.get("Read").is_some());
         assert!(plan_registry.get("Glob").is_some());
+        assert!(plan_registry.get("Grep").is_some());
+        assert!(plan_registry.get("Bash").is_some());
+        assert!(plan_registry.get("WebFetch").is_some());
+        assert!(plan_registry.get("WebSearch").is_some());
+        assert!(plan_registry.get("LSP").is_some());
         assert!(plan_registry.get("TodoWrite").is_some());
         assert!(plan_registry.get("Write").is_none());
+        assert!(plan_registry.get("Edit").is_none());
 
         // GeneralPurpose scope
         let gp_registry = ToolRegistryBuilder::new(workspace.clone())

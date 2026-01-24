@@ -3,7 +3,7 @@ name: Plan
 description: "Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task."
 model: inherit
 color: blue
-tools: Glob, Grep, Read, LSP, WebFetch, WebSearch
+tools: Glob, Grep, Read, Bash, LSP, WebFetch, WebSearch, TodoWrite
 context: fork
 max_turns: 50
 ---

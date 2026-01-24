@@ -3,7 +3,7 @@ name: Bash
 description: "Command execution specialist for running bash commands. Use this for git operations, command execution, and other terminal tasks."
 model: inherit
 color: green
-tools: Bash, KillShell
+tools: Bash
 context: fork
 max_turns: 20
 ---
