@@ -148,9 +148,10 @@ fn parse_provider_type(provider_str: &str) -> ProviderType {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Setup logging - use warn level by default to avoid interfering with CLI prompt
+    // Setup logging - write to stderr to avoid interfering with TUI rendering on stdout
     // Use --verbose for info/debug level logs
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(if cli.verbose {
             "info,cowork_core=debug"
         } else {
