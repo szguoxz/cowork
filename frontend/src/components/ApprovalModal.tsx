@@ -77,25 +77,27 @@ export default function ApprovalModal({ id, name, arguments: args, onApprove, on
             onClick={() => onApprove(id)}
             className="px-4 py-2 text-sm font-medium bg-success text-white rounded-lg hover:bg-success/90 transition-colors"
           >
-            Approve (Y)
+            Allow once (Y)
           </button>
           <button
             onClick={() => onReject(id)}
             className="px-4 py-2 text-sm font-medium bg-error text-white rounded-lg hover:bg-error/90 transition-colors"
           >
-            Reject (N)
+            Deny (N)
           </button>
           <button
             onClick={() => onApproveForSession(id, name)}
-            className="px-4 py-2 text-sm font-medium bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-colors"
+            className="px-4 py-2 text-sm font-medium bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-colors truncate"
+            title={`Auto-approve all future "${name}" calls this session`}
           >
-            Always (A)
+            Always allow {name} (A)
           </button>
           <button
             onClick={() => onApproveAll(id)}
             className="px-4 py-2 text-sm font-medium bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-colors"
+            title="Auto-approve all tools for the rest of this session"
           >
-            Approve all
+            Allow all tools
           </button>
         </div>
       </div>
