@@ -255,17 +255,6 @@ fn build_system_prompt(workspace: &Path, model_info: Option<&str>) -> String {
         vars.model_info = info.to_string();
     }
 
-    // Populate available skills for the Skill tool
-    let skill_registry = SkillRegistry::with_builtins(workspace.to_path_buf());
-    let skills: Vec<String> = skill_registry
-        .list_user_invocable()
-        .iter()
-        .map(|s| format!("- {}: {}", s.name, s.description))
-        .collect();
-    if !skills.is_empty() {
-        vars.skills_xml = skills.join("\n");
-    }
-
     SystemPrompt::new()
         .with_template_vars(vars)
         .build()

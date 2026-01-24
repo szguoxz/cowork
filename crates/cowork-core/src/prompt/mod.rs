@@ -207,7 +207,23 @@ impl TemplateVars {
     /// Substitute template variables in a string
     ///
     /// Replaces all `${VARIABLE_NAME}` patterns with their corresponding values.
+    /// If `skills_xml` is empty and `working_directory` is set, auto-populates
+    /// the available skills listing from the SkillRegistry.
     pub fn substitute(&self, template: &str) -> String {
+        let skills_xml = if self.skills_xml.is_empty() && !self.working_directory.is_empty() {
+            let registry = crate::skills::SkillRegistry::with_builtins(
+                std::path::PathBuf::from(&self.working_directory),
+            );
+            let skills: Vec<String> = registry
+                .list_user_invocable()
+                .iter()
+                .map(|s| format!("- {}: {}", s.name, s.description))
+                .collect();
+            skills.join("\n")
+        } else {
+            self.skills_xml.clone()
+        };
+
         template
             .replace("${WORKING_DIRECTORY}", &self.working_directory)
             .replace("${IS_GIT_REPO}", if self.is_git_repo { "Yes" } else { "No" })
@@ -222,7 +238,7 @@ impl TemplateVars {
             .replace("${CURRENT_BRANCH}", &self.current_branch)
             .replace("${MAIN_BRANCH}", &self.main_branch)
             .replace("${RECENT_COMMITS}", &self.recent_commits)
-            .replace("${SKILLS_XML}", &self.skills_xml)
+            .replace("${SKILLS_XML}", &skills_xml)
     }
 }
 
