@@ -24,6 +24,7 @@ use crate::orchestration::{ChatMessage, ChatSession, ToolCallInfo, ToolRegistryB
 use crate::prompt::{ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig};
 use crate::provider::{CompletionResult, GenAIProvider};
 use crate::skills::SkillRegistry;
+use crate::tools::planning::PlanModeState;
 use crate::tools::{ToolDefinition, ToolRegistry};
 
 /// Maximum number of agentic turns per user message
@@ -97,6 +98,8 @@ pub struct AgentLoop {
     tool_definitions: Vec<ToolDefinition>,
     /// Tool approval configuration
     approval_config: ToolApprovalConfig,
+    /// Plan mode state (shared with EnterPlanMode/ExitPlanMode tools)
+    plan_mode_state: Arc<tokio::sync::RwLock<PlanModeState>>,
     /// Workspace path
     #[allow(dead_code)]
     workspace_path: std::path::PathBuf,
@@ -183,10 +186,14 @@ impl AgentLoop {
         // Create skill registry
         let skill_registry = Arc::new(SkillRegistry::with_builtins(config.workspace_path.clone()));
 
+        // Create shared plan mode state
+        let plan_mode_state = Arc::new(tokio::sync::RwLock::new(PlanModeState::default()));
+
         // Create tool registry
         let mut tool_builder = ToolRegistryBuilder::new(config.workspace_path.clone())
             .with_provider(config.provider_type)
-            .with_skill_registry(skill_registry);
+            .with_skill_registry(skill_registry)
+            .with_plan_mode_state(plan_mode_state.clone());
 
         if let Some(ref key) = config.api_key {
             tool_builder = tool_builder.with_api_key(key.clone());
@@ -238,6 +245,7 @@ impl AgentLoop {
             tool_registry,
             tool_definitions,
             approval_config: config.approval_config,
+            plan_mode_state,
             workspace_path: config.workspace_path.clone(),
             pending_approvals: Vec::new(),
             context_monitor,
@@ -452,15 +460,52 @@ impl AgentLoop {
         Ok(())
     }
 
+    /// Tools allowed when plan mode is active
+    const PLAN_MODE_TOOLS: &'static [&'static str] = &[
+        "Read", "Glob", "Grep", "LSP", "WebFetch", "WebSearch",
+        "AskUserQuestion", "ExitPlanMode", "TodoWrite",
+    ];
+
     /// Call the LLM and get a response
     async fn call_llm(&self) -> Result<LlmCallResult> {
-        let llm_messages = self.session.to_llm_messages();
+        let mut llm_messages = self.session.to_llm_messages();
+
+        // Check plan mode state — filter tools and inject reminder
+        let plan_active = self.plan_mode_state.read().await.active;
 
         let tools = if self.tool_definitions.is_empty() {
             None
+        } else if plan_active {
+            // Filter to only plan-mode-allowed tools
+            let filtered: Vec<_> = self.tool_definitions.iter()
+                .filter(|td| Self::PLAN_MODE_TOOLS.contains(&td.name.as_str()))
+                .cloned()
+                .collect();
+            if filtered.is_empty() { None } else { Some(filtered) }
         } else {
             Some(self.tool_definitions.clone())
         };
+
+        // Inject plan mode reminder into the messages
+        if plan_active {
+            let reminder = crate::prompt::builtin::claude_code::reminders::PLAN_MODE_ACTIVE;
+            // Append as a system reminder on the last user message
+            if let Some(last_user) = llm_messages.iter_mut().rev()
+                .find(|m| m.role == "user")
+            {
+                let suffix = format!("\n\n<system-reminder>\n{}\n</system-reminder>", reminder);
+                match &mut last_user.content {
+                    crate::provider::MessageContent::Text(text) => {
+                        text.push_str(&suffix);
+                    }
+                    crate::provider::MessageContent::Blocks(blocks) => {
+                        blocks.push(crate::provider::ContentBlock::Text {
+                            text: suffix,
+                        });
+                    }
+                }
+            }
+        }
 
         match self.provider.chat(llm_messages, tools).await {
             Ok(CompletionResult::Message(content)) => Ok(LlmCallResult {

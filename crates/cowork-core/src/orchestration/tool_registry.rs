@@ -50,6 +50,7 @@ pub struct ToolRegistryBuilder {
     include_interaction: bool,
     tool_scope: Option<ToolScope>,
     skill_registry: Option<Arc<SkillRegistry>>,
+    plan_mode_state: Option<Arc<tokio::sync::RwLock<PlanModeState>>>,
 }
 
 impl ToolRegistryBuilder {
@@ -71,7 +72,15 @@ impl ToolRegistryBuilder {
             include_interaction: true,
             tool_scope: None,
             skill_registry: None,
+            plan_mode_state: None,
         }
+    }
+
+    /// Set a shared PlanModeState — used by the agent loop to share state
+    /// between the planning tools and the tool filtering logic
+    pub fn with_plan_mode_state(mut self, state: Arc<tokio::sync::RwLock<PlanModeState>>) -> Self {
+        self.plan_mode_state = Some(state);
+        self
     }
 
     /// Set a tool scope — when set, `build()` will use scoped tool registration
@@ -237,10 +246,11 @@ impl ToolRegistryBuilder {
 
         // Planning tools with shared state
         if self.include_planning {
-            let plan_mode_state =
-                Arc::new(tokio::sync::RwLock::new(PlanModeState::default()));
+            let plan_mode_state = self.plan_mode_state.clone().unwrap_or_else(||
+                Arc::new(tokio::sync::RwLock::new(PlanModeState::default()))
+            );
             registry.register(Arc::new(EnterPlanMode::new(plan_mode_state.clone())));
-            registry.register(Arc::new(ExitPlanMode::new(plan_mode_state)));
+            registry.register(Arc::new(ExitPlanMode::new(plan_mode_state, self.workspace.clone())));
         }
 
         // Agent/Task tools - require provider_type for full functionality
