@@ -51,7 +51,7 @@ impl Message {
         let name = name.into();
         Self::new(
             MessageType::ToolStart { name: name.clone() },
-            format!("Executing {} with: {}", name, args.into()),
+            args.into(),
         )
     }
 
@@ -64,7 +64,7 @@ impl Message {
                 success,
             },
             if content.is_empty() {
-                format!("{} {}", name, if success { "completed" } else { "failed" })
+                if success { "done".to_string() } else { "failed".to_string() }
             } else {
                 content
             },
@@ -198,8 +198,10 @@ pub struct App {
     pub state: AppState,
     /// Text input buffer
     pub input: Input,
-    /// Message history
+    /// Message history (permanent: user, assistant, system, error)
     pub messages: Vec<Message>,
+    /// Ephemeral tool activity message (each new tool call replaces the previous)
+    pub tool_activity: Option<Message>,
     /// Scroll offset for message area
     pub scroll_offset: usize,
     /// Whether the app should quit
@@ -227,6 +229,7 @@ impl App {
                 Message::system("Welcome to Cowork - AI Coding Assistant"),
                 Message::system("Type your message and press Enter. Press Ctrl+C or type /exit to quit."),
             ],
+            tool_activity: None,
             scroll_offset: 0,
             should_quit: false,
             interactions: VecDeque::new(),
@@ -275,6 +278,7 @@ impl App {
                 self.status = "Ready".to_string();
             }
             SessionOutput::Idle => {
+                self.tool_activity = None;
                 self.state = AppState::Normal;
                 self.thinking_content = None;
                 self.status.clear();
@@ -292,24 +296,27 @@ impl App {
                 self.status = "Thinking...".to_string();
             }
             SessionOutput::AssistantMessage { content, .. } => {
+                self.tool_activity = None;
                 if !content.is_empty() {
                     self.add_message(Message::assistant(content));
                 }
                 self.state = AppState::Normal;
             }
             SessionOutput::ToolStart { name, arguments, .. } => {
-                let args_str = serde_json::to_string_pretty(&arguments)
-                    .unwrap_or_else(|_| arguments.to_string());
-                self.add_message(Message::tool_start(&name, args_str));
-                self.status = format!("Executing {}...", name);
+                let summary = format_tool_args(&name, &arguments);
+                self.tool_activity = Some(Message::tool_start(&name, summary));
+                self.status = format!("{}...", name);
+                self.scroll_to_bottom();
             }
             SessionOutput::ToolPending { id, name, arguments, .. } => {
                 self.interactions.push_back(Interaction::ToolApproval(PendingApproval::new(id, name, arguments)));
                 self.state = AppState::Interaction;
             }
             SessionOutput::ToolDone { name, success, output, .. } => {
-                self.add_message(Message::tool_done(&name, success, &output));
+                let summary = format_tool_output(&name, success, &output);
+                self.tool_activity = Some(Message::tool_done(&name, success, &summary));
                 self.status.clear();
+                self.scroll_to_bottom();
             }
             SessionOutput::Question { request_id, questions } => {
                 self.interactions.push_back(Interaction::Question(PendingQuestion::new(request_id, questions)));
@@ -320,5 +327,71 @@ impl App {
                 self.state = AppState::Normal;
             }
         }
+    }
+}
+
+/// Format tool arguments into a concise one-line summary
+fn format_tool_args(tool_name: &str, args: &serde_json::Value) -> String {
+    match tool_name {
+        "Read" => args["file_path"].as_str().unwrap_or("?").to_string(),
+        "Write" => args["file_path"].as_str().unwrap_or("?").to_string(),
+        "Edit" => args["file_path"].as_str().unwrap_or("?").to_string(),
+        "Glob" => args["pattern"].as_str().unwrap_or("?").to_string(),
+        "Grep" => {
+            let pattern = args["pattern"].as_str().unwrap_or("?");
+            let path = args["path"].as_str().unwrap_or(".");
+            format!("{} in {}", pattern, path)
+        }
+        "Bash" => {
+            let cmd = args["command"].as_str().unwrap_or("?");
+            truncate_line(cmd, 120)
+        }
+        "Task" => {
+            let desc = args["description"].as_str().unwrap_or("?");
+            let agent = args["subagent_type"].as_str().unwrap_or("?");
+            format!("[{}] {}", agent, desc)
+        }
+        "WebFetch" => args["url"].as_str().unwrap_or("?").to_string(),
+        "WebSearch" => args["query"].as_str().unwrap_or("?").to_string(),
+        "LSP" => {
+            let op = args["operation"].as_str().unwrap_or("?");
+            let file = args["filePath"].as_str().unwrap_or("?");
+            format!("{} {}", op, file)
+        }
+        _ => {
+            let compact = serde_json::to_string(args).unwrap_or_default();
+            truncate_line(&compact, 120)
+        }
+    }
+}
+
+/// Format tool output into a concise summary
+fn format_tool_output(_tool_name: &str, success: bool, output: &str) -> String {
+    if output.is_empty() {
+        return String::new();
+    }
+
+    if !success {
+        // Show errors concisely (first 2 lines)
+        let lines: Vec<&str> = output.lines().take(2).collect();
+        return truncate_line(&lines.join(" "), 150);
+    }
+
+    // For successful results, just show line count as a hint
+    let line_count = output.lines().count();
+    if line_count <= 1 {
+        truncate_line(output.lines().next().unwrap_or(""), 120)
+    } else {
+        let first = truncate_line(output.lines().next().unwrap_or(""), 80);
+        format!("{} (+{} lines)", first, line_count - 1)
+    }
+}
+
+/// Truncate a string to max chars, adding "..." if needed
+fn truncate_line(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max.saturating_sub(3)])
     }
 }

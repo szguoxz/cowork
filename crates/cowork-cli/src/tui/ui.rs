@@ -52,15 +52,18 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
 
-    if app.messages.is_empty() {
+    if app.messages.is_empty() && app.tool_activity.is_none() {
         return;
     }
 
-    // Convert messages to list items
+    let max_width = inner_area.width as usize - 2;
+
+    // Convert permanent messages + ephemeral tool_activity to list items
     let items: Vec<ListItem> = app
         .messages
         .iter()
-        .flat_map(|msg| message_to_lines(msg, inner_area.width as usize - 2))
+        .chain(app.tool_activity.iter())
+        .flat_map(|msg| message_to_lines(msg, max_width))
         .collect();
 
     // Calculate scroll
@@ -83,7 +86,8 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
     let visible_items: Vec<ListItem> = app
         .messages
         .iter()
-        .flat_map(|msg| message_to_lines(msg, inner_area.width as usize - 2))
+        .chain(app.tool_activity.iter())
+        .flat_map(|msg| message_to_lines(msg, max_width))
         .skip(scroll)
         .take(visible_lines)
         .collect();
