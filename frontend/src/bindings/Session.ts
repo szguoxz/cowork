@@ -1,55 +1,40 @@
 /**
  * Session types for multi-session support
+ * Simplified: tools are ephemeral, questions/approvals are modals
  */
-
-export interface ToolInfo {
-  id: string
-  name: string
-  arguments: Record<string, unknown>
-  status: 'pending' | 'executing' | 'done' | 'failed'
-  output?: string
-}
-
-export interface QuestionOption {
-  label: string
-  description: string | null
-}
-
-export interface QuestionInfo {
-  request_id: string
-  questions: Array<{
-    question: string
-    header: string | null
-    options: QuestionOption[]
-    multi_select: boolean
-  }>
-  answers?: Record<string, string>
-  is_answered: boolean
-}
-
-export interface Message {
-  id: string
-  type: 'user' | 'assistant' | 'tool' | 'question'
-  content: string
-  tool?: ToolInfo
-  question?: QuestionInfo
-}
 
 export interface SessionProvider {
   type: string  // 'anthropic', 'openai', 'deepseek', etc.
   model: string
 }
 
+export interface Message {
+  id: string
+  type: 'user' | 'assistant'
+  content: string
+}
+
+export interface QuestionData {
+  question: string
+  header: string | null
+  options: { label: string; description: string | null }[]
+  multi_select: boolean
+}
+
+export type Modal =
+  | { type: 'approval'; id: string; name: string; arguments: Record<string, unknown> }
+  | { type: 'question'; request_id: string; questions: QuestionData[] }
+
 export interface Session {
   id: string
   name: string
   messages: Message[]
-  isIdle: boolean
+  ephemeral: string | null    // Current tool activity line (overwritten each event)
+  status: string              // "Processing...", "Thinking...", "" (idle)
+  modal: Modal | null         // One pending approval or question
   isReady: boolean
-  isThinking?: boolean
-  thinkingContent?: string
   error: string | null
-  provider?: SessionProvider  // Per-session provider override
+  provider?: SessionProvider
   createdAt: Date
   updatedAt: Date
 }
@@ -60,7 +45,9 @@ export function createSession(id: string, name?: string, provider?: SessionProvi
     id,
     name: name || `Chat ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
     messages: [],
-    isIdle: false,
+    ephemeral: null,
+    status: '',
+    modal: null,
     isReady: false,
     error: null,
     provider,

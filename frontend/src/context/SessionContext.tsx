@@ -23,6 +23,9 @@ interface SessionContextType {
   approveTool: (toolId: string, sessionId?: string) => Promise<void>
   rejectTool: (toolId: string, sessionId?: string) => Promise<void>
 
+  // Question answering
+  answerQuestion: (requestId: string, answers: Record<string, string>, sessionId?: string) => Promise<void>
+
   // Get active session
   getActiveSession: () => Session | undefined
 }
@@ -41,6 +44,18 @@ interface SessionProviderProps {
   children: ReactNode
 }
 
+function summarizeArgs(args: Record<string, unknown>): string {
+  const entries = Object.entries(args)
+  if (entries.length === 0) return ''
+  // Take the first meaningful value
+  for (const [, value] of entries) {
+    if (typeof value === 'string' && value.length > 0) {
+      return value.length > 60 ? value.slice(0, 60) + '...' : value
+    }
+  }
+  return JSON.stringify(args).slice(0, 60)
+}
+
 export function SessionProvider({ children }: SessionProviderProps) {
   const [sessions, setSessions] = useState<Map<string, Session>>(new Map())
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
@@ -52,7 +67,6 @@ export function SessionProvider({ children }: SessionProviderProps) {
     setSessions(prev => {
       const existing = prev.get(sessionId)
       if (!existing) {
-        // Create session if it doesn't exist (for events from new sessions)
         const newSession = createSession(sessionId)
         const updated = updater(newSession)
         return new Map(prev).set(sessionId, updated)
@@ -68,19 +82,17 @@ export function SessionProvider({ children }: SessionProviderProps) {
 
     switch (output.type) {
       case 'ready':
-        updateSession(sessionId, s => ({ ...s, isReady: true }))
+        updateSession(sessionId, s => ({ ...s, status: '', isReady: true }))
         break
 
       case 'idle':
-        updateSession(sessionId, s => ({ ...s, isIdle: true, updatedAt: new Date() }))
+        updateSession(sessionId, s => ({ ...s, status: '', ephemeral: null, updatedAt: new Date() }))
         break
 
       case 'thinking':
         updateSession(sessionId, s => ({
           ...s,
-          isIdle: false,
-          isThinking: true,
-          thinkingContent: output.content,
+          status: output.content ? 'Thinking...' : 'Processing...',
           updatedAt: new Date(),
         }))
         break
@@ -88,7 +100,6 @@ export function SessionProvider({ children }: SessionProviderProps) {
       case 'user_message':
         updateSession(sessionId, s => ({
           ...s,
-          isIdle: false,
           messages: [...s.messages, {
             id: output.id,
             type: 'user' as const,
@@ -101,8 +112,8 @@ export function SessionProvider({ children }: SessionProviderProps) {
       case 'assistant_message':
         updateSession(sessionId, s => ({
           ...s,
-          isThinking: false,
-          thinkingContent: undefined,
+          status: '',
+          ephemeral: null,
           messages: [...s.messages, {
             id: output.id,
             type: 'assistant' as const,
@@ -113,20 +124,10 @@ export function SessionProvider({ children }: SessionProviderProps) {
         break
 
       case 'tool_start':
-        console.log('tool_start:', output.id, output.name)
         updateSession(sessionId, s => ({
           ...s,
-          messages: [...s.messages, {
-            id: output.id,
-            type: 'tool' as const,
-            content: '',
-            tool: {
-              id: output.id,
-              name: output.name,
-              arguments: output.arguments,
-              status: 'executing' as const,
-            }
-          }],
+          status: 'Processing...',
+          ephemeral: `${output.name}: ${summarizeArgs(output.arguments)}`,
           updatedAt: new Date(),
         }))
         break
@@ -134,57 +135,23 @@ export function SessionProvider({ children }: SessionProviderProps) {
       case 'tool_pending':
         updateSession(sessionId, s => ({
           ...s,
-          messages: [...s.messages, {
-            id: output.id,
-            type: 'tool' as const,
-            content: '',
-            tool: {
-              id: output.id,
-              name: output.name,
-              arguments: output.arguments,
-              status: 'pending' as const,
-            }
-          }],
+          modal: { type: 'approval', id: output.id, name: output.name, arguments: output.arguments },
           updatedAt: new Date(),
         }))
         break
 
-      case 'tool_done': {
-        console.log('tool_done:', output.id, 'success:', output.success)
-        const newStatus = output.success ? 'done' as const : 'failed' as const
+      case 'tool_done':
         updateSession(sessionId, s => ({
           ...s,
-          messages: s.messages.map(msg =>
-            msg.tool?.id === output.id
-              ? {
-                  ...msg,
-                  tool: {
-                    ...msg.tool!,
-                    status: newStatus,
-                    output: output.output,
-                  }
-                }
-              : msg
-          ),
+          ephemeral: `${output.name}: ${output.success ? 'done' : 'error'}`,
           updatedAt: new Date(),
         }))
         break
-      }
 
       case 'question':
         updateSession(sessionId, s => ({
           ...s,
-          isIdle: false, // Waiting for user input
-          messages: [...s.messages, {
-            id: output.request_id,
-            type: 'question' as const,
-            content: '',
-            question: {
-              request_id: output.request_id,
-              questions: output.questions,
-              is_answered: false,
-            }
-          }],
+          modal: { type: 'question', request_id: output.request_id, questions: output.questions },
           updatedAt: new Date(),
         }))
         break
@@ -193,7 +160,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
         updateSession(sessionId, s => ({
           ...s,
           error: output.message,
-          isIdle: true,
+          status: '',
           updatedAt: new Date(),
         }))
         break
@@ -202,7 +169,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
         updateSession(sessionId, s => ({
           ...s,
           isReady: false,
-          isIdle: false,
+          status: '',
           updatedAt: new Date(),
         }))
         break
@@ -214,32 +181,23 @@ export function SessionProvider({ children }: SessionProviderProps) {
     let unlistenFn: (() => void) | null = null
 
     const init = async () => {
-      console.log('SessionProvider: Setting up event listener...')
-
       // 1. Set up event listener FIRST
       unlistenFn = await listen<LoopOutput>('loop_output', (event) => {
-        console.log('Loop output received:', event.payload)
         handleOutput(event.payload)
       })
-
-      console.log('SessionProvider: Event listener set up, checking API key...')
 
       // 2. Check API key
       try {
         const hasKey = await invoke<boolean>('check_api_key')
-        console.log('API key check result:', hasKey)
         setHasApiKey(hasKey)
 
         // 3. Start the loop
         if (hasKey) {
-          console.log('Starting loop...')
           await invoke('start_loop')
-          console.log('start_loop returned successfully')
 
           // Create default session
           const defaultSession = createSession('default', 'Main Session')
           defaultSession.isReady = true
-          defaultSession.isIdle = true
           setSessions(new Map([['default', defaultSession]]))
           setActiveSessionId('default')
         }
@@ -260,7 +218,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
     }
   }, [handleOutput])
 
-  // Session management functions
+  // Session management
   const setActiveSession = useCallback((id: string) => {
     if (sessions.has(id)) {
       setActiveSessionId(id)
@@ -271,7 +229,6 @@ export function SessionProvider({ children }: SessionProviderProps) {
     const id = generateSessionId()
     const session = createSession(id, name, provider)
     session.isReady = true
-    session.isIdle = true
     setSessions(prev => new Map(prev).set(id, session))
     setActiveSessionId(id)
     return id
@@ -294,39 +251,28 @@ export function SessionProvider({ children }: SessionProviderProps) {
       return next
     })
 
-    // Switch to another session if needed
     if (activeSessionId === id) {
       const remaining = Array.from(sessions.keys()).filter(k => k !== id)
       setActiveSessionId(remaining.length > 0 ? remaining[0] : null)
     }
   }, [activeSessionId, sessions])
 
-  // Message functions
+  // Message sending
   const sendMessage = useCallback(async (content: string, sessionId?: string) => {
     const targetId = sessionId || activeSessionId
     if (!targetId) throw new Error('No active session')
 
-    // Clear error on new message
     updateSession(targetId, s => ({ ...s, error: null }))
-
     await invoke('send_message', { content, sessionId: targetId })
   }, [activeSessionId, updateSession])
 
+  // Tool approval
   const approveTool = useCallback(async (toolId: string, sessionId?: string) => {
     const targetId = sessionId || activeSessionId
     if (!targetId) throw new Error('No active session')
 
     await invoke('approve_tool', { toolId, sessionId: targetId })
-
-    // Update tool status locally
-    updateSession(targetId, s => ({
-      ...s,
-      messages: s.messages.map(msg =>
-        msg.tool?.id === toolId
-          ? { ...msg, tool: { ...msg.tool!, status: 'executing' as const } }
-          : msg
-      )
-    }))
+    updateSession(targetId, s => ({ ...s, modal: null }))
   }, [activeSessionId, updateSession])
 
   const rejectTool = useCallback(async (toolId: string, sessionId?: string) => {
@@ -334,16 +280,16 @@ export function SessionProvider({ children }: SessionProviderProps) {
     if (!targetId) throw new Error('No active session')
 
     await invoke('reject_tool', { toolId, sessionId: targetId })
+    updateSession(targetId, s => ({ ...s, modal: null }))
+  }, [activeSessionId, updateSession])
 
-    // Update tool status locally
-    updateSession(targetId, s => ({
-      ...s,
-      messages: s.messages.map(msg =>
-        msg.tool?.id === toolId
-          ? { ...msg, tool: { ...msg.tool!, status: 'failed' as const, output: 'Rejected by user' } }
-          : msg
-      )
-    }))
+  // Question answering
+  const answerQuestion = useCallback(async (requestId: string, answers: Record<string, string>, sessionId?: string) => {
+    const targetId = sessionId || activeSessionId
+    if (!targetId) throw new Error('No active session')
+
+    await invoke('answer_loop_question', { sessionId: targetId, requestId, answers })
+    updateSession(targetId, s => ({ ...s, modal: null }))
   }, [activeSessionId, updateSession])
 
   const getActiveSession = useCallback(() => {
@@ -362,6 +308,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
     sendMessage,
     approveTool,
     rejectTool,
+    answerQuestion,
     getActiveSession,
   }
 

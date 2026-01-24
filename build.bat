@@ -1,6 +1,7 @@
 @echo off
-REM Cowork Build Script for Windows
+REM Cowork Build Script for Windows (local testing)
 REM Builds both frontend and backend in one shot
+REM For release builds with signing, use GitHub Actions
 
 echo ========================================
 echo Building Cowork
@@ -30,7 +31,7 @@ echo.
 echo [2/2] Building Tauri app...
 echo ----------------------------------------
 cd crates\cowork-app
-call cargo tauri build
+call cargo tauri build --no-bundle
 if %ERRORLEVEL% NEQ 0 (
     echo ERROR: Tauri build failed
     exit /b %ERRORLEVEL%
@@ -44,5 +45,4 @@ echo ========================================
 echo.
 echo Output location:
 echo   target\release\cowork.exe
-echo   target\release\bundle\
 echo.

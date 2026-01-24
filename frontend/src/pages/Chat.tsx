@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Loader2, Check, X, Terminal, AlertCircle, Sparkles } from 'lucide-react'
+import { Send, Loader2, X, AlertCircle, Sparkles } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import SessionTabs from '../components/SessionTabs'
+import ApprovalModal from '../components/ApprovalModal'
+import QuestionModal from '../components/QuestionModal'
 import { useSession } from '../context/SessionContext'
 
 export default function Chat() {
@@ -16,6 +18,7 @@ export default function Chat() {
     sendMessage,
     approveTool,
     rejectTool,
+    answerQuestion,
     getActiveSession,
   } = useSession()
 
@@ -25,15 +28,15 @@ export default function Chat() {
 
   const session = getActiveSession()
   const messages = session?.messages || []
-  const isIdle = session?.isIdle ?? false
+  const ephemeral = session?.ephemeral
+  const status = session?.status || ''
+  const modal = session?.modal || null
   const isReady = session?.isReady ?? false
-  const isThinking = session?.isThinking ?? false
-  const thinkingContent = session?.thinkingContent
 
-  // Scroll to bottom on new messages or thinking content
+  // Scroll to bottom on new messages or ephemeral changes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, thinkingContent])
+  }, [messages, ephemeral])
 
   // Sync session error to local error state
   useEffect(() => {
@@ -44,14 +47,13 @@ export default function Chat() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim()) return
+    if (!input.trim() || modal) return
 
     const userMessage = input
     setInput('')
     setError(null)
 
     try {
-      // Message will be queued if not idle, processed when ready
       await sendMessage(userMessage)
     } catch (err) {
       console.error('Send error:', err)
@@ -59,7 +61,7 @@ export default function Chat() {
     }
   }
 
-  const handleApproveTool = async (toolId: string) => {
+  const handleApprove = async (toolId: string) => {
     try {
       await approveTool(toolId)
     } catch (err) {
@@ -67,9 +69,17 @@ export default function Chat() {
     }
   }
 
-  const handleRejectTool = async (toolId: string) => {
+  const handleReject = async (toolId: string) => {
     try {
       await rejectTool(toolId)
+    } catch (err) {
+      setError(String(err))
+    }
+  }
+
+  const handleAnswer = async (requestId: string, answers: Record<string, string>) => {
+    try {
+      await answerQuestion(requestId, answers)
     } catch (err) {
       setError(String(err))
     }
@@ -102,15 +112,6 @@ export default function Chat() {
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Header */}
-      <header className="h-14 border-b border-border flex items-center px-4 bg-card/50">
-        <Sparkles className="w-5 h-5 text-primary mr-2" />
-        <h1 className="font-semibold">Cowork</h1>
-        <span className="ml-auto text-xs text-muted-foreground">
-          {isReady ? (isIdle ? 'Ready' : 'Working...') : 'Starting...'}
-        </span>
-      </header>
-
       {/* Session Tabs */}
       <SessionTabs
         sessions={sessions}
@@ -132,7 +133,7 @@ export default function Chat() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 && (
+        {messages.length === 0 && !ephemeral && (
           <div className="text-center mt-16">
             <Sparkles className="w-12 h-12 text-primary mx-auto mb-4 opacity-50" />
             <p className="text-lg font-medium">Welcome to Cowork!</p>
@@ -143,7 +144,7 @@ export default function Chat() {
         )}
 
         {messages.map((msg) => (
-          <div key={msg.id} className="space-y-2">
+          <div key={msg.id}>
             {msg.type === 'user' && (
               <div className="flex justify-end">
                 <div className="max-w-[80%] rounded-xl px-4 py-3 bg-primary text-primary-foreground">
@@ -159,125 +160,50 @@ export default function Chat() {
                 </div>
               </div>
             )}
-
-            {msg.type === 'tool' && msg.tool && (
-              <div className="border border-border rounded-xl overflow-hidden bg-card ml-4">
-                <div className="bg-secondary/50 px-3 py-2 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Terminal className="w-4 h-4" />
-                    <span className="font-mono text-sm">{msg.tool.name}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${
-                      msg.tool.status === 'done' ? 'bg-success/20 text-success' :
-                      msg.tool.status === 'failed' ? 'bg-error/20 text-error' :
-                      msg.tool.status === 'pending' ? 'bg-warning/20 text-warning' :
-                      'bg-info/20 text-info'
-                    }`}>
-                      {msg.tool.status}
-                    </span>
-                  </div>
-
-                  {msg.tool.status === 'pending' && (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleApproveTool(msg.tool!.id)}
-                        className="p-1 rounded bg-success text-white hover:bg-success/80"
-                      >
-                        <Check className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleRejectTool(msg.tool!.id)}
-                        className="p-1 rounded bg-error text-white hover:bg-error/80"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="px-3 py-2 text-xs font-mono text-muted-foreground">
-                  {JSON.stringify(msg.tool.arguments, null, 2)}
-                </div>
-              </div>
-            )}
-
-            {msg.type === 'question' && msg.question && (
-              <div className="border border-primary rounded-xl overflow-hidden bg-card ml-4">
-                <div className="bg-primary/10 px-4 py-3 border-b border-primary/20 flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 text-primary" />
-                  <span className="font-semibold text-primary">Question Required</span>
-                </div>
-                <div className="p-4 space-y-4">
-                  {msg.question.questions.map((q, idx) => (
-                    <div key={idx} className="space-y-2">
-                      <p className="font-medium">{q.question}</p>
-                      {q.options.length > 0 && (
-                        <div className="space-y-1 ml-2">
-                          {q.options.map((opt, optIdx) => (
-                            <div key={optIdx} className="text-sm text-muted-foreground">
-                              • {opt.label} {opt.description && <span className="text-xs opacity-70">({opt.description})</span>}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  <div className="bg-warning/10 text-warning p-3 rounded-md text-sm">
-                    ⚠️ Answering questions is currently only supported in the CLI. Please restart the session in the terminal to continue.
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         ))}
 
-        {/* Thinking indicator - show actual content if available, otherwise just spinner */}
-        {isReady && !isIdle && isThinking && (
-          <div className="flex justify-start">
-            {thinkingContent && thinkingContent !== "Thinking..." ? (
-              <div className="max-w-[80%] bg-card border border-border rounded-xl px-4 py-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                  <span className="text-sm font-medium text-muted-foreground">Thinking</span>
-                </div>
-                <pre className="whitespace-pre-wrap font-sans text-sm text-muted-foreground/80 max-h-64 overflow-auto">
-                  {thinkingContent}
-                </pre>
-              </div>
-            ) : (
-              <div className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                <span className="text-sm text-muted-foreground">Thinking...</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Loading indicator when processing but not thinking */}
-        {isReady && !isIdle && !isThinking && (
-          <div className="flex justify-start">
-            <div className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-primary" />
-              <span className="text-sm text-muted-foreground">Working...</span>
-            </div>
+        {/* Ephemeral tool activity line */}
+        {ephemeral && (
+          <div className="text-sm text-muted-foreground/70 font-mono pl-2 truncate">
+            {ephemeral}
           </div>
         )}
 
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input - always enabled to allow queueing messages */}
+      {/* Status Bar */}
+      {(status || isReady) && (
+        <div className="h-8 border-t border-border flex items-center px-4 text-xs text-muted-foreground bg-card/30">
+          {status ? (
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>{status}</span>
+            </div>
+          ) : (
+            <span>Ready</span>
+          )}
+          {session?.provider && (
+            <span className="ml-auto">{session.provider.type}</span>
+          )}
+        </div>
+      )}
+
+      {/* Input */}
       <form onSubmit={handleSubmit} className="p-4 border-t border-border bg-card/50">
         <div className="flex gap-3">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={isIdle ? "Type a message..." : "Type to queue message..."}
-            className="flex-1 rounded-xl border border-border bg-background px-4 py-3 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+            placeholder={modal ? "Waiting for response..." : "Type a message..."}
+            disabled={!!modal}
+            className="flex-1 rounded-xl border border-border bg-background px-4 py-3 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <Button
             type="submit"
-            disabled={!input.trim()}
+            disabled={!input.trim() || !!modal}
             variant="gradient"
             size="lg"
           >
@@ -285,6 +211,25 @@ export default function Chat() {
           </Button>
         </div>
       </form>
+
+      {/* Modal Overlay */}
+      {modal?.type === 'approval' && (
+        <ApprovalModal
+          id={modal.id}
+          name={modal.name}
+          arguments={modal.arguments}
+          onApprove={handleApprove}
+          onReject={handleReject}
+        />
+      )}
+
+      {modal?.type === 'question' && (
+        <QuestionModal
+          requestId={modal.request_id}
+          questions={modal.questions}
+          onAnswer={handleAnswer}
+        />
+      )}
     </div>
   )
 }

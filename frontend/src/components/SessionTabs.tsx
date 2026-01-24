@@ -27,7 +27,7 @@ export default function SessionTabs({ sessions, activeId, onSelect, onNew, onClo
           `}
           onClick={() => onSelect(id)}
         >
-          {session.isIdle ? (
+          {session.status === '' ? (
             <MessageSquare className="w-3.5 h-3.5 shrink-0" />
           ) : (
             <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />
@@ -35,7 +35,7 @@ export default function SessionTabs({ sessions, activeId, onSelect, onNew, onClo
           <span className="text-sm truncate">{session.name}</span>
           {session.messages.length > 0 && (
             <span className="text-xs text-muted-foreground/70">
-              ({session.messages.filter(m => m.type !== 'tool').length})
+              ({session.messages.length})
             </span>
           )}
           {sessionList.length > 1 && (
