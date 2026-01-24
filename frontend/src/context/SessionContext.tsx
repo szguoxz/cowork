@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { LoopOutput, Session, SessionProvider as SessionProviderType } from '../bindings'
@@ -22,6 +22,8 @@ interface SessionContextType {
   // Tool approval
   approveTool: (toolId: string, sessionId?: string) => Promise<void>
   rejectTool: (toolId: string, sessionId?: string) => Promise<void>
+  approveToolForSession: (toolId: string, toolName: string, sessionId?: string) => Promise<void>
+  approveAllForSession: (toolId: string, sessionId?: string) => Promise<void>
 
   // Question answering
   answerQuestion: (requestId: string, answers: Record<string, string>, sessionId?: string) => Promise<void>
@@ -61,6 +63,9 @@ export function SessionProvider({ children }: SessionProviderProps) {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [isInitialized, setIsInitialized] = useState(false)
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null)
+
+  // Per-session auto-approve state (doesn't need re-renders)
+  const sessionApprovals = useRef<Map<string, { tools: Set<string>; all: boolean }>>(new Map())
 
   // Update a specific session
   const updateSession = useCallback((sessionId: string, updater: (session: Session) => Session) => {
@@ -183,7 +188,18 @@ export function SessionProvider({ children }: SessionProviderProps) {
     const init = async () => {
       // 1. Set up event listener FIRST
       unlistenFn = await listen<LoopOutput>('loop_output', (event) => {
-        handleOutput(event.payload)
+        const output = event.payload
+
+        // Auto-approve tools if session has approved them
+        if (output.type === 'tool_pending') {
+          const approvals = sessionApprovals.current.get(output.session_id)
+          if (approvals && (approvals.all || approvals.tools.has(output.name))) {
+            invoke('approve_tool', { toolId: output.id, sessionId: output.session_id })
+            return
+          }
+        }
+
+        handleOutput(output)
       })
 
       // 2. Check API key
@@ -283,6 +299,37 @@ export function SessionProvider({ children }: SessionProviderProps) {
     updateSession(targetId, s => ({ ...s, modal: null }))
   }, [activeSessionId, updateSession])
 
+  // Approve tool and remember the tool name for auto-approve in this session
+  const approveToolForSession = useCallback(async (toolId: string, toolName: string, sessionId?: string) => {
+    const targetId = sessionId || activeSessionId
+    if (!targetId) throw new Error('No active session')
+
+    // Add tool name to session approvals
+    if (!sessionApprovals.current.has(targetId)) {
+      sessionApprovals.current.set(targetId, { tools: new Set(), all: false })
+    }
+    sessionApprovals.current.get(targetId)!.tools.add(toolName)
+
+    await invoke('approve_tool', { toolId, sessionId: targetId })
+    updateSession(targetId, s => ({ ...s, modal: null }))
+  }, [activeSessionId, updateSession])
+
+  // Approve tool and auto-approve all future tools in this session
+  const approveAllForSession = useCallback(async (toolId: string, sessionId?: string) => {
+    const targetId = sessionId || activeSessionId
+    if (!targetId) throw new Error('No active session')
+
+    // Set approve-all flag for session
+    if (!sessionApprovals.current.has(targetId)) {
+      sessionApprovals.current.set(targetId, { tools: new Set(), all: true })
+    } else {
+      sessionApprovals.current.get(targetId)!.all = true
+    }
+
+    await invoke('approve_tool', { toolId, sessionId: targetId })
+    updateSession(targetId, s => ({ ...s, modal: null }))
+  }, [activeSessionId, updateSession])
+
   // Question answering
   const answerQuestion = useCallback(async (requestId: string, answers: Record<string, string>, sessionId?: string) => {
     const targetId = sessionId || activeSessionId
@@ -308,6 +355,8 @@ export function SessionProvider({ children }: SessionProviderProps) {
     sendMessage,
     approveTool,
     rejectTool,
+    approveToolForSession,
+    approveAllForSession,
     answerQuestion,
     getActiveSession,
   }

@@ -7,6 +7,8 @@ interface ApprovalModalProps {
   arguments: Record<string, unknown>
   onApprove: (id: string) => void
   onReject: (id: string) => void
+  onApproveForSession: (id: string, name: string) => void
+  onApproveAll: (id: string) => void
 }
 
 function formatArgs(args: Record<string, unknown>): string {
@@ -19,10 +21,10 @@ function formatArgs(args: Record<string, unknown>): string {
     .join('\n')
 }
 
-export default function ApprovalModal({ id, name, arguments: args, onApprove, onReject }: ApprovalModalProps) {
+export default function ApprovalModal({ id, name, arguments: args, onApprove, onReject, onApproveForSession, onApproveAll }: ApprovalModalProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'y' || e.key === 'Y') {
+      if (e.key === 'y' || e.key === 'Y' || e.key === 'Enter') {
         e.preventDefault()
         onApprove(id)
       }
@@ -30,11 +32,15 @@ export default function ApprovalModal({ id, name, arguments: args, onApprove, on
         e.preventDefault()
         onReject(id)
       }
+      if (e.key === 'a' || e.key === 'A') {
+        e.preventDefault()
+        onApproveForSession(id, name)
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [id, onApprove, onReject])
+  }, [id, name, onApprove, onReject, onApproveForSession])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -66,18 +72,30 @@ export default function ApprovalModal({ id, name, arguments: args, onApprove, on
         </div>
 
         {/* Actions */}
-        <div className="flex flex-wrap gap-2 px-5 py-4 border-t border-border">
+        <div className="grid grid-cols-2 gap-2 px-5 py-4 border-t border-border">
           <button
             onClick={() => onApprove(id)}
-            className="flex-1 px-4 py-2 text-sm font-medium bg-success text-white rounded-lg hover:bg-success/90 transition-colors"
+            className="px-4 py-2 text-sm font-medium bg-success text-white rounded-lg hover:bg-success/90 transition-colors"
           >
             Approve (Y)
           </button>
           <button
             onClick={() => onReject(id)}
-            className="flex-1 px-4 py-2 text-sm font-medium bg-error text-white rounded-lg hover:bg-error/90 transition-colors"
+            className="px-4 py-2 text-sm font-medium bg-error text-white rounded-lg hover:bg-error/90 transition-colors"
           >
             Reject (N)
+          </button>
+          <button
+            onClick={() => onApproveForSession(id, name)}
+            className="px-4 py-2 text-sm font-medium bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-colors"
+          >
+            Always (A)
+          </button>
+          <button
+            onClick={() => onApproveAll(id)}
+            className="px-4 py-2 text-sm font-medium bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-colors"
+          >
+            Approve all
           </button>
         </div>
       </div>

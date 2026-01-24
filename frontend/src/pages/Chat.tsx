@@ -18,6 +18,8 @@ export default function Chat() {
     sendMessage,
     approveTool,
     rejectTool,
+    approveToolForSession,
+    approveAllForSession,
     answerQuestion,
     getActiveSession,
   } = useSession()
@@ -72,6 +74,22 @@ export default function Chat() {
   const handleReject = async (toolId: string) => {
     try {
       await rejectTool(toolId)
+    } catch (err) {
+      setError(String(err))
+    }
+  }
+
+  const handleApproveForSession = async (toolId: string, toolName: string) => {
+    try {
+      await approveToolForSession(toolId, toolName)
+    } catch (err) {
+      setError(String(err))
+    }
+  }
+
+  const handleApproveAll = async (toolId: string) => {
+    try {
+      await approveAllForSession(toolId)
     } catch (err) {
       setError(String(err))
     }
@@ -220,6 +238,8 @@ export default function Chat() {
           arguments={modal.arguments}
           onApprove={handleApprove}
           onReject={handleReject}
+          onApproveForSession={handleApproveForSession}
+          onApproveAll={handleApproveAll}
         />
       )}
 
