@@ -24,6 +24,7 @@ use crate::orchestration::{ChatMessage, ChatSession, ToolCallInfo, ToolRegistryB
 use crate::prompt::{ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig};
 use crate::provider::{CompletionResult, GenAIProvider};
 use crate::skills::SkillRegistry;
+use crate::tools::interaction::ASK_QUESTION_TOOL_NAME;
 use crate::tools::planning::PlanModeState;
 use crate::tools::{ToolDefinition, ToolRegistry};
 
@@ -34,6 +35,7 @@ const MAX_ITERATIONS: usize = 100;
 /// This prevents a single tool output from exceeding the context limit
 /// ~30k chars ≈ ~10k tokens, leaving room for conversation history
 const MAX_TOOL_RESULT_SIZE: usize = 30_000;
+
 
 /// Result from an LLM call
 struct LlmCallResult {
@@ -385,34 +387,20 @@ impl AgentLoop {
             // Add assistant message with tool calls
             self.session.add_assistant_message(&content, tool_calls.clone());
 
-            // Categorize tool calls
-            let (auto_approved, needs_approval) = self.categorize_tools(&tool_calls);
+            // Partition tool calls into three groups
+            let (auto_execute, needs_approval, questions) = self.partition_tools(&tool_calls);
 
-            // Collect AskUserQuestion tool calls into pending (don't emit yet)
-            for tool_call in &tool_calls {
-                if tool_call.name == "AskUserQuestion"
-                    && self.parse_questions(&tool_call.arguments).is_some()
-                {
-                    self.pending_approvals.push(tool_call.clone());
-                }
+            // Execute auto-approved tools
+            if !auto_execute.is_empty() {
+                self.execute_tools_batched(&auto_execute).await;
             }
 
-            // Execute auto-approved tools and batch results
-            // Exclude AskUserQuestion — it's handled via the question/answer flow
-            let auto_approved_tools: Vec<_> = tool_calls
-                .iter()
-                .filter(|tc| auto_approved.contains(&tc.id) && tc.name != "AskUserQuestion")
-                .collect();
-
-            if !auto_approved_tools.is_empty() {
-                self.execute_tools_batched(&auto_approved_tools).await;
+            // Queue tools needing approval and questions for sequential processing
+            for tc in needs_approval {
+                self.pending_approvals.push(tc.clone());
             }
-
-            // Collect tools needing approval into pending (exclude AskUserQuestion, already added)
-            for tool_call in &tool_calls {
-                if needs_approval.contains(&tool_call.id) && tool_call.name != "AskUserQuestion" {
-                    self.pending_approvals.push(tool_call.clone());
-                }
+            for tc in questions {
+                self.pending_approvals.push(tc.clone());
             }
 
             // Process pending items one at a time
@@ -462,7 +450,7 @@ impl AgentLoop {
     /// Tools allowed when plan mode is active
     const PLAN_MODE_TOOLS: &'static [&'static str] = &[
         "Read", "Glob", "Grep", "LSP", "WebFetch", "WebSearch",
-        "AskUserQuestion", "ExitPlanMode", "TodoWrite",
+        ASK_QUESTION_TOOL_NAME, "ExitPlanMode", "TodoWrite",
     ];
 
     /// Call the LLM and get a response
@@ -526,20 +514,28 @@ impl AgentLoop {
         }
     }
 
-    /// Categorize tools into auto-approved and needs-approval
-    fn categorize_tools(&self, tool_calls: &[ToolCallInfo]) -> (Vec<String>, Vec<String>) {
-        let mut auto_approved = Vec::new();
+    /// Partition tool calls into three groups:
+    /// - auto_execute: safe to run without user interaction
+    /// - needs_approval: require user approval before execution
+    /// - questions: AskUserQuestion calls shown as question modals
+    fn partition_tools<'a>(&self, tool_calls: &'a [ToolCallInfo]) -> (Vec<&'a ToolCallInfo>, Vec<&'a ToolCallInfo>, Vec<&'a ToolCallInfo>) {
+        let mut auto_execute = Vec::new();
         let mut needs_approval = Vec::new();
+        let mut questions = Vec::new();
 
         for tc in tool_calls {
-            if self.approval_config.should_auto_approve_with_args(&tc.name, &tc.arguments) {
-                auto_approved.push(tc.id.clone());
+            if tc.name == ASK_QUESTION_TOOL_NAME {
+                if self.parse_questions(&tc.arguments).is_some() {
+                    questions.push(tc);
+                }
+            } else if self.approval_config.should_auto_approve_with_args(&tc.name, &tc.arguments) {
+                auto_execute.push(tc);
             } else {
-                needs_approval.push(tc.id.clone());
+                needs_approval.push(tc);
             }
         }
 
-        (auto_approved, needs_approval)
+        (auto_execute, needs_approval, questions)
     }
 
     /// Execute multiple tools and batch results into a single message
@@ -824,14 +820,13 @@ impl AgentLoop {
 
     /// Emit the appropriate modal event for the first pending item
     ///
-    /// For AskUserQuestion: emits a Question event
-    /// For other tools: emits a ToolPending event
+    /// Questions emit a Question event; other tools emit ToolPending.
     async fn emit_next_pending(&mut self) {
         let Some(next) = self.pending_approvals.first() else {
             return;
         };
 
-        if next.name == "AskUserQuestion" {
+        if next.name == ASK_QUESTION_TOOL_NAME {
             if let Some(questions) = self.parse_questions(&next.arguments) {
                 self.emit(SessionOutput::Question {
                     request_id: next.id.clone(),
@@ -894,39 +889,26 @@ impl AgentLoop {
             .await;
     }
 
-    /// Handle answer to a question from AskUserQuestion tool
+    /// Handle answer to a question (request_id is the tool call ID)
     async fn handle_answer_question(
         &mut self,
         request_id: &str,
         answers: std::collections::HashMap<String, String>,
     ) -> Result<()> {
-        // Format the answer as a tool result
         let result = serde_json::json!({
             "answered": true,
             "request_id": request_id,
             "answers": answers
         });
 
-        // Find the pending AskUserQuestion tool call by ID (request_id is the tool call ID)
-        let tool_call = self
-            .pending_approvals
-            .iter()
-            .find(|tc| tc.id == request_id || tc.name == "AskUserQuestion")
-            .cloned();
+        if let Some(idx) = self.pending_approvals.iter().position(|tc| tc.id == request_id) {
+            let tool_call = self.pending_approvals.remove(idx);
 
-        if let Some(tool_call) = tool_call {
-            // Remove from pending by ID, not by name (fixes bug with multiple questions)
-            self.pending_approvals
-                .retain(|tc| tc.id != tool_call.id);
+            self.session.add_tool_result(&tool_call.id, result.to_string());
 
-            // Add result to session
-            self.session
-                .add_tool_result(&tool_call.id, result.to_string());
-
-            // Emit done
             self.emit(SessionOutput::tool_done(
                 &tool_call.id,
-                "AskUserQuestion",
+                ASK_QUESTION_TOOL_NAME,
                 true,
                 result.to_string(),
             ))

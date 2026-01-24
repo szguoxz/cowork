@@ -8,6 +8,8 @@ pub mod bash_safety;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
+use crate::tools::interaction::ASK_QUESTION_TOOL_NAME;
+
 /// Level of approval required for an operation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum ApprovalLevel {
@@ -221,7 +223,7 @@ impl ToolApprovalConfig {
         auto_approve.insert("LSP".to_string());
 
         // Planning/interaction tools
-        auto_approve.insert("AskUserQuestion".to_string());
+        auto_approve.insert(ASK_QUESTION_TOOL_NAME.to_string());
         auto_approve.insert("ExitPlanMode".to_string());
         auto_approve.insert("Skill".to_string());
 

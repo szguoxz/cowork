@@ -100,6 +100,9 @@ impl QuestionHandler {
     }
 }
 
+/// The canonical tool name, used for routing in agent_loop and approval config
+pub const NAME: &str = "AskUserQuestion";
+
 /// Tool for asking user questions
 pub struct AskUserQuestion {
     handler: Option<Arc<QuestionHandler>>,
@@ -126,7 +129,7 @@ impl Default for AskUserQuestion {
 
 impl Tool for AskUserQuestion {
     fn name(&self) -> &str {
-        "AskUserQuestion"
+        NAME
     }
 
     fn description(&self) -> &str {
