@@ -547,6 +547,7 @@ impl AgentLoop {
     /// This is more efficient for the LLM as it sees all results together
     async fn execute_tools_batched(&mut self, tool_calls: &[&ToolCallInfo]) {
         let mut results: Vec<(String, String, bool)> = Vec::new();
+        let mut skill_injections: Vec<String> = Vec::new();
 
         for tool_call in tool_calls {
             // Execute PreToolUse hooks
@@ -618,9 +619,9 @@ impl AgentLoop {
 
                 results.push((tool_call.id.clone(), brief_result, false));
 
-                // Inject skill content as a user message with command-name tag
+                // Defer skill content injection until after tool_results are added
                 let injected = format!("<command-name>/{}</command-name>\n\n{}", name, content);
-                self.session.add_user_message(&injected);
+                skill_injections.push(injected);
                 continue;
             }
 
@@ -661,6 +662,12 @@ impl AgentLoop {
 
         // Add all tool results as a single batched message
         self.session.add_tool_results(results);
+
+        // Inject skill content as user messages AFTER tool_results
+        // (API requires tool_result immediately after tool_use)
+        for injected in skill_injections {
+            self.session.add_user_message(&injected);
+        }
     }
 
     /// Execute a single tool (used for individual tool approvals)
