@@ -89,46 +89,277 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
 
 /// Convert a message to styled lines
 fn message_to_lines(msg: &Message, max_width: usize) -> Vec<ListItem<'static>> {
-    let (prefix, style) = match &msg.message_type {
-        MessageType::User => (
-            "You: ",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        ),
-        MessageType::Assistant => (
-            "  ",
-            Style::default().fg(Color::White),
-        ),
-        MessageType::System => (
-            "",
-            Style::default().fg(Color::DarkGray),
-        ),
-        MessageType::Error => (
-            "Error: ",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        ),
-    };
-
-    let content_width = max_width.saturating_sub(prefix.len());
-    let wrapped_lines = wrap_text(&msg.content, content_width);
-
-    wrapped_lines
-        .into_iter()
-        .enumerate()
-        .map(|(i, line)| {
-            let line_content = if i == 0 {
-                Line::from(vec![
-                    Span::styled(prefix.to_string(), style),
-                    Span::styled(line, style),
-                ])
-            } else {
-                Line::from(vec![
-                    Span::raw(" ".repeat(prefix.len())),
-                    Span::styled(line, style),
-                ])
+    match &msg.message_type {
+        MessageType::Assistant => markdown_to_lines(&msg.content, max_width),
+        _ => {
+            let (prefix, style) = match &msg.message_type {
+                MessageType::User => (
+                    "You: ",
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                MessageType::System => (
+                    "",
+                    Style::default().fg(Color::DarkGray),
+                ),
+                MessageType::Error => (
+                    "Error: ",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                MessageType::Assistant => unreachable!(),
             };
-            ListItem::new(line_content)
-        })
-        .collect()
+
+            let content_width = max_width.saturating_sub(prefix.len());
+            let wrapped_lines = wrap_text(&msg.content, content_width);
+
+            wrapped_lines
+                .into_iter()
+                .enumerate()
+                .map(|(i, line)| {
+                    let line_content = if i == 0 {
+                        Line::from(vec![
+                            Span::styled(prefix.to_string(), style),
+                            Span::styled(line, style),
+                        ])
+                    } else {
+                        Line::from(vec![
+                            Span::raw(" ".repeat(prefix.len())),
+                            Span::styled(line, style),
+                        ])
+                    };
+                    ListItem::new(line_content)
+                })
+                .collect()
+        }
+    }
+}
+
+/// Render assistant message content with markdown-aware styling
+fn markdown_to_lines(content: &str, max_width: usize) -> Vec<ListItem<'static>> {
+    let prefix = "  ";
+    let content_width = max_width.saturating_sub(prefix.len());
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut in_code_block = false;
+    let code_style = Style::default().fg(Color::Green);
+    let code_fence_style = Style::default().fg(Color::DarkGray);
+
+    for raw_line in content.split('\n') {
+        // Detect fenced code block boundaries
+        if raw_line.trim_start().starts_with("```") {
+            in_code_block = !in_code_block;
+            let line = Line::from(vec![
+                Span::raw(prefix.to_string()),
+                Span::styled(raw_line.to_string(), code_fence_style),
+            ]);
+            items.push(ListItem::new(line));
+            continue;
+        }
+
+        if in_code_block {
+            // Code block content: render verbatim with code style, wrapping if needed
+            let wrapped = wrap_text(raw_line, content_width);
+            for w in wrapped {
+                let line = Line::from(vec![
+                    Span::raw(prefix.to_string()),
+                    Span::styled(w, code_style),
+                ]);
+                items.push(ListItem::new(line));
+            }
+            continue;
+        }
+
+        // Headers
+        if let Some(header) = parse_header(raw_line) {
+            let wrapped = wrap_text(&header.text, content_width);
+            let header_style = Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD);
+            for w in wrapped {
+                let line = Line::from(vec![
+                    Span::raw(prefix.to_string()),
+                    Span::styled(w, header_style),
+                ]);
+                items.push(ListItem::new(line));
+            }
+            continue;
+        }
+
+        // Empty line
+        if raw_line.is_empty() {
+            items.push(ListItem::new(Line::from("")));
+            continue;
+        }
+
+        // Normal text with inline formatting, wrapped
+        let wrapped = wrap_text(raw_line, content_width);
+        for w in wrapped {
+            let spans = parse_inline_markdown(&w);
+            let mut line_spans = vec![Span::raw(prefix.to_string())];
+            line_spans.extend(spans);
+            items.push(ListItem::new(Line::from(line_spans)));
+        }
+    }
+
+    items
+}
+
+/// Parsed header info
+struct HeaderInfo {
+    text: String,
+}
+
+/// Parse a markdown header line (# ... to ######)
+fn parse_header(line: &str) -> Option<HeaderInfo> {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with('#') {
+        return None;
+    }
+    let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
+    if hashes == 0 || hashes > 6 {
+        return None;
+    }
+    let rest = &trimmed[hashes..];
+    // Header must be followed by space or be empty
+    if !rest.is_empty() && !rest.starts_with(' ') {
+        return None;
+    }
+    let text = rest.trim_start().to_string();
+    Some(HeaderInfo { text })
+}
+
+/// Parse inline markdown: `code`, **bold**, *italic*, and plain text
+fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut chars = text.char_indices().peekable();
+    let mut plain_start = 0;
+
+    while let Some(&(i, ch)) = chars.peek() {
+        match ch {
+            '`' => {
+                // Inline code
+                if i > plain_start {
+                    spans.push(Span::styled(
+                        text[plain_start..i].to_string(),
+                        Style::default().fg(Color::White),
+                    ));
+                }
+                chars.next();
+                let code_start = i + 1;
+                let mut code_end = None;
+                while let Some(&(j, c)) = chars.peek() {
+                    chars.next();
+                    if c == '`' {
+                        code_end = Some(j);
+                        break;
+                    }
+                }
+                if let Some(end) = code_end {
+                    spans.push(Span::styled(
+                        text[code_start..end].to_string(),
+                        Style::default().fg(Color::Green),
+                    ));
+                    plain_start = end + 1;
+                } else {
+                    // No closing backtick — treat as plain
+                    spans.push(Span::styled(
+                        text[i..].to_string(),
+                        Style::default().fg(Color::White),
+                    ));
+                    plain_start = text.len();
+                    break;
+                }
+            }
+            '*' => {
+                // Check for ** (bold) or * (italic)
+                let next = text.get(i + 1..i + 2);
+                if next == Some("*") {
+                    // Bold: **...**
+                    if i > plain_start {
+                        spans.push(Span::styled(
+                            text[plain_start..i].to_string(),
+                            Style::default().fg(Color::White),
+                        ));
+                    }
+                    chars.next(); // consume first *
+                    chars.next(); // consume second *
+                    let bold_start = i + 2;
+                    let mut bold_end = None;
+                    while let Some(&(j, c)) = chars.peek() {
+                        if c == '*' && text.get(j + 1..j + 2) == Some("*") {
+                            bold_end = Some(j);
+                            chars.next(); // consume first *
+                            chars.next(); // consume second *
+                            break;
+                        }
+                        chars.next();
+                    }
+                    if let Some(end) = bold_end {
+                        spans.push(Span::styled(
+                            text[bold_start..end].to_string(),
+                            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                        ));
+                        plain_start = end + 2;
+                    } else {
+                        spans.push(Span::styled(
+                            text[i..].to_string(),
+                            Style::default().fg(Color::White),
+                        ));
+                        plain_start = text.len();
+                        break;
+                    }
+                } else {
+                    // Italic: *...*
+                    if i > plain_start {
+                        spans.push(Span::styled(
+                            text[plain_start..i].to_string(),
+                            Style::default().fg(Color::White),
+                        ));
+                    }
+                    chars.next(); // consume *
+                    let italic_start = i + 1;
+                    let mut italic_end = None;
+                    while let Some(&(j, c)) = chars.peek() {
+                        if c == '*' {
+                            italic_end = Some(j);
+                            chars.next(); // consume closing *
+                            break;
+                        }
+                        chars.next();
+                    }
+                    if let Some(end) = italic_end {
+                        spans.push(Span::styled(
+                            text[italic_start..end].to_string(),
+                            Style::default().fg(Color::White).add_modifier(Modifier::ITALIC),
+                        ));
+                        plain_start = end + 1;
+                    } else {
+                        spans.push(Span::styled(
+                            text[i..].to_string(),
+                            Style::default().fg(Color::White),
+                        ));
+                        plain_start = text.len();
+                        break;
+                    }
+                }
+            }
+            _ => {
+                chars.next();
+            }
+        }
+    }
+
+    // Remaining plain text
+    if plain_start < text.len() {
+        spans.push(Span::styled(
+            text[plain_start..].to_string(),
+            Style::default().fg(Color::White),
+        ));
+    }
+
+    if spans.is_empty() {
+        spans.push(Span::styled(String::new(), Style::default()));
+    }
+
+    spans
 }
 
 /// Wrap text to fit within a given width
