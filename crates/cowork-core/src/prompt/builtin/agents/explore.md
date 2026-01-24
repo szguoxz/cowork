@@ -3,7 +3,7 @@ name: Explore
 description: "Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns, search code for keywords, or answer questions about the codebase."
 model: haiku
 color: cyan
-tools: Glob, Grep, Read, LSP, WebFetch, WebSearch
+tools: Glob, Grep, Read, Bash, LSP, WebFetch, WebSearch, TodoWrite
 context: fork
 max_turns: 30
 ---

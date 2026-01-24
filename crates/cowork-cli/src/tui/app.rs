@@ -307,8 +307,8 @@ impl App {
                 self.interactions.push_back(Interaction::ToolApproval(PendingApproval::new(id, name, arguments)));
                 self.state = AppState::Interaction;
             }
-            SessionOutput::ToolDone { name, success, .. } => {
-                self.add_message(Message::tool_done(&name, success, ""));
+            SessionOutput::ToolDone { name, success, output, .. } => {
+                self.add_message(Message::tool_done(&name, success, &output));
                 self.status.clear();
             }
             SessionOutput::Question { request_id, questions } => {

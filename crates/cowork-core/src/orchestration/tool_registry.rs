@@ -298,10 +298,18 @@ impl ToolRegistryBuilder {
                 registry.register(Arc::new(WriteFile::new(workspace)));
             }
             ToolScope::Explore => {
+                // CC's Explore has all tools except Task, ExitPlanMode, Edit, Write, NotebookEdit
                 registry.register(Arc::new(ReadFile::new(workspace.clone())));
                 registry.register(Arc::new(GlobFiles::new(workspace.clone())));
                 registry.register(Arc::new(GrepFiles::new(workspace.clone())));
+                let shell_registry = Arc::new(ShellProcessRegistry::new());
+                registry.register(Arc::new(
+                    ExecuteCommand::new(workspace.clone()).with_registry(shell_registry),
+                ));
+                registry.register(Arc::new(WebFetch::new()));
+                registry.register(Arc::new(WebSearch::new()));
                 registry.register(Arc::new(LspTool::new(workspace)));
+                registry.register(Arc::new(TodoWrite::new()));
             }
             ToolScope::Plan => {
                 registry.register(Arc::new(ReadFile::new(workspace.clone())));

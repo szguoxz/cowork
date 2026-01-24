@@ -542,7 +542,7 @@ mod tests {
         assert!(bash_registry.get("Write").is_some());
         assert!(bash_registry.get("Glob").is_none());
 
-        // Explore scope (read-only)
+        // Explore scope (all tools except Task, Edit, Write)
         let explore_registry = ToolRegistryBuilder::new(workspace.clone())
             .with_tool_scope(ToolScope::Explore)
             .build();
@@ -550,8 +550,12 @@ mod tests {
         assert!(explore_registry.get("Glob").is_some());
         assert!(explore_registry.get("Grep").is_some());
         assert!(explore_registry.get("LSP").is_some());
+        assert!(explore_registry.get("Bash").is_some());
+        assert!(explore_registry.get("WebFetch").is_some());
+        assert!(explore_registry.get("WebSearch").is_some());
+        assert!(explore_registry.get("TodoWrite").is_some());
         assert!(explore_registry.get("Write").is_none());
-        assert!(explore_registry.get("Bash").is_none());
+        assert!(explore_registry.get("Edit").is_none());
 
         // Plan scope
         let plan_registry = ToolRegistryBuilder::new(workspace.clone())
