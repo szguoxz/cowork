@@ -1,7 +1,10 @@
 //! Skills system tests
 //!
 //! Tests for the skills/commands system that mirrors Claude Code's plugin architecture.
+//! Skills are prompt templates (SKILL.md format) that get expanded with substitutions
+//! and injected into the conversation for the LLM to follow.
 
+#[allow(unused_imports)]
 use cowork_core::skills::{Skill, SkillRegistry, SkillContext};
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -61,7 +64,8 @@ mod skill_registry_tests {
         assert!(registry.get("pr").is_some());
         assert!(registry.get("review").is_some());
         assert!(registry.get("clean-gone").is_some());
-        assert!(registry.get("help").is_some());
+        assert!(registry.get("test").is_some());
+        assert!(registry.get("build").is_some());
     }
 
     #[test]
@@ -70,7 +74,7 @@ mod skill_registry_tests {
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
         let skills = registry.list();
-        assert!(skills.len() >= 7, "Should have at least 7 skills");
+        assert!(skills.len() >= 10, "Should have at least 10 built-in skills");
 
         // All skills should have names and descriptions
         for skill in &skills {
@@ -119,30 +123,25 @@ mod skill_registry_tests {
     }
 }
 
-mod skill_execution_tests {
+mod skill_template_tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_help_skill() {
+    #[test]
+    fn test_commit_skill_template() {
         let dir = setup_git_repo();
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
-        let ctx = SkillContext {
-            workspace: dir.path().to_path_buf(),
-            args: String::new(),
-            data: HashMap::new(),
-        };
+        let skill = registry.get("commit").unwrap();
+        let template = skill.prompt_template();
 
-        let result = registry.execute("help", ctx).await;
-        assert!(result.success);
-        assert!(result.response.contains("/commit"));
-        assert!(result.response.contains("/pr"));
-        assert!(result.response.contains("/review"));
-        assert!(result.response.contains("/clean-gone"));
+        // Template should contain command substitution markers (resolved at invocation time)
+        assert!(template.contains("!`git status`"));
+        assert!(template.contains("!`git diff HEAD`"));
+        assert!(template.contains("git commit"));
     }
 
     #[tokio::test]
-    async fn test_commit_skill_clean_repo() {
+    async fn test_commit_skill_execute_substitutes_args() {
         let dir = setup_git_repo();
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
@@ -152,88 +151,15 @@ mod skill_execution_tests {
             data: HashMap::new(),
         };
 
+        // execute() returns the body with $ARGUMENTS substituted (but NOT command substitution)
         let result = registry.execute("commit", ctx).await;
         assert!(result.success);
-        assert!(result.response.contains("clean")); // "Working tree is clean"
+        // The template body is returned as-is (with only $ARGUMENTS replaced)
+        assert!(result.response.contains("git commit"));
     }
 
     #[tokio::test]
-    async fn test_commit_skill_with_changes() {
-        let dir = setup_git_repo();
-
-        // Create a new file
-        std::fs::write(dir.path().join("new_file.txt"), "Hello World\n").unwrap();
-
-        let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
-        let ctx = SkillContext {
-            workspace: dir.path().to_path_buf(),
-            args: "Add new file".to_string(),
-            data: HashMap::new(),
-        };
-
-        let result = registry.execute("commit", ctx).await;
-        assert!(result.success);
-        // Should generate a prompt with context
-        assert!(result.response.contains("git add"));
-        assert!(result.response.contains("new_file.txt"));
-        assert!(result.response.contains("User hint")); // Our argument should appear
-    }
-
-    #[tokio::test]
-    async fn test_review_skill_no_changes() {
-        let dir = setup_git_repo();
-        let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
-
-        let ctx = SkillContext {
-            workspace: dir.path().to_path_buf(),
-            args: String::new(),
-            data: HashMap::new(),
-        };
-
-        let result = registry.execute("review", ctx).await;
-        assert!(result.success);
-        assert!(result.response.contains("No changes to review"));
-    }
-
-    #[tokio::test]
-    async fn test_review_skill_with_changes() {
-        let dir = setup_git_repo();
-
-        // Modify the tracked README
-        std::fs::write(dir.path().join("README.md"), "# Updated Test Project\n\nNew content.\n").unwrap();
-
-        let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
-        let ctx = SkillContext {
-            workspace: dir.path().to_path_buf(),
-            args: String::new(),
-            data: HashMap::new(),
-        };
-
-        let result = registry.execute("review", ctx).await;
-        assert!(result.success);
-        assert!(result.response.contains("Review"));
-        assert!(result.response.contains("Correctness"));
-        assert!(result.response.contains("Security"));
-    }
-
-    #[tokio::test]
-    async fn test_push_skill() {
-        let dir = setup_git_repo();
-        let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
-
-        let ctx = SkillContext {
-            workspace: dir.path().to_path_buf(),
-            args: String::new(),
-            data: HashMap::new(),
-        };
-
-        let result = registry.execute("push", ctx).await;
-        assert!(result.success);
-        assert!(result.response.contains("git push"));
-    }
-
-    #[tokio::test]
-    async fn test_pr_skill() {
+    async fn test_pr_skill_substitutes_arguments() {
         let dir = setup_git_repo();
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
@@ -245,44 +171,74 @@ mod skill_execution_tests {
 
         let result = registry.execute("pr", ctx).await;
         assert!(result.success);
-        assert!(result.response.contains("gh pr create"));
+        // $ARGUMENTS should be replaced with "My PR title"
         assert!(result.response.contains("My PR title"));
+        assert!(result.response.contains("gh pr create"));
     }
 
-    #[tokio::test]
-    async fn test_clean_gone_skill() {
+    #[test]
+    fn test_review_skill_template() {
         let dir = setup_git_repo();
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
-        let ctx = SkillContext {
-            workspace: dir.path().to_path_buf(),
-            args: String::new(),
-            data: HashMap::new(),
-        };
+        let skill = registry.get("review").unwrap();
+        let template = skill.prompt_template();
 
-        let result = registry.execute("clean-gone", ctx).await;
-        assert!(result.success);
-        assert!(result.response.contains("gone"));
-        assert!(result.response.contains("Safety rules"));
+        assert!(template.contains("!`git diff"));
+        assert!(template.contains("Potential bugs"));
+        assert!(template.contains("Security"));
     }
 
-    #[tokio::test]
-    async fn test_commit_push_pr_skill() {
+    #[test]
+    fn test_push_skill_template() {
         let dir = setup_git_repo();
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
-        let ctx = SkillContext {
-            workspace: dir.path().to_path_buf(),
-            args: String::new(),
-            data: HashMap::new(),
-        };
+        let skill = registry.get("push").unwrap();
+        let template = skill.prompt_template();
 
-        let result = registry.execute("commit-push-pr", ctx).await;
-        assert!(result.success);
-        assert!(result.response.contains("Branch Management"));
-        assert!(result.response.contains("Commit"));
-        assert!(result.response.contains("Push"));
-        assert!(result.response.contains("Pull Request"));
+        assert!(template.contains("git push"));
+        assert!(template.contains("!`git branch --show-current`"));
+    }
+
+    #[test]
+    fn test_clean_gone_skill_template() {
+        let dir = setup_git_repo();
+        let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
+
+        let skill = registry.get("clean-gone").unwrap();
+        let template = skill.prompt_template();
+
+        assert!(template.contains("gone"));
+        assert!(template.contains("!`git fetch --prune"));
+    }
+
+    #[test]
+    fn test_commit_push_pr_skill_template() {
+        let dir = setup_git_repo();
+        let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
+
+        let skill = registry.get("commit-push-pr").unwrap();
+        let template = skill.prompt_template();
+
+        assert!(template.contains("commit"));
+        assert!(template.contains("Push") || template.contains("push"));
+        assert!(template.contains("Pull Request") || template.contains("pull request"));
+    }
+
+    #[test]
+    fn test_builtin_skills_have_allowed_tools() {
+        let dir = setup_git_repo();
+        let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
+
+        // Git skills should have specific allowed tools
+        let commit = registry.get("commit").unwrap();
+        let tools = commit.allowed_tools();
+        assert!(tools.is_some(), "commit skill should have allowed tools");
+
+        let push = registry.get("push").unwrap();
+        let tools = push.allowed_tools();
+        assert!(tools.is_some(), "push skill should have allowed tools");
     }
 }
 
@@ -295,7 +251,7 @@ mod slash_command_tests {
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
         // Test basic command
-        let result = registry.execute_command("/help", dir.path().to_path_buf()).await;
+        let result = registry.execute_command("/commit", dir.path().to_path_buf()).await;
         assert!(result.success);
 
         // Test command with args
@@ -309,7 +265,7 @@ mod slash_command_tests {
         let dir = setup_git_repo();
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
-        let result = registry.execute_command("help", dir.path().to_path_buf()).await;
+        let result = registry.execute_command("commit", dir.path().to_path_buf()).await;
         assert!(!result.success);
         assert!(result.error.is_some());
     }
@@ -453,6 +409,7 @@ Run the build command.
             .unwrap();
 
         let registry = SkillRegistry::with_builtins(workspace.path().to_path_buf());
+        // The dynamic skill overrides the builtin "build" skill
         let skill = registry.get("build").unwrap();
 
         let tools = skill.allowed_tools();
@@ -466,22 +423,22 @@ Run the build command.
     fn test_dynamic_skill_override_builtin() {
         let workspace = TempDir::new().unwrap();
 
-        // Create a custom help skill that overrides the builtin
+        // Create a custom commit skill that overrides the builtin
         let skills_dir = workspace.path().join(".cowork").join("skills");
         std::fs::create_dir_all(&skills_dir).unwrap();
 
         create_skill_dir(
             &skills_dir,
-            "help",
+            "commit",
             r#"---
-name: help
-description: Custom help skill
+name: commit
+description: Custom commit skill
 user-invocable: true
 ---
 
-# Custom Help
+# Custom Commit
 
-This is a custom help message for this project.
+This is a custom commit workflow for this project.
 "#,
         );
 
@@ -493,10 +450,10 @@ This is a custom help message for this project.
             .unwrap();
 
         let registry = SkillRegistry::with_builtins(workspace.path().to_path_buf());
-        let skill = registry.get("help").unwrap();
+        let skill = registry.get("commit").unwrap();
 
         // The custom skill should override the builtin
-        assert_eq!(skill.info().description, "Custom help skill");
+        assert_eq!(skill.info().description, "Custom commit skill");
     }
 
     #[test]
@@ -532,58 +489,5 @@ Deploy instructions.
 
         // Should include the dynamic skill
         assert!(skills.iter().any(|s| s.name == "deploy"));
-    }
-}
-
-mod skill_info_tests {
-    use super::*;
-    use cowork_core::skills::git::*;
-
-    #[test]
-    fn test_commit_skill_info() {
-        let dir = TempDir::new().unwrap();
-        let skill = CommitSkill::new(dir.path().to_path_buf());
-        let info = skill.info();
-
-        assert_eq!(info.name, "commit");
-        assert!(info.user_invocable);
-        assert!(!info.description.is_empty());
-        assert!(info.usage.contains("/commit"));
-    }
-
-    #[test]
-    fn test_commit_push_pr_skill_info() {
-        let dir = TempDir::new().unwrap();
-        let skill = CommitPushPrSkill::new(dir.path().to_path_buf());
-        let info = skill.info();
-
-        assert_eq!(info.name, "commit-push-pr");
-        assert!(info.user_invocable);
-    }
-
-    #[test]
-    fn test_clean_gone_skill_info() {
-        let dir = TempDir::new().unwrap();
-        let skill = CleanGoneSkill::new(dir.path().to_path_buf());
-        let info = skill.info();
-
-        assert_eq!(info.name, "clean-gone");
-        assert!(info.user_invocable);
-    }
-
-    #[test]
-    fn test_allowed_tools() {
-        let dir = TempDir::new().unwrap();
-
-        // Skills that need to execute commands
-        let commit = CommitSkill::new(dir.path().to_path_buf());
-        assert!(commit.allowed_tools().is_some());
-
-        let push = PushSkill::new(dir.path().to_path_buf());
-        assert!(push.allowed_tools().is_some());
-
-        // Review doesn't need to execute commands
-        let review = ReviewSkill::new(dir.path().to_path_buf());
-        assert!(review.allowed_tools().is_none());
     }
 }

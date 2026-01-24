@@ -531,25 +531,53 @@ impl AgentLoop {
             .await;
 
             // Find and execute the tool
-            let (success, output) = if let Some(tool) = self.tool_registry.get(&tool_call.name) {
+            let (success, output, inject_message) = if let Some(tool) = self.tool_registry.get(&tool_call.name) {
                 match tool.execute(tool_call.arguments.clone()).await {
-                    Ok(output) => {
-                        let output_str = output.content.to_string();
+                    Ok(tool_output) => {
+                        let inject = tool_output.metadata.get(crate::tools::skill::INJECT_AS_MESSAGE)
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let skill_name = tool_output.metadata.get(crate::tools::skill::SKILL_NAME_KEY)
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let output_str = tool_output.content.to_string();
                         debug!(
                             "Tool {} completed: {} chars",
                             tool_call.name,
                             output_str.len()
                         );
-                        (true, output_str)
+                        let inject_info = if inject { Some((output_str.clone(), skill_name)) } else { None };
+                        (true, output_str, inject_info)
                     }
                     Err(e) => {
                         warn!("Tool {} failed: {}", tool_call.name, e);
-                        (false, format!("Error: {}", e))
+                        (false, format!("Error: {}", e), None)
                     }
                 }
             } else {
-                (false, format!("Unknown tool: {}", tool_call.name))
+                (false, format!("Unknown tool: {}", tool_call.name), None)
             };
+
+            // Handle skill message injection
+            if let Some((content, skill_name)) = inject_message {
+                let name = skill_name.as_deref().unwrap_or("unknown");
+                let brief_result = format!("Skill '{}' loaded. Follow the instructions below.", name);
+
+                self.emit(SessionOutput::tool_done(
+                    &tool_call.id,
+                    &tool_call.name,
+                    true,
+                    brief_result.clone(),
+                ))
+                .await;
+
+                results.push((tool_call.id.clone(), brief_result, false));
+
+                // Inject skill content as a user message with command-name tag
+                let injected = format!("<command-name>/{}</command-name>\n\n{}", name, content);
+                self.session.add_user_message(&injected);
+                continue;
+            }
 
             // Execute PostToolUse hooks
             let final_output = if self.hooks_enabled {
@@ -625,25 +653,53 @@ impl AgentLoop {
         .await;
 
         // Find and execute the tool
-        let result = if let Some(tool) = self.tool_registry.get(&tool_call.name) {
+        let (result, inject_message) = if let Some(tool) = self.tool_registry.get(&tool_call.name) {
             match tool.execute(tool_call.arguments.clone()).await {
-                Ok(output) => {
-                    let output_str = output.content.to_string();
+                Ok(tool_output) => {
+                    let inject = tool_output.metadata.get(crate::tools::skill::INJECT_AS_MESSAGE)
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let skill_name = tool_output.metadata.get(crate::tools::skill::SKILL_NAME_KEY)
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let output_str = tool_output.content.to_string();
                     debug!(
                         "Tool {} completed: {} chars",
                         tool_call.name,
                         output_str.len()
                     );
-                    (true, output_str)
+                    let inject_info = if inject { Some((output_str.clone(), skill_name)) } else { None };
+                    ((true, output_str), inject_info)
                 }
                 Err(e) => {
                     warn!("Tool {} failed: {}", tool_call.name, e);
-                    (false, format!("Error: {}", e))
+                    ((false, format!("Error: {}", e)), None)
                 }
             }
         } else {
-            (false, format!("Unknown tool: {}", tool_call.name))
+            ((false, format!("Unknown tool: {}", tool_call.name)), None)
         };
+
+        // Handle skill message injection
+        if let Some((content, skill_name)) = inject_message {
+            let name = skill_name.as_deref().unwrap_or("unknown");
+            let brief_result = format!("Skill '{}' loaded. Follow the instructions below.", name);
+
+            self.session.add_tool_result_with_error(&tool_call.id, &brief_result, false);
+
+            self.emit(SessionOutput::tool_done(
+                &tool_call.id,
+                &tool_call.name,
+                true,
+                brief_result,
+            ))
+            .await;
+
+            // Inject skill content as a user message with command-name tag
+            let injected = format!("<command-name>/{}</command-name>\n\n{}", name, content);
+            self.session.add_user_message(&injected);
+            return;
+        }
 
         // Execute PostToolUse hooks
         let mut final_result = result.clone();

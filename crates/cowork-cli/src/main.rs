@@ -16,7 +16,7 @@ use onboarding::OnboardingWizard;
 use cowork_core::config::ConfigManager;
 use cowork_core::provider::{has_api_key_configured, ProviderType};
 use cowork_core::orchestration::SystemPrompt;
-use cowork_core::prompt::{ComponentRegistry, TemplateVars};
+use cowork_core::prompt::{ComponentRegistry, TemplateVars, substitute_commands};
 use cowork_core::session::{SessionConfig, SessionInput, SessionManager, SessionOutput};
 use cowork_core::skills::SkillRegistry;
 use cowork_core::ToolApprovalConfig;
@@ -733,20 +733,28 @@ async fn handle_user_input(
             }
         }
         cmd if cmd.starts_with('/') && cmd.len() > 1 => {
-            // Slash command: execute skill and inject as user message
+            // Slash command: resolve skill template and inject as user message
             let skill_registry = SkillRegistry::with_builtins(workspace.to_path_buf());
             let parts: Vec<&str> = cmd[1..].splitn(2, ' ').collect();
             let skill_name = parts[0];
+            let args = parts.get(1).copied().unwrap_or("");
 
-            if skill_registry.get(skill_name).is_some() {
+            if let Some(skill) = skill_registry.get(skill_name) {
                 app.add_message(Message::user(cmd));
                 app.state = AppState::Processing;
                 app.status = format!("Running /{skill_name}...");
 
-                let result = skill_registry.execute_command(cmd, workspace.to_path_buf()).await;
+                // Resolve the skill's prompt template with substitutions
+                let template = skill.prompt_template();
+                let prompt = template
+                    .replace("$ARGUMENTS", args)
+                    .replace("${ARGUMENTS}", args);
+                let workspace_str = workspace.to_string_lossy().to_string();
+                let resolved = substitute_commands(&prompt, None, Some(&workspace_str));
+
                 let injected = format!(
                     "<command-name>/{skill_name}</command-name>\n\n{}",
-                    result.response
+                    resolved
                 );
 
                 session_manager

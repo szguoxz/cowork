@@ -1,6 +1,9 @@
 //! Skill tool - allows the LLM to invoke registered skills/slash commands
+//!
+//! When invoked, the skill's prompt template is resolved (command substitution
+//! and argument substitution) and returned with metadata signaling the agent
+//! loop to inject it as a user message (matching Claude Code's behavior).
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -8,8 +11,14 @@ use serde_json::Value;
 
 use crate::error::ToolError;
 use crate::prompt::builtin::claude_code::tools::SKILL as SKILL_DESCRIPTION;
-use crate::skills::{SkillContext, SkillRegistry};
+use crate::prompt::substitution::substitute_commands;
+use crate::skills::SkillRegistry;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
+
+/// Metadata key signaling the agent loop to inject content as a user message
+pub const INJECT_AS_MESSAGE: &str = "inject_as_message";
+/// Metadata key for the skill name
+pub const SKILL_NAME_KEY: &str = "skill_name";
 
 /// Tool that allows the LLM to execute skills from the skill registry
 pub struct SkillTool {
@@ -62,23 +71,37 @@ impl Tool for SkillTool {
             let args = params
                 .get("args")
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+                .unwrap_or("");
 
-            let ctx = SkillContext {
-                workspace: self.workspace.clone(),
-                args,
-                data: HashMap::new(),
-            };
+            let skill = self.skill_registry.get(skill_name)
+                .ok_or_else(|| ToolError::ExecutionFailed(
+                    format!("Unknown skill: '{}'. Use /help to see available commands.", skill_name)
+                ))?;
 
-            let result = self.skill_registry.execute(skill_name, ctx).await;
+            // Get the prompt template and apply substitutions
+            let template = skill.prompt_template();
 
-            if result.success {
-                Ok(ToolOutput::success(Value::String(result.response)))
-            } else {
-                let error_msg = result.error.unwrap_or_else(|| "Skill execution failed".into());
-                Ok(ToolOutput::error(error_msg))
-            }
+            // Apply $ARGUMENTS substitution
+            let prompt = template
+                .replace("$ARGUMENTS", args)
+                .replace("${ARGUMENTS}", args);
+
+            // Apply command substitution (!`command`)
+            let workspace_str = self.workspace.to_string_lossy().to_string();
+            let resolved = substitute_commands(&prompt, None, Some(&workspace_str));
+
+            // Return with metadata signaling message injection
+            let mut output = ToolOutput::success(Value::String(resolved));
+            output.metadata.insert(
+                INJECT_AS_MESSAGE.to_string(),
+                Value::Bool(true),
+            );
+            output.metadata.insert(
+                SKILL_NAME_KEY.to_string(),
+                Value::String(skill_name.to_string()),
+            );
+
+            Ok(output)
         })
     }
 }

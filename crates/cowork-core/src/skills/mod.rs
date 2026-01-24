@@ -1,31 +1,22 @@
 //! Skills/Commands system for common workflows
 //!
-//! Skills are predefined workflows triggered by slash commands like /commit, /pr, /review.
-//! Each skill has a prompt template and may use specific tools.
+//! Skills are prompt templates (SKILL.md format) that get expanded with context
+//! and injected into the conversation for the LLM to follow. This matches
+//! Claude Code's plugin/command system.
 //!
-//! This system is inspired by Claude Code's plugin/command system where skills are
-//! essentially prompt templates that get expanded with context and sent to the LLM.
+//! Built-in skills are embedded strings. Custom skills are loaded from:
+//! - User level: `~/.claude/skills/`
+//! - Project level: `{workspace}/.cowork/skills/`
 
 pub mod builtins;
-pub mod context;
-pub mod dev;
-pub mod git;
 pub mod installer;
 pub mod loader;
-pub mod mcp;
-pub mod memory;
-pub mod permissions;
-pub mod session;
-pub mod skill_cmd;
-pub mod vim;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-
-use crate::mcp_manager::McpServerManager;
 
 /// Type alias for boxed futures (for object-safe async trait methods)
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -122,70 +113,11 @@ impl SkillRegistry {
         Self::default()
     }
 
-    /// Create a registry with built-in skills
+    /// Create a registry with built-in skills and filesystem skills
     pub fn with_builtins(workspace: std::path::PathBuf) -> Self {
-        Self::with_builtins_and_mcp(workspace, None)
-    }
-
-    /// Create a registry with built-in skills and optional MCP manager
-    pub fn with_builtins_and_mcp(
-        workspace: std::path::PathBuf,
-        mcp_manager: Option<Arc<McpServerManager>>,
-    ) -> Self {
         let mut registry = Self::new();
 
-        // Register git skills (mirroring Claude Code's commit-commands plugin)
-        registry.register(Arc::new(git::CommitSkill::new(workspace.clone())));
-        registry.register(Arc::new(git::CommitPushPrSkill::new(workspace.clone())));
-        registry.register(Arc::new(git::PushSkill::new(workspace.clone())));
-        registry.register(Arc::new(git::PullRequestSkill::new(workspace.clone())));
-        registry.register(Arc::new(git::ReviewSkill::new(workspace.clone())));
-        registry.register(Arc::new(git::CleanGoneSkill::new(workspace.clone())));
-
-        // Register git info skills
-        registry.register(Arc::new(git::StatusSkill::new(workspace.clone())));
-        registry.register(Arc::new(git::DiffSkill::new(workspace.clone())));
-        registry.register(Arc::new(git::LogSkill::new(workspace.clone())));
-        registry.register(Arc::new(git::BranchSkill::new(workspace.clone())));
-
-        // Register context management skills
-        registry.register(Arc::new(context::CompactSkill::new(workspace.clone())));
-        registry.register(Arc::new(context::ClearSkill::new(workspace.clone())));
-        registry.register(Arc::new(context::ContextSkill::new(workspace.clone())));
-
-        // Register development workflow skills
-        registry.register(Arc::new(dev::TestSkill::new(workspace.clone())));
-        registry.register(Arc::new(dev::BuildSkill::new(workspace.clone())));
-        registry.register(Arc::new(dev::LintSkill::new(workspace.clone())));
-        registry.register(Arc::new(dev::FormatSkill::new(workspace.clone())));
-
-        // Register session management skills
-        registry.register(Arc::new(session::ConfigSkill::new(workspace.clone())));
-        registry.register(Arc::new(session::ModelSkill::new(workspace.clone())));
-        registry.register(Arc::new(session::ProviderSkill::new(workspace.clone())));
-
-        // Register memory management skill
-        registry.register(Arc::new(memory::MemorySkill::new(workspace.clone())));
-
-        // Register permissions skill
-        registry.register(Arc::new(permissions::PermissionsSkill::new(workspace.clone())));
-
-        // Register vim mode skill
-        registry.register(Arc::new(vim::VimSkill::new(workspace.clone())));
-
-        // Register MCP skill if manager is provided
-        if let Some(manager) = mcp_manager {
-            registry.register(Arc::new(mcp::McpSkill::new(manager)));
-        }
-
-        // Register skill management command
-        registry.register(Arc::new(skill_cmd::SkillCmdSkill::new(workspace.clone())));
-
-        // Register help skill
-        registry.register(Arc::new(HelpSkill::new()));
-
-        // Register built-in Claude Code-style skills
-        // These are always available without external files
+        // Load embedded built-in skills (SKILL.md format)
         for skill in builtins::load_builtin_skills() {
             registry.register(skill);
         }
@@ -253,175 +185,5 @@ impl SkillRegistry {
         };
 
         self.execute(name, ctx).await
-    }
-}
-
-/// Built-in help skill
-struct HelpSkill;
-
-impl HelpSkill {
-    fn new() -> Self {
-        Self
-    }
-}
-
-impl Skill for HelpSkill {
-    fn info(&self) -> SkillInfo {
-        SkillInfo {
-            name: "help".to_string(),
-            display_name: "Help".to_string(),
-            description: "List available commands and their usage".to_string(),
-            usage: "/help".to_string(),
-            user_invocable: true,
-        }
-    }
-
-    fn execute(&self, _ctx: SkillContext) -> BoxFuture<'_, SkillResult> {
-        Box::pin(async move {
-            let help_text = r#"
-Available Commands:
-
-Git Commands:
-  /commit           - Stage changes and create a git commit with a generated message
-  /commit-push-pr   - Commit, push, and create a pull request in one step
-  /push             - Push commits to the remote repository
-  /pr [title]       - Create a pull request with auto-generated description
-  /review           - Review staged changes and provide feedback
-  /clean-gone       - Clean up local branches deleted from remote
-
-Git Info Commands:
-  /status           - Show current git status
-  /diff [--staged]  - Show current changes
-  /log [count]      - Show recent commits (default: 10)
-  /branch [name]    - List, create, or switch branches
-
-Development Workflow:
-  /feature-dev [desc] - Guided 7-phase feature development workflow
-  /code-explorer      - Deep codebase analysis and exploration
-  /code-architect     - Design architecture blueprints for features
-
-Code Review:
-  /code-review [scope] - Comprehensive PR review for bugs and compliance
-  /code-reviewer       - Review code with confidence-based filtering
-  /pr-test-analyzer    - Analyze test coverage quality
-  /silent-failure-hunter - Find silent failures and error handling issues
-  /code-simplifier     - Simplify and refine code for clarity
-
-Context Commands:
-  /compact [focus]  - Summarize conversation (optionally preserve specific content)
-  /clear            - Clear conversation history, keep memory files
-  /context          - Show context usage statistics and memory hierarchy
-
-Development Commands:
-  /test             - Run project tests (auto-detects framework)
-  /build            - Build the project
-  /lint             - Run linter (clippy, eslint, ruff, etc.)
-  /format           - Format code (rustfmt, prettier, black, etc.)
-
-Session Commands:
-  /config           - View current configuration
-  /model            - Show or switch the active model
-  /provider         - Show or switch the active provider
-  /memory           - Manage CLAUDE.md memory files
-  /permissions      - View tool permission settings
-  /vim              - Toggle vim keybindings mode
-
-MCP Server Commands:
-  /mcp list         - List configured MCP servers and status
-  /mcp add <name> <cmd> - Add a new MCP server
-  /mcp remove <name>    - Remove an MCP server
-  /mcp start <name>     - Start an MCP server
-  /mcp stop <name>      - Stop a running server
-  /mcp tools [server]   - List tools from MCP servers
-
-Skill Management:
-  /skill list           - List installed custom skills
-  /skill add <url>      - Install a skill from a zip URL
-  /skill remove <name>  - Remove an installed skill
-  /skill info <name>    - Show details about a skill
-
-General:
-  /help             - Show this help message
-
-Command Line Options:
-  cowork [OPTIONS] [COMMAND]
-
-  Options:
-    -w, --workspace <PATH>  Workspace directory (default: .)
-    -p, --provider <NAME>   LLM provider: anthropic, openai (default: anthropic)
-    -m, --model <MODEL>     Model to use (default: provider's default)
-    -v, --verbose           Verbose output
-        --auto-approve      Auto-approve all tool calls (use with caution!)
-        --one-shot <PROMPT> Execute single prompt and exit
-
-  Commands:
-    chat     Interactive chat mode (default)
-    run      Execute a shell command
-    list     List files in workspace
-    read     Read a file
-    search   Search for files
-    tools    Show available tools
-    config   Show configuration
-
-  Examples:
-    cowork                              # Start interactive chat
-    cowork -p openai -m gpt-5.2          # Use OpenAI with GPT-5.2
-    cowork --one-shot "explain main.rs" # Single prompt, then exit
-    cowork tools                        # List available tools
-    cowork config                       # Show current config
-
-Keyboard Shortcuts:
-  Y               - Approve all pending tool calls
-  N               - Reject all pending tool calls
-  Escape          - Cancel the current operation
-  Ctrl+Enter      - Send message
-
-Configuration:
-  Config file: ~/.config/cowork/config.toml
-
-  Example config:
-    default_provider = "anthropic"
-
-    [providers.anthropic]
-    provider_type = "anthropic"
-    model = "claude-sonnet-4-5-20250929"
-    api_key_env = "ANTHROPIC_API_KEY"
-
-    [providers.openai]
-    provider_type = "openai"
-    model = "gpt-5.2"
-    api_key_env = "OPENAI_API_KEY"
-
-    [approval]
-    auto_approve_level = "medium"  # none, low, medium, high, all
-
-    [browser]
-    headless = true
-
-    [general]
-    log_level = "info"
-
-  To edit: $EDITOR ~/.config/cowork/config.toml
-  See /config for current settings, /permissions for approval levels.
-
-Memory Files:
-  Project instructions: ./CLAUDE.md or ./.claude/CLAUDE.md
-  Personal settings:    ./CLAUDE.local.md (gitignored)
-  User global:          ~/.claude/CLAUDE.md
-  See /memory for details.
-
-Tips:
-- Commands can be combined with additional instructions
-- Example: "/commit and then push to remote"
-- Example: "/compact keep the API design decisions"
-- Context is auto-compacted when usage exceeds 75%
-"#;
-
-            SkillResult::success(help_text.trim())
-        })
-    }
-
-    fn prompt_template(&self) -> &str {
-        ""
     }
 }
