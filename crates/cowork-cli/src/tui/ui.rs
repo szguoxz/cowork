@@ -25,22 +25,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_status_bar(frame, app, chunks[1]);
     draw_input(frame, app, chunks[2]);
 
-    // Draw modal overlays if needed
-    match app.state {
-        AppState::Interaction => {
-            match app.interactions.front() {
-                Some(Interaction::ToolApproval(approval)) => draw_approval_modal(frame, approval),
-                Some(Interaction::Question(question)) => draw_question_modal(frame, question),
-                None => {}
-            }
-        }
-        _ => {}
-    }
-
-    // Draw thinking panel if present (but not during interaction - modal takes priority)
-    if app.state != AppState::Interaction {
-        if let Some(ref thinking) = app.thinking_content {
-            draw_thinking_panel(frame, thinking, chunks[0]);
+    // Draw modal overlays for interactions
+    if app.state == AppState::Interaction {
+        match app.interactions.front() {
+            Some(Interaction::ToolApproval(approval)) => draw_approval_modal(frame, approval),
+            Some(Interaction::Question(question)) => draw_question_modal(frame, question),
+            None => {}
         }
     }
 }
@@ -54,41 +44,36 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
 
-    if app.messages.is_empty() && app.tool_activity.is_none() {
+    if app.messages.is_empty() {
         return;
     }
 
     let max_width = inner_area.width as usize - 2;
 
-    // Convert permanent messages + ephemeral tool_activity to list items
+    // Convert messages to list items
     let items: Vec<ListItem> = app
         .messages
         .iter()
-        .chain(app.tool_activity.iter())
         .flat_map(|msg| message_to_lines(msg, max_width))
         .collect();
 
-    // Calculate scroll
     let total_lines = items.len();
     let visible_lines = inner_area.height as usize;
 
-    // Handle auto-scroll (scroll_offset == usize::MAX means scroll to bottom)
+    // Handle auto-scroll
     let scroll = if app.scroll_offset == usize::MAX {
         total_lines.saturating_sub(visible_lines)
     } else {
         app.scroll_offset.min(total_lines.saturating_sub(visible_lines))
     };
 
-    // Update scroll offset for next render
     if app.scroll_offset == usize::MAX && total_lines > visible_lines {
         app.scroll_offset = total_lines - visible_lines;
     }
 
-    // For simple scrolling, just render with offset
     let visible_items: Vec<ListItem> = app
         .messages
         .iter()
-        .chain(app.tool_activity.iter())
         .flat_map(|msg| message_to_lines(msg, max_width))
         .skip(scroll)
         .take(visible_lines)
@@ -106,48 +91,20 @@ fn message_to_lines(msg: &Message, max_width: usize) -> Vec<ListItem<'static>> {
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ),
         MessageType::Assistant => (
-            "Assistant: ",
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            "  ",
+            Style::default().fg(Color::White),
         ),
         MessageType::System => (
-            "System: ",
-            Style::default().fg(Color::Yellow),
+            "",
+            Style::default().fg(Color::DarkGray),
         ),
         MessageType::Error => (
             "Error: ",
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
-        MessageType::ToolStart { name } => (
-            &format!("▶ {}: ", name) as &str,
-            Style::default().fg(Color::Blue),
-        ),
-        MessageType::ToolDone { name, success } => {
-            let symbol = if *success { "✓" } else { "✗" };
-            let color = if *success { Color::Green } else { Color::Red };
-            (
-                &format!("{} {}: ", symbol, name) as &str,
-                Style::default().fg(color),
-            )
-        }
     };
 
-    // Handle ToolStart and ToolDone with owned strings
-    let prefix_owned: String;
-    let actual_prefix = match &msg.message_type {
-        MessageType::ToolStart { name } => {
-            prefix_owned = format!("▶ {}: ", name);
-            &prefix_owned
-        }
-        MessageType::ToolDone { name, success } => {
-            let symbol = if *success { "✓" } else { "✗" };
-            prefix_owned = format!("{} {}: ", symbol, name);
-            &prefix_owned
-        }
-        _ => prefix,
-    };
-
-    // Wrap content to fit width
-    let content_width = max_width.saturating_sub(actual_prefix.len());
+    let content_width = max_width.saturating_sub(prefix.len());
     let wrapped_lines = wrap_text(&msg.content, content_width);
 
     wrapped_lines
@@ -156,13 +113,13 @@ fn message_to_lines(msg: &Message, max_width: usize) -> Vec<ListItem<'static>> {
         .map(|(i, line)| {
             let line_content = if i == 0 {
                 Line::from(vec![
-                    Span::styled(actual_prefix.to_string(), style),
-                    Span::raw(line),
+                    Span::styled(prefix.to_string(), style),
+                    Span::styled(line, style),
                 ])
             } else {
                 Line::from(vec![
-                    Span::raw(" ".repeat(actual_prefix.len())),
-                    Span::raw(line),
+                    Span::raw(" ".repeat(prefix.len())),
+                    Span::styled(line, style),
                 ])
             };
             ListItem::new(line_content)
@@ -189,7 +146,6 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
         for word in words {
             if current_line.is_empty() {
                 if word.len() > max_width {
-                    // Word is too long, split it
                     let mut remaining = word;
                     while remaining.len() > max_width {
                         lines.push(remaining[..max_width].to_string());
@@ -222,31 +178,30 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 
 /// Draw the status bar
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let status_text = if !app.status.is_empty() {
-        format!(" {} | {} ", app.status, app.provider_info)
+    let (text, style) = if !app.status.is_empty() {
+        let spinner = if app.state == AppState::Processing {
+            format!("{} ", app.spinner())
+        } else {
+            String::new()
+        };
+        (
+            format!(" {}{} | {} ", spinner, app.status, app.provider_info),
+            Style::default().bg(Color::Blue).fg(Color::White),
+        )
     } else {
-        format!(" {} ", app.provider_info)
+        (
+            format!(" {} ", app.provider_info),
+            Style::default().bg(Color::DarkGray).fg(Color::White),
+        )
     };
 
-    let style = match app.state {
-        AppState::Processing => Style::default().bg(Color::Blue).fg(Color::White),
-        AppState::Interaction => Style::default().bg(Color::Yellow).fg(Color::Black),
-        AppState::Normal => Style::default().bg(Color::DarkGray).fg(Color::White),
-    };
-
-    let paragraph = Paragraph::new(status_text).style(style);
+    let paragraph = Paragraph::new(text).style(style);
     frame.render_widget(paragraph, area);
 }
 
 /// Draw the input area
 fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
-    let prompt = match app.state {
-        AppState::Normal => "You> ",
-        AppState::Processing => "You> ",  // Keep same prompt, user can type
-        AppState::Interaction => "[Awaiting interaction] ",
-    };
-
-    // Input is active during Normal and Processing states
+    let prompt = "You> ";
     let input_active = matches!(app.state, AppState::Normal | AppState::Processing);
 
     let input_style = if input_active {
@@ -257,14 +212,9 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
 
     let input_text = format!("{}{}", prompt, app.input.value());
 
-    let title = match app.state {
-        AppState::Processing => " Input (processing...) ",
-        _ => " Input ",
-    };
-
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(title)
+        .title(" Input ")
         .border_style(if input_active {
             Style::default().fg(Color::Cyan)
         } else {
@@ -288,8 +238,6 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
 /// Draw the tool approval modal
 fn draw_approval_modal(frame: &mut Frame, approval: &PendingApproval) {
     let area = centered_rect(60, 50, frame.area());
-
-    // Clear the area behind the modal
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -300,7 +248,6 @@ fn draw_approval_modal(frame: &mut Frame, approval: &PendingApproval) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Split inner area
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -310,12 +257,10 @@ fn draw_approval_modal(frame: &mut Frame, approval: &PendingApproval) {
         ])
         .split(inner);
 
-    // Tool name
     let tool_text = Paragraph::new(format!("Tool: {}", approval.name))
         .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
     frame.render_widget(tool_text, chunks[0]);
 
-    // Arguments
     let args_str = serde_json::to_string_pretty(&approval.arguments)
         .unwrap_or_else(|_| approval.arguments.to_string());
     let args_text = Paragraph::new(args_str)
@@ -324,7 +269,6 @@ fn draw_approval_modal(frame: &mut Frame, approval: &PendingApproval) {
         .block(Block::default().borders(Borders::TOP).title(" Arguments "));
     frame.render_widget(args_text, chunks[1]);
 
-    // Options
     let options: Vec<ListItem> = approval
         .options()
         .iter()
@@ -350,7 +294,6 @@ fn draw_approval_modal(frame: &mut Frame, approval: &PendingApproval) {
 /// Draw the question modal
 fn draw_question_modal(frame: &mut Frame, question: &PendingQuestion) {
     let area = centered_rect(70, 60, frame.area());
-
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -367,11 +310,10 @@ fn draw_question_modal(frame: &mut Frame, question: &PendingQuestion) {
             .constraints([
                 Constraint::Length(3), // Question text
                 Constraint::Min(5),    // Options
-                Constraint::Length(3), // Custom input (if shown)
+                Constraint::Length(3), // Custom input
             ])
             .split(inner);
 
-        // Question text
         let header = q.header.as_deref().unwrap_or("Question");
         let question_text = Paragraph::new(q.question.clone())
             .style(Style::default().add_modifier(Modifier::BOLD))
@@ -379,7 +321,6 @@ fn draw_question_modal(frame: &mut Frame, question: &PendingQuestion) {
             .block(Block::default().title(format!(" {} ", header)));
         frame.render_widget(question_text, chunks[0]);
 
-        // Options
         let selected = question.selected_options.get(question.current_question).copied().unwrap_or(0);
         let mut options: Vec<ListItem> = q
             .options
@@ -403,10 +344,8 @@ fn draw_question_modal(frame: &mut Frame, question: &PendingQuestion) {
             })
             .collect();
 
-        // Add "Other" option
-        let other_selected = selected == q.options.len();
         options.push(ListItem::new("  Other (custom answer)  ").style(
-            if other_selected {
+            if selected == q.options.len() {
                 Style::default()
                     .fg(Color::Black)
                     .bg(Color::Cyan)
@@ -420,7 +359,6 @@ fn draw_question_modal(frame: &mut Frame, question: &PendingQuestion) {
             .block(Block::default().borders(Borders::TOP).title(" Options (↑/↓, Enter) "));
         frame.render_widget(list, chunks[1]);
 
-        // Custom input area
         if question.in_custom_input_mode {
             let input_text = question.custom_input.as_deref().unwrap_or("");
             let input = Paragraph::new(format!("> {}", input_text))
@@ -434,40 +372,6 @@ fn draw_question_modal(frame: &mut Frame, question: &PendingQuestion) {
             frame.render_widget(input, chunks[2]);
         }
     }
-}
-
-/// Draw the thinking panel (overlay on messages area)
-fn draw_thinking_panel(frame: &mut Frame, thinking: &str, messages_area: Rect) {
-    // Show thinking in a small overlay at the bottom of messages area
-    let height = 5.min(thinking.lines().count() as u16 + 2);
-    let area = Rect {
-        x: messages_area.x + 1,
-        y: messages_area.y + messages_area.height - height - 1,
-        width: messages_area.width - 2,
-        height,
-    };
-
-    frame.render_widget(Clear, area);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" 💭 Thinking ")
-        .border_style(Style::default().fg(Color::Magenta));
-
-    // Truncate thinking content
-    let lines: Vec<&str> = thinking.lines().take(3).collect();
-    let display_text = if thinking.lines().count() > 3 {
-        format!("{}...", lines.join("\n"))
-    } else {
-        lines.join("\n")
-    };
-
-    let paragraph = Paragraph::new(display_text)
-        .style(Style::default().fg(Color::Magenta).add_modifier(Modifier::ITALIC))
-        .wrap(Wrap { trim: true })
-        .block(block);
-
-    frame.render_widget(paragraph, area);
 }
 
 /// Create a centered rect

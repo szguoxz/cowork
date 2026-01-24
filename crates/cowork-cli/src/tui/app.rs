@@ -12,8 +12,6 @@ pub enum MessageType {
     Assistant,
     System,
     Error,
-    ToolStart { name: String },
-    ToolDone { name: String, success: bool },
 }
 
 /// A message displayed in the output area
@@ -46,31 +44,6 @@ impl Message {
     pub fn error(content: impl Into<String>) -> Self {
         Self::new(MessageType::Error, content)
     }
-
-    pub fn tool_start(name: impl Into<String>, args: impl Into<String>) -> Self {
-        let name = name.into();
-        Self::new(
-            MessageType::ToolStart { name: name.clone() },
-            args.into(),
-        )
-    }
-
-    pub fn tool_done(name: impl Into<String>, success: bool, result: impl Into<String>) -> Self {
-        let name = name.into();
-        let content = result.into();
-        Self::new(
-            MessageType::ToolDone {
-                name: name.clone(),
-                success,
-            },
-            if content.is_empty() {
-                if success { "done".to_string() } else { "failed".to_string() }
-            } else {
-                content
-            },
-        )
-    }
-
 }
 
 /// Pending tool approval request
@@ -146,7 +119,7 @@ impl PendingQuestion {
 
     pub fn select_next(&mut self) {
         if let Some(q) = self.current() {
-            let max = q.options.len(); // +1 for "Other" option
+            let max = q.options.len();
             let current = self.selected_options.get(self.current_question).copied().unwrap_or(0);
             if self.current_question < self.selected_options.len() {
                 self.selected_options[self.current_question] = (current + 1) % (max + 1);
@@ -156,7 +129,7 @@ impl PendingQuestion {
 
     pub fn select_prev(&mut self) {
         if let Some(q) = self.current() {
-            let max = q.options.len(); // +1 for "Other" option
+            let max = q.options.len();
             let current = self.selected_options.get(self.current_question).copied().unwrap_or(0);
             if self.current_question < self.selected_options.len() {
                 self.selected_options[self.current_question] = if current == 0 { max } else { current - 1 };
@@ -198,10 +171,8 @@ pub struct App {
     pub state: AppState,
     /// Text input buffer
     pub input: Input,
-    /// Message history (permanent: user, assistant, system, error)
+    /// Message history (user, assistant, system, error only)
     pub messages: Vec<Message>,
-    /// Ephemeral tool activity message (each new tool call replaces the previous)
-    pub tool_activity: Option<Message>,
     /// Scroll offset for message area
     pub scroll_offset: usize,
     /// Whether the app should quit
@@ -212,12 +183,12 @@ pub struct App {
     pub session_approved_tools: std::collections::HashSet<String>,
     /// Approve all tools for session
     pub approve_all_session: bool,
-    /// Current thinking content (for display)
-    pub thinking_content: Option<String>,
-    /// Status message (shown in footer)
+    /// Status message (shown in status bar - current activity)
     pub status: String,
     /// Provider info for display
     pub provider_info: String,
+    /// Tick counter for spinner animation
+    pub tick: usize,
     /// Input history
     pub history: Vec<String>,
     /// Current position in history (None = not browsing)
@@ -226,40 +197,48 @@ pub struct App {
     pub history_draft: String,
 }
 
+const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
 impl App {
     pub fn new(provider_info: String) -> Self {
         Self {
             state: AppState::Normal,
             input: Input::default(),
             messages: vec![
-                Message::system("Welcome to Cowork - AI Coding Assistant"),
-                Message::system("Type your message and press Enter. Press Ctrl+C or type /exit to quit."),
+                Message::system("Welcome to Cowork. Type your message and press Enter. Ctrl+C to quit."),
             ],
-            tool_activity: None,
             scroll_offset: 0,
             should_quit: false,
             interactions: VecDeque::new(),
             session_approved_tools: std::collections::HashSet::new(),
             approve_all_session: false,
-            thinking_content: None,
             status: String::new(),
             provider_info,
+            tick: 0,
             history: Vec::new(),
             history_index: None,
             history_draft: String::new(),
         }
     }
 
+    /// Advance spinner
+    pub fn tick(&mut self) {
+        self.tick = self.tick.wrapping_add(1);
+    }
+
+    /// Get current spinner char
+    pub fn spinner(&self) -> char {
+        SPINNER[self.tick % SPINNER.len()]
+    }
+
     /// Add a message to the history
     pub fn add_message(&mut self, message: Message) {
         self.messages.push(message);
-        // Auto-scroll to bottom when new message arrives
         self.scroll_to_bottom();
     }
 
     /// Scroll to the bottom of messages
     pub fn scroll_to_bottom(&mut self) {
-        // Scroll offset will be calculated during render based on viewport
         self.scroll_offset = usize::MAX;
     }
 
@@ -291,11 +270,10 @@ impl App {
         }
         let new_index = match self.history_index {
             None => {
-                // Save current input and start browsing from the end
                 self.history_draft = self.input.value().to_string();
                 self.history.len() - 1
             }
-            Some(0) => return, // Already at oldest
+            Some(0) => return,
             Some(i) => i - 1,
         };
         self.history_index = Some(new_index);
@@ -306,7 +284,6 @@ impl App {
     pub fn history_next(&mut self) {
         let Some(idx) = self.history_index else { return };
         if idx + 1 >= self.history.len() {
-            // Restore draft
             self.history_index = None;
             self.input = Input::new(self.history_draft.clone());
         } else {
@@ -327,48 +304,43 @@ impl App {
                 self.status = "Ready".to_string();
             }
             SessionOutput::Idle => {
-                self.tool_activity = None;
                 self.state = AppState::Normal;
-                self.thinking_content = None;
                 self.status.clear();
             }
-            SessionOutput::UserMessage { content, .. } => {
-                // Already shown when user types, skip echo
-                let _ = content;
-            }
+            SessionOutput::UserMessage { .. } => {}
             SessionOutput::Thinking { content } => {
-                self.thinking_content = if content.is_empty() {
-                    None
+                if content.is_empty() {
+                    self.status = "Processing...".to_string();
                 } else {
-                    Some(content)
-                };
-                self.status = "Thinking...".to_string();
+                    self.status = "Thinking...".to_string();
+                }
             }
             SessionOutput::AssistantMessage { content, .. } => {
-                self.tool_activity = None;
                 if !content.is_empty() {
                     self.add_message(Message::assistant(content));
                 }
+                self.status.clear();
                 self.state = AppState::Normal;
             }
             SessionOutput::ToolStart { name, arguments, .. } => {
                 let summary = format_tool_args(&name, &arguments);
-                self.tool_activity = Some(Message::tool_start(&name, summary));
-                self.status = format!("{}...", name);
-                self.scroll_to_bottom();
+                self.status = format!("{}: {}", name, truncate_str(&summary, 80));
             }
             SessionOutput::ToolPending { id, name, arguments, .. } => {
-                self.thinking_content = None;
+                self.status.clear();
                 self.interactions.push_back(Interaction::ToolApproval(PendingApproval::new(id, name, arguments)));
                 self.state = AppState::Interaction;
             }
             SessionOutput::ToolDone { name, success, output, .. } => {
-                let summary = format_tool_output(&name, success, &output);
-                self.tool_activity = Some(Message::tool_done(&name, success, &summary));
-                self.status.clear();
-                self.scroll_to_bottom();
+                if success {
+                    self.status = format!("{}: done", name);
+                } else {
+                    let err = truncate_str(&output, 80);
+                    self.status = format!("{}: {}", name, err);
+                }
             }
             SessionOutput::Question { request_id, questions } => {
+                self.status.clear();
                 self.interactions.push_back(Interaction::Question(PendingQuestion::new(request_id, questions)));
                 self.state = AppState::Interaction;
             }
@@ -380,7 +352,7 @@ impl App {
     }
 }
 
-/// Format tool arguments into a concise one-line summary
+/// Format tool arguments into a concise summary
 fn format_tool_args(tool_name: &str, args: &serde_json::Value) -> String {
     match tool_name {
         "Read" => args["file_path"].as_str().unwrap_or("?").to_string(),
@@ -394,7 +366,7 @@ fn format_tool_args(tool_name: &str, args: &serde_json::Value) -> String {
         }
         "Bash" => {
             let cmd = args["command"].as_str().unwrap_or("?");
-            truncate_line(cmd, 120)
+            truncate_str(cmd, 100)
         }
         "Task" => {
             let desc = args["description"].as_str().unwrap_or("?");
@@ -409,36 +381,12 @@ fn format_tool_args(tool_name: &str, args: &serde_json::Value) -> String {
             format!("{} {}", op, file)
         }
         _ => {
-            let compact = serde_json::to_string(args).unwrap_or_default();
-            truncate_line(&compact, 120)
+            serde_json::to_string(args).unwrap_or_default()
         }
     }
 }
 
-/// Format tool output into a concise summary
-fn format_tool_output(_tool_name: &str, success: bool, output: &str) -> String {
-    if output.is_empty() {
-        return String::new();
-    }
-
-    if !success {
-        // Show errors concisely (first 2 lines)
-        let lines: Vec<&str> = output.lines().take(2).collect();
-        return truncate_line(&lines.join(" "), 150);
-    }
-
-    // For successful results, just show line count as a hint
-    let line_count = output.lines().count();
-    if line_count <= 1 {
-        truncate_line(output.lines().next().unwrap_or(""), 120)
-    } else {
-        let first = truncate_line(output.lines().next().unwrap_or(""), 80);
-        format!("{} (+{} lines)", first, line_count - 1)
-    }
-}
-
-/// Truncate a string to max chars, adding "..." if needed
-fn truncate_line(s: &str, max: usize) -> String {
+fn truncate_str(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {

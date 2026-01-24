@@ -670,7 +670,7 @@ async fn run_event_loop(
                     }
                 }
                 Event::Tick => {
-                    // UI refresh tick - nothing to do
+                    app.tick();
                 }
                 _ => {}
             }
