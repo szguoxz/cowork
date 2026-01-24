@@ -1,5 +1,6 @@
 //! UI rendering for the TUI
 
+use chrono::Local;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -8,7 +9,7 @@ use ratatui::{
     Frame,
 };
 
-use super::{App, AppState, Interaction, Message, MessageType, PendingApproval, PendingQuestion};
+use super::{App, Message, MessageType, Modal, PendingApproval, PendingQuestion};
 
 /// Draw the entire UI
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -25,17 +26,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_status_bar(frame, app, chunks[1]);
     draw_input(frame, app, chunks[2]);
 
-    // Draw modal overlays for interactions
-    if app.state == AppState::Interaction {
-        match app.interactions.front() {
-            Some(Interaction::ToolApproval(approval)) => draw_approval_modal(frame, approval),
-            Some(Interaction::Question(question)) => draw_question_modal(frame, question),
-            None => {}
-        }
+    // Draw modal overlay if present
+    if let Some(ref modal) = app.modal {
+        draw_modal(frame, modal);
     }
 }
 
-/// Draw the messages area
+/// Draw the messages area with persistent messages + ephemeral line at bottom
 fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -44,18 +41,27 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
 
-    if app.messages.is_empty() {
+    if app.messages.is_empty() && app.ephemeral.is_none() {
         return;
     }
 
     let max_width = inner_area.width as usize - 2;
 
-    // Convert messages to list items
-    let items: Vec<ListItem> = app
+    // Convert persistent messages to list items
+    let mut items: Vec<ListItem> = app
         .messages
         .iter()
         .flat_map(|msg| message_to_lines(msg, max_width))
         .collect();
+
+    // Append ephemeral activity line (dim) if present
+    if let Some(ref ephemeral) = app.ephemeral {
+        let line = Line::from(Span::styled(
+            format!(" \u{2591} {}", ephemeral),
+            Style::default().fg(Color::DarkGray),
+        ));
+        items.push(ListItem::new(line));
+    }
 
     let total_lines = items.len();
     let visible_lines = inner_area.height as usize;
@@ -71,10 +77,8 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
         app.scroll_offset = total_lines - visible_lines;
     }
 
-    let visible_items: Vec<ListItem> = app
-        .messages
-        .iter()
-        .flat_map(|msg| message_to_lines(msg, max_width))
+    let visible_items: Vec<ListItem> = items
+        .into_iter()
         .skip(scroll)
         .take(visible_lines)
         .collect();
@@ -178,48 +182,52 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 
 /// Draw the status bar
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let (text, style) = if !app.status.is_empty() {
-        let spinner = if app.state == AppState::Processing {
-            format!("{} ", app.spinner())
-        } else {
-            String::new()
-        };
-        (
-            format!(" {}{} | {} ", spinner, app.status, app.provider_info),
-            Style::default().bg(Color::Blue).fg(Color::White),
-        )
+    let time = Local::now().format("%H:%M").to_string();
+    let right_info = format!("cowork {} | {} | {}", app.version, app.provider_info, time);
+
+    let (left_text, bg_color) = if !app.status.is_empty() {
+        (format!("{} {}", app.spinner(), app.status), Color::Blue)
     } else {
-        (
-            format!(" {} ", app.provider_info),
-            Style::default().bg(Color::DarkGray).fg(Color::White),
-        )
+        (String::new(), Color::DarkGray)
     };
 
-    let paragraph = Paragraph::new(text).style(style);
+    let style = Style::default().bg(bg_color).fg(Color::White);
+
+    // Build the full status bar: left-aligned status, right-aligned info
+    let width = area.width as usize;
+    let left_len = left_text.len();
+    let right_len = right_info.len();
+    let padding = width.saturating_sub(left_len + right_len + 2); // +2 for spaces
+
+    let bar_text = format!(" {}{}{} ", left_text, " ".repeat(padding), right_info);
+
+    let paragraph = Paragraph::new(bar_text).style(style);
     frame.render_widget(paragraph, area);
 }
 
 /// Draw the input area
 fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
     let prompt = "You> ";
-    let input_active = matches!(app.state, AppState::Normal | AppState::Processing);
+    let input_active = app.modal.is_none();
 
-    let input_style = if input_active {
-        Style::default()
+    let (input_text, input_style, border_style) = if input_active {
+        (
+            format!("{}{}", prompt, app.input.value()),
+            Style::default(),
+            Style::default().fg(Color::Cyan),
+        )
     } else {
-        Style::default().fg(Color::DarkGray)
+        (
+            format!("{}(waiting...)", prompt),
+            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::DarkGray),
+        )
     };
-
-    let input_text = format!("{}{}", prompt, app.input.value());
 
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Input ")
-        .border_style(if input_active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        });
+        .border_style(border_style);
 
     let paragraph = Paragraph::new(input_text)
         .style(input_style)
@@ -232,6 +240,14 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
         let cursor_x = area.x + 1 + prompt.len() as u16 + app.input.visual_cursor() as u16;
         let cursor_y = area.y + 1;
         frame.set_cursor_position((cursor_x.min(area.x + area.width - 2), cursor_y));
+    }
+}
+
+/// Draw modal overlay (dispatches to approval or question)
+fn draw_modal(frame: &mut Frame, modal: &Modal) {
+    match modal {
+        Modal::Approval(approval) => draw_approval_modal(frame, approval),
+        Modal::Question(question) => draw_question_modal(frame, question),
     }
 }
 
@@ -287,7 +303,7 @@ fn draw_approval_modal(frame: &mut Frame, approval: &PendingApproval) {
         .collect();
 
     let list = List::new(options)
-        .block(Block::default().borders(Borders::TOP).title(" Select action (↑/↓, Enter) "));
+        .block(Block::default().borders(Borders::TOP).title(" Select action (\u{2191}/\u{2193}, Enter) "));
     frame.render_widget(list, chunks[2]);
 }
 
@@ -356,7 +372,7 @@ fn draw_question_modal(frame: &mut Frame, question: &PendingQuestion) {
         ));
 
         let list = List::new(options)
-            .block(Block::default().borders(Borders::TOP).title(" Options (↑/↓, Enter) "));
+            .block(Block::default().borders(Borders::TOP).title(" Options (\u{2191}/\u{2193}, Enter) "));
         frame.render_widget(list, chunks[1]);
 
         if question.in_custom_input_mode {

@@ -32,7 +32,7 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 use tui::{
-    App, AppState, Event, EventHandler, Interaction, KeyAction, Message,
+    App, Event, EventHandler, KeyAction, Message, Modal,
     handle_key_approval, handle_key_normal, handle_key_question,
 };
 
@@ -445,7 +445,8 @@ async fn run_chat_tui(
 
     // Create app state
     let provider_info = format!("{:?}", provider_type);
-    let mut app = App::new(provider_info);
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    let mut app = App::new(provider_info, version);
 
     if auto_approve {
         app.approve_all_session = true;
@@ -499,34 +500,26 @@ async fn run_event_loop(
                     if key.kind != crossterm::event::KeyEventKind::Press {
                         continue;
                     }
-                    let action = match app.state {
-                        AppState::Normal => handle_key_normal(key, &mut app.input),
-                        AppState::Processing => {
-                            // Allow typing while processing (queue input for later)
-                            // But don't submit - just buffer the input
-                            match key.code {
-                                crossterm::event::KeyCode::Char('c')
-                                    if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) =>
-                                {
-                                    KeyAction::Quit
-                                }
-                                crossterm::event::KeyCode::Enter => {
-                                    // Don't submit while processing, just ignore Enter
-                                    KeyAction::None
-                                }
-                                _ => {
-                                    // Allow typing (buffer input)
-                                    handle_key_normal(key, &mut app.input)
-                                }
-                            }
+                    let action = if let Some(ref mut modal) = app.modal {
+                        // Modal is showing — route keys to modal handler
+                        match modal {
+                            Modal::Approval(approval) => handle_key_approval(key, approval),
+                            Modal::Question(question) => handle_key_question(key, question),
                         }
-                        AppState::Interaction => {
-                            match app.interactions.front_mut() {
-                                Some(Interaction::ToolApproval(approval)) => handle_key_approval(key, approval),
-                                Some(Interaction::Question(question)) => handle_key_question(key, question),
-                                None => KeyAction::None,
+                    } else if !app.status.is_empty() {
+                        // Processing — allow typing but don't submit
+                        match key.code {
+                            crossterm::event::KeyCode::Char('c')
+                                if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) =>
+                            {
+                                KeyAction::Quit
                             }
+                            crossterm::event::KeyCode::Enter => KeyAction::None,
+                            _ => handle_key_normal(key, &mut app.input),
                         }
+                    } else {
+                        // Idle — normal input
+                        handle_key_normal(key, &mut app.input)
                     };
 
                     match action {
@@ -539,29 +532,23 @@ async fn run_event_loop(
                             handle_user_input(app, session_manager, session_id, workspace, &input).await?;
                         }
                         KeyAction::ApproveTool => {
-                            if let Some(Interaction::ToolApproval(approval)) = app.interactions.pop_front() {
+                            if let Some(Modal::Approval(approval)) = app.modal.take() {
                                 app.add_message(Message::system(format!("Approved: {}", approval.name)));
                                 session_manager
                                     .push_message(session_id, SessionInput::approve_tool(&approval.id))
                                     .await?;
-                                if app.interactions.is_empty() {
-                                    app.state = AppState::Processing;
-                                }
                             }
                         }
                         KeyAction::RejectTool => {
-                            if let Some(Interaction::ToolApproval(approval)) = app.interactions.pop_front() {
+                            if let Some(Modal::Approval(approval)) = app.modal.take() {
                                 app.add_message(Message::system(format!("Rejected: {}", approval.name)));
                                 session_manager
                                     .push_message(session_id, SessionInput::reject_tool(&approval.id, None))
                                     .await?;
-                                if app.interactions.is_empty() {
-                                    app.state = AppState::Normal;
-                                }
                             }
                         }
                         KeyAction::ApproveToolSession => {
-                            if let Some(Interaction::ToolApproval(approval)) = app.interactions.pop_front() {
+                            if let Some(Modal::Approval(approval)) = app.modal.take() {
                                 app.session_approved_tools.insert(approval.name.clone());
                                 app.add_message(Message::system(format!(
                                     "Approved '{}' for session",
@@ -570,25 +557,19 @@ async fn run_event_loop(
                                 session_manager
                                     .push_message(session_id, SessionInput::approve_tool(&approval.id))
                                     .await?;
-                                if app.interactions.is_empty() {
-                                    app.state = AppState::Processing;
-                                }
                             }
                         }
                         KeyAction::ApproveAllSession => {
-                            if let Some(Interaction::ToolApproval(approval)) = app.interactions.pop_front() {
+                            if let Some(Modal::Approval(approval)) = app.modal.take() {
                                 app.approve_all_session = true;
                                 app.add_message(Message::system("All tools approved for session"));
                                 session_manager
                                     .push_message(session_id, SessionInput::approve_tool(&approval.id))
                                     .await?;
-                                if app.interactions.is_empty() {
-                                    app.state = AppState::Processing;
-                                }
                             }
                         }
                         KeyAction::AnswerQuestion => {
-                            if let Some(Interaction::Question(mut question)) = app.interactions.pop_front() {
+                            if let Some(Modal::Question(ref mut question)) = app.modal {
                                 // Build answer
                                 let answer = if question.is_other_selected() {
                                     question.custom_input.take().unwrap_or_default()
@@ -613,9 +594,12 @@ async fn run_event_loop(
                                 // Check if more questions in this set
                                 if question.current_question + 1 < question.questions.len() {
                                     question.current_question += 1;
-                                    app.interactions.push_front(Interaction::Question(question));
                                 } else {
-                                    // All questions in this set answered
+                                    // All questions answered — take modal and send
+                                    let question = match app.modal.take() {
+                                        Some(Modal::Question(q)) => q,
+                                        _ => unreachable!(),
+                                    };
                                     app.add_message(Message::system(format!("Answered: {}", answer)));
                                     session_manager
                                         .push_message(
@@ -626,10 +610,6 @@ async fn run_event_loop(
                                             ),
                                         )
                                         .await?;
-                                    
-                                    if app.interactions.is_empty() {
-                                        app.state = AppState::Processing;
-                                    }
                                 }
                             }
                         }
@@ -734,7 +714,6 @@ async fn handle_user_input(
 
             if let Some(skill) = skill_registry.get(skill_name) {
                 app.add_message(Message::user(cmd));
-                app.state = AppState::Processing;
                 app.status = format!("Running /{skill_name}...");
 
                 // Resolve the skill's prompt template with substitutions
@@ -760,7 +739,6 @@ async fn handle_user_input(
         _ => {
             // Regular message to AI
             app.add_message(Message::user(input));
-            app.state = AppState::Processing;
             app.status = "Sending...".to_string();
 
             session_manager

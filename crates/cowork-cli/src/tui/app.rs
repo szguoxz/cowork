@@ -2,7 +2,7 @@
 
 use cowork_core::session::SessionOutput;
 use cowork_core::QuestionInfo;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet};
 use tui_input::Input;
 
 /// Message types for display in the output area
@@ -147,77 +147,69 @@ impl PendingQuestion {
     }
 }
 
-/// Pending user interaction (approval or question)
+/// Modal overlay — when present, input is disabled and modal is shown
 #[derive(Debug, Clone)]
-pub enum Interaction {
-    ToolApproval(PendingApproval),
+pub enum Modal {
+    Approval(PendingApproval),
     Question(PendingQuestion),
-}
-
-/// Application state
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AppState {
-    /// Normal mode - user can type messages
-    Normal,
-    /// Waiting for user interaction (tool approval or question)
-    Interaction,
-    /// Processing (AI is working)
-    Processing,
 }
 
 /// Main TUI application
 pub struct App {
-    /// Current application state
-    pub state: AppState,
-    /// Text input buffer
-    pub input: Input,
-    /// Message history (user, assistant, system, error only)
+    /// Persistent messages (User, Assistant, System, Error)
     pub messages: Vec<Message>,
-    /// Scroll offset for message area
-    pub scroll_offset: usize,
-    /// Whether the app should quit
-    pub should_quit: bool,
-    /// Pending interactions queue
-    pub interactions: VecDeque<Interaction>,
-    /// Session-approved tools
-    pub session_approved_tools: std::collections::HashSet<String>,
-    /// Approve all tools for session
-    pub approve_all_session: bool,
-    /// Status message (shown in status bar - current activity)
+    /// Current ephemeral activity line (overwritten by each tool event)
+    pub ephemeral: Option<String>,
+    /// High-level status: "Processing", "Thinking", "" (empty = idle)
     pub status: String,
-    /// Provider info for display
-    pub provider_info: String,
     /// Tick counter for spinner animation
     pub tick: usize,
+    /// Scroll offset for message area
+    pub scroll_offset: usize,
+    /// Text input buffer
+    pub input: Input,
+    /// Modal overlay (None = no modal, Some = show modal + disable input)
+    pub modal: Option<Modal>,
+    /// Whether the app should quit
+    pub should_quit: bool,
+    /// Provider info for status bar display
+    pub provider_info: String,
+    /// Version string for status bar
+    pub version: String,
     /// Input history
     pub history: Vec<String>,
     /// Current position in history (None = not browsing)
     pub history_index: Option<usize>,
     /// Saved current input when browsing history
     pub history_draft: String,
+    /// Session-approved tools
+    pub session_approved_tools: HashSet<String>,
+    /// Approve all tools for session
+    pub approve_all_session: bool,
 }
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 impl App {
-    pub fn new(provider_info: String) -> Self {
+    pub fn new(provider_info: String, version: String) -> Self {
         Self {
-            state: AppState::Normal,
-            input: Input::default(),
             messages: vec![
                 Message::system("Welcome to Cowork. Type your message and press Enter. Ctrl+C to quit."),
             ],
-            scroll_offset: 0,
-            should_quit: false,
-            interactions: VecDeque::new(),
-            session_approved_tools: std::collections::HashSet::new(),
-            approve_all_session: false,
+            ephemeral: None,
             status: String::new(),
-            provider_info,
             tick: 0,
+            scroll_offset: 0,
+            input: Input::default(),
+            modal: None,
+            should_quit: false,
+            provider_info,
+            version,
             history: Vec::new(),
             history_index: None,
             history_draft: String::new(),
+            session_approved_tools: HashSet::new(),
+            approve_all_session: false,
         }
     }
 
@@ -304,8 +296,8 @@ impl App {
                 self.status = "Ready".to_string();
             }
             SessionOutput::Idle => {
-                self.state = AppState::Normal;
                 self.status.clear();
+                self.ephemeral = None;
             }
             SessionOutput::UserMessage { .. } => {}
             SessionOutput::Thinking { content } => {
@@ -320,33 +312,31 @@ impl App {
                     self.add_message(Message::assistant(content));
                 }
                 self.status.clear();
-                self.state = AppState::Normal;
+                self.ephemeral = None;
             }
             SessionOutput::ToolStart { name, arguments, .. } => {
+                self.status = "Processing...".to_string();
                 let summary = format_tool_args(&name, &arguments);
-                self.status = format!("{}: {}", name, truncate_str(&summary, 80));
+                self.ephemeral = Some(format!("{}: {}", name, truncate_str(&summary, 80)));
             }
             SessionOutput::ToolPending { id, name, arguments, .. } => {
-                self.status.clear();
-                self.interactions.push_back(Interaction::ToolApproval(PendingApproval::new(id, name, arguments)));
-                self.state = AppState::Interaction;
+                self.modal = Some(Modal::Approval(PendingApproval::new(id, name, arguments)));
             }
             SessionOutput::ToolDone { name, success, output, .. } => {
                 if success {
-                    self.status = format!("{}: done", name);
+                    self.ephemeral = Some(format!("{}: done", name));
                 } else {
                     let err = truncate_str(&output, 80);
-                    self.status = format!("{}: {}", name, err);
+                    self.ephemeral = Some(format!("{}: {}", name, err));
                 }
             }
             SessionOutput::Question { request_id, questions } => {
-                self.status.clear();
-                self.interactions.push_back(Interaction::Question(PendingQuestion::new(request_id, questions)));
-                self.state = AppState::Interaction;
+                self.modal = Some(Modal::Question(PendingQuestion::new(request_id, questions)));
             }
             SessionOutput::Error { message } => {
                 self.add_message(Message::error(message));
-                self.state = AppState::Normal;
+                self.status.clear();
+                self.ephemeral = None;
             }
         }
     }
