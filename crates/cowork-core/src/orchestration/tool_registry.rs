@@ -19,9 +19,11 @@ use crate::tools::lsp::LspTool;
 use crate::tools::notebook::NotebookEdit;
 use crate::tools::planning::{EnterPlanMode, ExitPlanMode, PlanModeState};
 use crate::tools::shell::{ExecuteCommand, KillShell, ShellProcessRegistry};
+use crate::tools::skill::SkillTool;
 use crate::tools::task::{AgentInstanceRegistry, TaskOutputTool, TaskTool, TodoWrite};
 use crate::tools::web::{supports_native_search, WebFetch, WebSearch};
 use crate::tools::ToolRegistry;
+use crate::skills::SkillRegistry;
 
 /// Defines which subset of tools a subagent should have access to
 #[derive(Debug, Clone)]
@@ -54,6 +56,7 @@ pub struct ToolRegistryBuilder {
     include_planning: bool,
     include_interaction: bool,
     tool_scope: Option<ToolScope>,
+    skill_registry: Option<Arc<SkillRegistry>>,
 }
 
 impl ToolRegistryBuilder {
@@ -76,6 +79,7 @@ impl ToolRegistryBuilder {
             include_planning: true,
             include_interaction: true,
             tool_scope: None,
+            skill_registry: None,
         }
     }
 
@@ -166,6 +170,12 @@ impl ToolRegistryBuilder {
     /// Enable/disable interaction tools (ask_user_question)
     pub fn with_interaction(mut self, enabled: bool) -> Self {
         self.include_interaction = enabled;
+        self
+    }
+
+    /// Set the skill registry for the Skill tool
+    pub fn with_skill_registry(mut self, registry: Arc<SkillRegistry>) -> Self {
+        self.skill_registry = Some(registry);
         self
     }
 
@@ -290,6 +300,11 @@ impl ToolRegistryBuilder {
                 registry.register(Arc::new(task_tool));
                 registry.register(Arc::new(TaskOutputTool::new(agent_registry)));
             }
+
+        // Skill tool - when a skill registry is provided
+        if let Some(skill_registry) = self.skill_registry {
+            registry.register(Arc::new(SkillTool::new(skill_registry, self.workspace.clone())));
+        }
 
         registry
     }

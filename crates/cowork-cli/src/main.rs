@@ -18,6 +18,7 @@ use cowork_core::provider::{has_api_key_configured, ProviderType};
 use cowork_core::orchestration::SystemPrompt;
 use cowork_core::prompt::{ComponentRegistry, TemplateVars};
 use cowork_core::session::{SessionConfig, SessionInput, SessionManager, SessionOutput};
+use cowork_core::skills::SkillRegistry;
 use cowork_core::ToolApprovalConfig;
 // Import for ! prefix bash mode
 use cowork_core::tools::shell::ExecuteCommand;
@@ -252,6 +253,17 @@ fn build_system_prompt(workspace: &Path, model_info: Option<&str>) -> String {
 
     if let Some(info) = model_info {
         vars.model_info = info.to_string();
+    }
+
+    // Populate available skills for the Skill tool
+    let skill_registry = SkillRegistry::with_builtins(workspace.to_path_buf());
+    let skills: Vec<String> = skill_registry
+        .list_user_invocable()
+        .iter()
+        .map(|s| format!("- {}: {}", s.name, s.description))
+        .collect();
+    if !skills.is_empty() {
+        vars.skills_xml = skills.join("\n");
     }
 
     SystemPrompt::new()
@@ -718,6 +730,30 @@ async fn handle_user_input(
                     Ok(output) => app.add_message(Message::system(output)),
                     Err(e) => app.add_message(Message::error(e.to_string())),
                 }
+            }
+        }
+        cmd if cmd.starts_with('/') && cmd.len() > 1 => {
+            // Slash command: execute skill and inject as user message
+            let skill_registry = SkillRegistry::with_builtins(workspace.to_path_buf());
+            let parts: Vec<&str> = cmd[1..].splitn(2, ' ').collect();
+            let skill_name = parts[0];
+
+            if skill_registry.get(skill_name).is_some() {
+                app.add_message(Message::user(cmd));
+                app.state = AppState::Processing;
+                app.status = format!("Running /{skill_name}...");
+
+                let result = skill_registry.execute_command(cmd, workspace.to_path_buf()).await;
+                let injected = format!(
+                    "<command-name>/{skill_name}</command-name>\n\n{}",
+                    result.response
+                );
+
+                session_manager
+                    .push_message(session_id, SessionInput::user_message(&injected))
+                    .await?;
+            } else {
+                app.add_message(Message::error(format!("Unknown command: /{skill_name}. Use /help to see available commands.")));
             }
         }
         _ => {

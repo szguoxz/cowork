@@ -14,6 +14,7 @@ pub mod lsp;
 pub mod notebook;
 pub mod planning;
 pub mod shell;
+pub mod skill;
 pub mod task;
 pub mod web;
 

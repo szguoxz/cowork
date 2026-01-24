@@ -90,6 +90,9 @@ pub mod tools {
 
     /// LSP tool - code intelligence via Language Server Protocol
     pub const LSP: &str = include_str!("tools/lsp.md");
+
+    /// Skill tool - execute skills/slash commands
+    pub const SKILL: &str = include_str!("tools/skill.md");
 }
 
 /// Agent definitions
@@ -137,6 +140,7 @@ mod tests {
         "${MODEL_INFO}",
         "${ASSISTANT_NAME}",
         "${SECURITY_POLICY}",
+        "${SKILLS_XML}",
     ];
 
     /// Check if a variable pattern is a runtime variable
@@ -187,6 +191,7 @@ mod tests {
         assert!(!tools::ENTER_PLAN_MODE.is_empty());
         assert!(!tools::EXIT_PLAN_MODE.is_empty());
         assert!(!tools::LSP.is_empty());
+        assert!(!tools::SKILL.is_empty());
     }
 
     #[test]
@@ -228,6 +233,7 @@ mod tests {
             ("tools::ENTER_PLAN_MODE", tools::ENTER_PLAN_MODE),
             ("tools::EXIT_PLAN_MODE", tools::EXIT_PLAN_MODE),
             ("tools::LSP", tools::LSP),
+            ("tools::SKILL", tools::SKILL),
             ("agents::EXPLORE", agents::EXPLORE),
             ("agents::PLAN", agents::PLAN),
             ("agents::BASH", agents::BASH),

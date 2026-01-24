@@ -23,6 +23,7 @@ use crate::error::Result;
 use crate::orchestration::{ChatMessage, ChatSession, ToolCallInfo, ToolRegistryBuilder};
 use crate::prompt::{ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig};
 use crate::provider::{CompletionResult, GenAIProvider};
+use crate::skills::SkillRegistry;
 use crate::tools::{ToolDefinition, ToolRegistry};
 
 /// Maximum number of agentic turns per user message
@@ -179,9 +180,13 @@ impl AgentLoop {
             None => ChatSession::new(),
         };
 
+        // Create skill registry
+        let skill_registry = Arc::new(SkillRegistry::with_builtins(config.workspace_path.clone()));
+
         // Create tool registry
         let mut tool_builder = ToolRegistryBuilder::new(config.workspace_path.clone())
-            .with_provider(config.provider_type);
+            .with_provider(config.provider_type)
+            .with_skill_registry(skill_registry);
 
         if let Some(ref key) = config.api_key {
             tool_builder = tool_builder.with_api_key(key.clone());

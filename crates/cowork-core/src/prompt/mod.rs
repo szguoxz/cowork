@@ -135,6 +135,8 @@ pub struct TemplateVars {
     pub main_branch: String,
     /// Recent git commits (for commit style reference)
     pub recent_commits: String,
+    /// Available skills listing for the Skill tool
+    pub skills_xml: String,
 }
 
 impl Default for TemplateVars {
@@ -153,6 +155,7 @@ impl Default for TemplateVars {
             current_branch: String::new(),
             main_branch: "main".to_string(),
             recent_commits: String::new(),
+            skills_xml: String::new(),
         }
     }
 }
@@ -219,6 +222,7 @@ impl TemplateVars {
             .replace("${CURRENT_BRANCH}", &self.current_branch)
             .replace("${MAIN_BRANCH}", &self.main_branch)
             .replace("${RECENT_COMMITS}", &self.recent_commits)
+            .replace("${SKILLS_XML}", &self.skills_xml)
     }
 }
 

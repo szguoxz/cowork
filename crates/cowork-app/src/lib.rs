@@ -18,6 +18,7 @@ use tauri_plugin_updater::UpdaterExt;
 use cowork_core::orchestration::SystemPrompt;
 use cowork_core::prompt::TemplateVars;
 use cowork_core::session::{OutputReceiver, SessionConfig, SessionManager, SessionOutput};
+use cowork_core::skills::SkillRegistry;
 use cowork_core::{ApprovalLevel, ConfigManager, Context, Workspace};
 use state::AppState;
 
@@ -58,6 +59,17 @@ fn build_system_prompt(workspace: &std::path::Path, model_info: Option<&str>) ->
 
     if let Some(info) = model_info {
         vars.model_info = info.to_string();
+    }
+
+    // Populate available skills for the Skill tool
+    let skill_registry = SkillRegistry::with_builtins(workspace.to_path_buf());
+    let skills: Vec<String> = skill_registry
+        .list_user_invocable()
+        .iter()
+        .map(|s| format!("- {}: {}", s.name, s.description))
+        .collect();
+    if !skills.is_empty() {
+        vars.skills_xml = skills.join("\n");
     }
 
     SystemPrompt::new()

@@ -83,3 +83,5 @@ Today's date: ${CURRENT_DATE}
 ${MODEL_INFO}
 
 ${GIT_STATUS}
+
+${SKILLS_XML}
