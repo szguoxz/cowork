@@ -358,6 +358,7 @@ impl App {
                 self.scroll_to_bottom();
             }
             SessionOutput::ToolPending { id, name, arguments, .. } => {
+                self.thinking_content = None;
                 self.interactions.push_back(Interaction::ToolApproval(PendingApproval::new(id, name, arguments)));
                 self.state = AppState::Interaction;
             }

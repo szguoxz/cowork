@@ -37,9 +37,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         _ => {}
     }
 
-    // Draw thinking panel if present
-    if let Some(ref thinking) = app.thinking_content {
-        draw_thinking_panel(frame, thinking, chunks[0]);
+    // Draw thinking panel if present (but not during interaction - modal takes priority)
+    if app.state != AppState::Interaction {
+        if let Some(ref thinking) = app.thinking_content {
+            draw_thinking_panel(frame, thinking, chunks[0]);
+        }
     }
 }
 
