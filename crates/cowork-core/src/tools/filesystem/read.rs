@@ -59,6 +59,14 @@ impl Tool for ReadFile {
             let path = self.workspace.join(path_str);
             let validated = validate_path(&path, &self.workspace)?;
 
+            // Reject directories with a helpful message
+            if validated.is_dir() {
+                return Err(ToolError::InvalidParams(format!(
+                    "{} is a directory, not a file. Use the Bash tool with `ls` to list directory contents.",
+                    path_to_display(&validated)
+                )));
+            }
+
             // Check if this is a document file (PDF, Word, Excel, PowerPoint)
             let ext = validated
                 .extension()
