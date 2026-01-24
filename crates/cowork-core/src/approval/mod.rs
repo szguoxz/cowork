@@ -209,15 +209,19 @@ impl ToolApprovalConfig {
         auto_approve.insert("WebFetch".to_string());
         auto_approve.insert("WebSearch".to_string());
 
-        // Task/planning tools
+        // Task/agent tools
         auto_approve.insert("TodoWrite".to_string());
         auto_approve.insert("TaskOutput".to_string());
+        auto_approve.insert("Task".to_string());
+        auto_approve.insert("KillShell".to_string());
 
         // LSP operations (read-only)
         auto_approve.insert("LSP".to_string());
 
-        // User interaction tools
+        // Planning/interaction tools
         auto_approve.insert("AskUserQuestion".to_string());
+        auto_approve.insert("ExitPlanMode".to_string());
+        auto_approve.insert("Skill".to_string());
 
         // Destructive tools that always require approval
         let mut always_require = std::collections::HashSet::new();
