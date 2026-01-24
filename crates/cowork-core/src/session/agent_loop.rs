@@ -401,9 +401,10 @@ impl AgentLoop {
             }
 
             // Execute auto-approved tools and batch results
+            // Exclude AskUserQuestion — it's handled via the question/answer flow above
             let auto_approved_tools: Vec<_> = tool_calls
                 .iter()
-                .filter(|tc| auto_approved.contains(&tc.id))
+                .filter(|tc| auto_approved.contains(&tc.id) && tc.name != "AskUserQuestion")
                 .collect();
 
             if !auto_approved_tools.is_empty() {
