@@ -186,17 +186,39 @@ pub fn parse_command(
     parse_command_from_document(doc, source_path, scope)
 }
 
+/// Parse a command from content with an explicit name (for commands without name in frontmatter)
+pub fn parse_command_named(
+    content: &str,
+    name: &str,
+    source_path: Option<PathBuf>,
+    scope: Scope,
+) -> Result<CommandDefinition, CommandError> {
+    let doc = parse_frontmatter(content)?;
+    parse_command_from_document_with_name(doc, Some(name), source_path, scope)
+}
+
 /// Parse a command definition from a parsed document
 fn parse_command_from_document(
     doc: ParsedDocument,
     source_path: Option<PathBuf>,
     scope: Scope,
 ) -> Result<CommandDefinition, CommandError> {
-    // Extract required fields
+    parse_command_from_document_with_name(doc, None, source_path, scope)
+}
+
+/// Parse a command definition, optionally using a provided name if not in frontmatter
+fn parse_command_from_document_with_name(
+    doc: ParsedDocument,
+    fallback_name: Option<&str>,
+    source_path: Option<PathBuf>,
+    scope: Scope,
+) -> Result<CommandDefinition, CommandError> {
+    // Extract name: from frontmatter, or use fallback
     let name = doc
         .get_string("name")
-        .ok_or_else(|| CommandError::MissingField("name".to_string()))?
-        .to_string();
+        .map(|s| s.to_string())
+        .or_else(|| fallback_name.map(|s| s.to_string()))
+        .ok_or_else(|| CommandError::MissingField("name".to_string()))?;
 
     // Validate name
     if !is_valid_command_name(&name) {
@@ -208,22 +230,25 @@ fn parse_command_from_document(
         .unwrap_or("")
         .to_string();
 
-    // Extract optional fields
+    // Extract optional fields (support both snake_case and kebab-case)
     let allowed_tools = doc
         .metadata
         .get("allowed_tools")
+        .or_else(|| doc.metadata.get("allowed-tools"))
         .map(parse_tool_list)
         .unwrap_or_default();
 
     let denied_tools = doc
         .metadata
         .get("denied_tools")
+        .or_else(|| doc.metadata.get("denied-tools"))
         .map(parse_tool_list)
         .unwrap_or_default();
 
     let argument_hint = doc
         .metadata
         .get("argument_hint")
+        .or_else(|| doc.metadata.get("argument-hint"))
         .map(parse_string_list)
         .unwrap_or_default();
 
@@ -255,13 +280,13 @@ fn parse_string_list(value: &serde_json::Value) -> Vec<String> {
     }
 }
 
-/// Check if command name is valid (lowercase, hyphens, digits, max 64 chars)
+/// Check if command name is valid (lowercase, hyphens/underscores, digits, max 64 chars)
 fn is_valid_command_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
         && name
             .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
 /// Load a command from a file path
@@ -292,19 +317,19 @@ impl CommandRegistry {
 
     /// Load all built-in commands
     pub fn load_builtins(&mut self) {
-        // Load commit command
-        if let Ok(cmd) = parse_command(builtin::commands::COMMIT, None, Scope::Builtin) {
-            self.register(cmd);
-        }
+        let builtins: &[(&str, &str)] = &[
+            ("commit", builtin::commands::COMMIT),
+            ("commit-push-pr", builtin::commands::COMMIT_PUSH_PR),
+            ("clean_gone", builtin::commands::CLEAN_GONE),
+            ("code-review", builtin::commands::CODE_REVIEW),
+            ("feature-dev", builtin::commands::FEATURE_DEV),
+            ("review-pr", builtin::commands::REVIEW_PR),
+        ];
 
-        // Load pr command
-        if let Ok(cmd) = parse_command(builtin::commands::PR, None, Scope::Builtin) {
-            self.register(cmd);
-        }
-
-        // Load review-pr command
-        if let Ok(cmd) = parse_command(builtin::commands::REVIEW_PR, None, Scope::Builtin) {
-            self.register(cmd);
+        for (name, content) in builtins {
+            if let Ok(cmd) = parse_command_named(content, name, None, Scope::Builtin) {
+                self.register(cmd);
+            }
         }
     }
 
@@ -686,9 +711,14 @@ Content
             assert!(!is_valid_command_name(""));
             assert!(!is_valid_command_name("Invalid"));
             assert!(!is_valid_command_name("has spaces"));
-            assert!(!is_valid_command_name("has_underscore"));
             assert!(!is_valid_command_name("has.dot"));
             assert!(!is_valid_command_name(&"a".repeat(65)));
+        }
+
+        #[test]
+        fn test_valid_names_with_underscore() {
+            assert!(is_valid_command_name("clean_gone"));
+            assert!(is_valid_command_name("my_command"));
         }
     }
 
@@ -914,55 +944,54 @@ Content
         fn test_with_builtins() {
             let registry = CommandRegistry::with_builtins();
             assert!(!registry.is_empty());
-            assert!(registry.len() >= 3);
+            assert_eq!(registry.len(), 6);
 
             // Check built-in commands are loaded
             assert!(registry.get("commit").is_some());
-            assert!(registry.get("pr").is_some());
+            assert!(registry.get("commit-push-pr").is_some());
+            assert!(registry.get("clean_gone").is_some());
+            assert!(registry.get("code-review").is_some());
+            assert!(registry.get("feature-dev").is_some());
             assert!(registry.get("review-pr").is_some());
         }
 
         #[test]
         fn test_parse_commit_command() {
-            let cmd = parse_command(builtin::commands::COMMIT, None, Scope::Builtin).unwrap();
+            let cmd = parse_command_named(builtin::commands::COMMIT, "commit", None, Scope::Builtin).unwrap();
             assert_eq!(cmd.name(), "commit");
             assert!(!cmd.description().is_empty());
             assert!(cmd.content.contains("git"));
-            assert!(cmd.content.contains("$ARGUMENTS"));
 
-            // Check tool restrictions
+            // Check tool restrictions — commit only allows specific Bash commands
             let restrictions = cmd.tool_restrictions();
-            assert!(restrictions.is_allowed("Bash", &serde_json::json!({})));
-            assert!(restrictions.is_allowed("Read", &serde_json::json!({})));
-            assert!(!restrictions.is_allowed("Write", &serde_json::json!({})));
-            assert!(!restrictions.is_allowed("Edit", &serde_json::json!({})));
+            assert!(restrictions.is_allowed("Bash", &serde_json::json!({"command": "git status"})));
         }
 
         #[test]
-        fn test_parse_pr_command() {
-            let cmd = parse_command(builtin::commands::PR, None, Scope::Builtin).unwrap();
-            assert_eq!(cmd.name(), "pr");
+        fn test_parse_commit_push_pr_command() {
+            let cmd = parse_command_named(builtin::commands::COMMIT_PUSH_PR, "commit-push-pr", None, Scope::Builtin).unwrap();
+            assert_eq!(cmd.name(), "commit-push-pr");
             assert!(!cmd.description().is_empty());
             assert!(cmd.content.contains("gh pr create"));
         }
 
         #[test]
         fn test_parse_review_pr_command() {
-            let cmd = parse_command(builtin::commands::REVIEW_PR, None, Scope::Builtin).unwrap();
+            let cmd = parse_command_named(builtin::commands::REVIEW_PR, "review-pr", None, Scope::Builtin).unwrap();
             assert_eq!(cmd.name(), "review-pr");
             assert!(!cmd.description().is_empty());
-            assert!(cmd.content.contains("gh pr view"));
+            assert!(cmd.content.contains("Comprehensive PR Review"));
         }
 
         #[test]
         fn test_execute_builtin_command() {
             let registry = CommandRegistry::with_builtins();
 
-            // Execute /commit with arguments
-            let result = registry.execute("/commit -m 'Test commit'").unwrap();
+            // Execute /feature-dev with arguments (feature-dev has $ARGUMENTS)
+            let result = registry.execute("/feature-dev Add dark mode").unwrap();
             assert!(result.is_some());
             let content = result.unwrap();
-            assert!(content.contains("-m 'Test commit'"));
+            assert!(content.contains("Add dark mode"));
         }
 
         #[test]
@@ -972,11 +1001,11 @@ Content
             let commit = registry.get("commit").unwrap();
             let help = commit.help_text();
             assert!(help.contains("/commit"));
-            assert!(help.contains("-m"));
+            assert!(help.contains("Create a git commit"));
 
-            let pr = registry.get("pr").unwrap();
-            let help = pr.help_text();
-            assert!(help.contains("/pr"));
+            let feature = registry.get("feature-dev").unwrap();
+            let help = feature.help_text();
+            assert!(help.contains("/feature-dev"));
         }
     }
 

@@ -72,13 +72,19 @@ pub mod reminders {
     pub const CONVERSATION_SUMMARIZATION: &str = include_str!("reminders/conversation_summarization.md");
 }
 
-/// Built-in commands (slash commands)
+/// Built-in commands (slash commands) — official Claude Code plugin commands
 pub mod commands {
     /// /commit command - create a git commit
     pub const COMMIT: &str = include_str!("commands/commit.md");
-    /// /pr command - create a pull request
-    pub const PR: &str = include_str!("commands/pr.md");
-    /// /review-pr command - review a pull request
+    /// /commit-push-pr command - commit, push, and open a PR
+    pub const COMMIT_PUSH_PR: &str = include_str!("commands/commit-push-pr.md");
+    /// /clean_gone command - clean up local branches deleted from remote
+    pub const CLEAN_GONE: &str = include_str!("commands/clean_gone.md");
+    /// /code-review command - code review a pull request
+    pub const CODE_REVIEW: &str = include_str!("commands/code-review.md");
+    /// /feature-dev command - guided feature development
+    pub const FEATURE_DEV: &str = include_str!("commands/feature-dev.md");
+    /// /review-pr command - comprehensive PR review
     pub const REVIEW_PR: &str = include_str!("commands/review-pr.md");
 }
 
@@ -124,17 +130,26 @@ mod tests {
     #[test]
     fn test_commands_load() {
         assert!(!commands::COMMIT.is_empty());
-        assert!(!commands::PR.is_empty());
+        assert!(!commands::COMMIT_PUSH_PR.is_empty());
+        assert!(!commands::CLEAN_GONE.is_empty());
+        assert!(!commands::CODE_REVIEW.is_empty());
+        assert!(!commands::FEATURE_DEV.is_empty());
         assert!(!commands::REVIEW_PR.is_empty());
 
         // Verify they have proper frontmatter
         assert!(commands::COMMIT.starts_with("---"));
-        assert!(commands::PR.starts_with("---"));
+        assert!(commands::COMMIT_PUSH_PR.starts_with("---"));
+        assert!(commands::CLEAN_GONE.starts_with("---"));
+        assert!(commands::CODE_REVIEW.starts_with("---"));
+        assert!(commands::FEATURE_DEV.starts_with("---"));
         assert!(commands::REVIEW_PR.starts_with("---"));
 
-        // Verify they contain expected content
-        assert!(commands::COMMIT.contains("name: commit"));
-        assert!(commands::PR.contains("name: pr"));
-        assert!(commands::REVIEW_PR.contains("name: review-pr"));
+        // Verify they contain expected descriptions
+        assert!(commands::COMMIT.contains("Create a git commit"));
+        assert!(commands::COMMIT_PUSH_PR.contains("Commit, push, and open a PR"));
+        assert!(commands::CLEAN_GONE.contains("Cleans up all git branches"));
+        assert!(commands::CODE_REVIEW.contains("Code review a pull request"));
+        assert!(commands::FEATURE_DEV.contains("Guided feature development"));
+        assert!(commands::REVIEW_PR.contains("Comprehensive PR review"));
     }
 }

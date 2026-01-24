@@ -57,15 +57,13 @@ mod skill_registry_tests {
         let dir = setup_git_repo();
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
-        // Should have all built-in skills
+        // Should have all 6 official built-in skills
         assert!(registry.get("commit").is_some());
         assert!(registry.get("commit-push-pr").is_some());
-        assert!(registry.get("push").is_some());
-        assert!(registry.get("pr").is_some());
-        assert!(registry.get("review").is_some());
-        assert!(registry.get("clean-gone").is_some());
-        assert!(registry.get("test").is_some());
-        assert!(registry.get("build").is_some());
+        assert!(registry.get("clean_gone").is_some());
+        assert!(registry.get("code-review").is_some());
+        assert!(registry.get("feature-dev").is_some());
+        assert!(registry.get("review-pr").is_some());
     }
 
     #[test]
@@ -74,7 +72,7 @@ mod skill_registry_tests {
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
         let skills = registry.list();
-        assert!(skills.len() >= 10, "Should have at least 10 built-in skills");
+        assert_eq!(skills.len(), 6, "Should have exactly 6 built-in skills");
 
         // All skills should have names and descriptions
         for skill in &skills {
@@ -159,46 +157,32 @@ mod skill_template_tests {
     }
 
     #[tokio::test]
-    async fn test_pr_skill_substitutes_arguments() {
+    async fn test_feature_dev_skill_substitutes_arguments() {
         let dir = setup_git_repo();
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
         let ctx = SkillContext {
             workspace: dir.path().to_path_buf(),
-            args: "My PR title".to_string(),
+            args: "Add dark mode toggle".to_string(),
             data: HashMap::new(),
         };
 
-        let result = registry.execute("pr", ctx).await;
+        let result = registry.execute("feature-dev", ctx).await;
         assert!(result.success);
-        // $ARGUMENTS should be replaced with "My PR title"
-        assert!(result.response.contains("My PR title"));
-        assert!(result.response.contains("gh pr create"));
+        // $ARGUMENTS should be replaced
+        assert!(result.response.contains("Add dark mode toggle"));
     }
 
     #[test]
-    fn test_review_skill_template() {
+    fn test_review_pr_skill_template() {
         let dir = setup_git_repo();
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
-        let skill = registry.get("review").unwrap();
+        let skill = registry.get("review-pr").unwrap();
         let template = skill.prompt_template();
 
-        assert!(template.contains("!`git diff"));
-        assert!(template.contains("Potential bugs"));
-        assert!(template.contains("Security"));
-    }
-
-    #[test]
-    fn test_push_skill_template() {
-        let dir = setup_git_repo();
-        let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
-
-        let skill = registry.get("push").unwrap();
-        let template = skill.prompt_template();
-
-        assert!(template.contains("git push"));
-        assert!(template.contains("!`git branch --show-current`"));
+        assert!(template.contains("Comprehensive PR Review"));
+        assert!(template.contains("$ARGUMENTS"));
     }
 
     #[test]
@@ -206,11 +190,11 @@ mod skill_template_tests {
         let dir = setup_git_repo();
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
-        let skill = registry.get("clean-gone").unwrap();
+        let skill = registry.get("clean_gone").unwrap();
         let template = skill.prompt_template();
 
         assert!(template.contains("gone"));
-        assert!(template.contains("!`git fetch --prune"));
+        assert!(template.contains("git branch -v"));
     }
 
     #[test]
@@ -223,7 +207,7 @@ mod skill_template_tests {
 
         assert!(template.contains("commit"));
         assert!(template.contains("Push") || template.contains("push"));
-        assert!(template.contains("Pull Request") || template.contains("pull request"));
+        assert!(template.contains("pull request"));
     }
 
     #[test]
@@ -231,14 +215,15 @@ mod skill_template_tests {
         let dir = setup_git_repo();
         let registry = SkillRegistry::with_builtins(dir.path().to_path_buf());
 
-        // Git skills should have specific allowed tools
+        // commit skill should have specific allowed tools
         let commit = registry.get("commit").unwrap();
         let tools = commit.allowed_tools();
         assert!(tools.is_some(), "commit skill should have allowed tools");
 
-        let push = registry.get("push").unwrap();
-        let tools = push.allowed_tools();
-        assert!(tools.is_some(), "push skill should have allowed tools");
+        // commit-push-pr should also have allowed tools
+        let cpr = registry.get("commit-push-pr").unwrap();
+        let tools = cpr.allowed_tools();
+        assert!(tools.is_some(), "commit-push-pr skill should have allowed tools");
     }
 }
 
@@ -255,9 +240,9 @@ mod slash_command_tests {
         assert!(result.success);
 
         // Test command with args
-        let result = registry.execute_command("/pr My PR Title", dir.path().to_path_buf()).await;
+        let result = registry.execute_command("/feature-dev My Feature", dir.path().to_path_buf()).await;
         assert!(result.success);
-        assert!(result.response.contains("My PR Title"));
+        assert!(result.response.contains("My Feature"));
     }
 
     #[tokio::test]

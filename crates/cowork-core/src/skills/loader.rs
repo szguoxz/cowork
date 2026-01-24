@@ -88,6 +88,56 @@ impl<'de> Deserialize<'de> for ToolList {
 /// Type alias for backward compatibility
 pub type AllowedTools = ToolList;
 
+/// Argument hints that can be a single string or a list
+#[derive(Debug, Clone, Default)]
+pub struct ArgumentHints(pub Vec<String>);
+
+impl std::ops::Deref for ArgumentHints {
+    type Target = Vec<String>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for ArgumentHints {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+
+        struct ArgumentHintsVisitor;
+
+        impl<'de> Visitor<'de> for ArgumentHintsVisitor {
+            type Value = ArgumentHints;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a string or list of argument hints")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(ArgumentHints(vec![value.to_string()]))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                let mut hints = Vec::new();
+                while let Some(hint) = seq.next_element::<String>()? {
+                    hints.push(hint);
+                }
+                Ok(ArgumentHints(hints))
+            }
+        }
+
+        deserializer.deserialize_any(ArgumentHintsVisitor)
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -96,7 +146,9 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct SkillFrontmatter {
-    /// Skill name (lowercase, hyphens only)
+    /// Skill name (lowercase, hyphens/underscores). Optional in frontmatter —
+    /// derived from filename or passed explicitly for builtins.
+    #[serde(default)]
     pub name: String,
 
     /// Description (used for auto-discovery)
@@ -140,7 +192,7 @@ pub struct SkillFrontmatter {
 
     /// Argument hints for CLI autocomplete
     #[serde(default)]
-    pub argument_hint: Vec<String>,
+    pub argument_hint: ArgumentHints,
 
     /// Custom metadata
     #[serde(default)]
@@ -237,8 +289,25 @@ impl DynamicSkill {
         Self::parse(&content, skill_dir.to_path_buf(), source)
     }
 
-    /// Parse a SKILL.md file content
+    /// Parse a SKILL.md file content. Name must be present in frontmatter.
     pub fn parse(content: &str, path: PathBuf, source: SkillSource) -> Result<Self, SkillLoadError> {
+        let skill = Self::parse_inner(content, path, source)?;
+        if skill.frontmatter.name.is_empty() {
+            return Err(SkillLoadError::InvalidName(String::new()));
+        }
+        Ok(skill)
+    }
+
+    /// Parse a SKILL.md file, using `name` if not specified in frontmatter.
+    pub fn parse_with_name(content: &str, name: &str, path: PathBuf, source: SkillSource) -> Result<Self, SkillLoadError> {
+        let mut skill = Self::parse_inner(content, path, source)?;
+        if skill.frontmatter.name.is_empty() {
+            skill.frontmatter.name = name.to_string();
+        }
+        Ok(skill)
+    }
+
+    fn parse_inner(content: &str, path: PathBuf, source: SkillSource) -> Result<Self, SkillLoadError> {
         // Split frontmatter and body
         let (frontmatter_str, body) = Self::split_frontmatter(content)?;
 
@@ -246,8 +315,8 @@ impl DynamicSkill {
         let frontmatter: SkillFrontmatter = serde_yml::from_str(&frontmatter_str)
             .map_err(|e| SkillLoadError::ParseError(path.clone(), e.to_string()))?;
 
-        // Validate name
-        if !Self::is_valid_name(&frontmatter.name) {
+        // Validate name if present
+        if !frontmatter.name.is_empty() && !Self::is_valid_name(&frontmatter.name) {
             return Err(SkillLoadError::InvalidName(frontmatter.name.clone()));
         }
 
@@ -279,13 +348,13 @@ impl DynamicSkill {
         Ok((frontmatter, body))
     }
 
-    /// Check if skill name is valid (lowercase, hyphens, max 64 chars)
+    /// Check if skill name is valid (lowercase, hyphens/underscores, max 64 chars)
     fn is_valid_name(name: &str) -> bool {
         !name.is_empty()
             && name.len() <= 64
             && name
                 .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
     }
 
     /// Read additional file from skill directory (e.g., reference.md)
@@ -386,7 +455,7 @@ pub enum SkillLoadError {
     #[error("Failed to parse skill at {0}: {1}")]
     ParseError(PathBuf, String),
 
-    #[error("Invalid skill name '{0}': must be lowercase with hyphens, max 64 chars")]
+    #[error("Invalid skill name '{0}': must be lowercase with hyphens/underscores, max 64 chars")]
     InvalidName(String),
 }
 

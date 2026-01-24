@@ -678,7 +678,8 @@ mod tests {
 
             // Built-in commands should be loaded
             assert!(commands.get("commit").is_some());
-            assert!(commands.get("pr").is_some());
+            assert!(commands.get("commit-push-pr").is_some());
+            assert!(commands.get("review-pr").is_some());
         }
 
         #[test]

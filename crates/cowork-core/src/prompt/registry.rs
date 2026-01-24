@@ -994,9 +994,10 @@ mod tests {
             assert!(registry.get_agent("Bash").is_some());
 
             // Should have built-in commands
-            assert!(registry.command_count() >= 3);
+            assert_eq!(registry.command_count(), 6);
             assert!(registry.get_command("commit").is_some());
-            assert!(registry.get_command("pr").is_some());
+            assert!(registry.get_command("commit-push-pr").is_some());
+            assert!(registry.get_command("review-pr").is_some());
         }
 
         #[test]
@@ -1134,7 +1135,8 @@ mod tests {
             let registry = ComponentRegistry::with_builtins();
             let names: Vec<_> = registry.command_names().collect();
             assert!(names.contains(&"commit"));
-            assert!(names.contains(&"pr"));
+            assert!(names.contains(&"commit-push-pr"));
+            assert!(names.contains(&"review-pr"));
         }
 
         #[test]
@@ -1152,7 +1154,7 @@ mod tests {
             let command_registry = registry.to_command_registry();
 
             assert!(command_registry.get("commit").is_some());
-            assert!(command_registry.get("pr").is_some());
+            assert!(command_registry.get("review-pr").is_some());
         }
     }
 

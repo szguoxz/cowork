@@ -81,7 +81,7 @@ pub use agents::{
 // Re-export command types
 pub use commands::{
     CommandDefinition, CommandError, CommandMetadata, CommandRegistry,
-    parse_command, load_command_from_file,
+    parse_command, parse_command_named, load_command_from_file,
 };
 
 // Re-export builder types

@@ -14,7 +14,7 @@ use cowork_core::config::PromptSystemConfig;
 use cowork_core::prompt::{
     ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig,
     HookHandler, HookDefinition, HookRegistration,
-    PromptBuilder, parse_agent, parse_command, Scope, ModelPreference,
+    PromptBuilder, parse_agent, parse_command, parse_command_named, Scope, ModelPreference,
     ToolRestrictions, ToolSpec, builtin,
 };
 
@@ -35,9 +35,10 @@ mod component_registry_tests {
         assert!(registry.get_agent("Bash").is_some());
         assert!(registry.get_agent("general-purpose").is_some());
 
-        // Check commands are loaded (builtin commands include commit, pr, review-pr)
+        // Check commands are loaded (6 official Claude Code plugin commands)
         assert!(registry.get_command("commit").is_some());
-        assert!(registry.get_command("pr").is_some());
+        assert!(registry.get_command("commit-push-pr").is_some());
+        assert!(registry.get_command("review-pr").is_some());
     }
 
     #[test]
@@ -181,7 +182,7 @@ This is a test command.
 
     #[test]
     fn test_builtin_commit_command() {
-        let cmd = parse_command(builtin::commands::COMMIT, None, Scope::Builtin).unwrap();
+        let cmd = parse_command_named(builtin::commands::COMMIT, "commit", None, Scope::Builtin).unwrap();
 
         assert_eq!(cmd.name(), "commit");
         assert!(!cmd.description().is_empty());
