@@ -218,6 +218,12 @@ pub struct App {
     pub status: String,
     /// Provider info for display
     pub provider_info: String,
+    /// Input history
+    pub history: Vec<String>,
+    /// Current position in history (None = not browsing)
+    pub history_index: Option<usize>,
+    /// Saved current input when browsing history
+    pub history_draft: String,
 }
 
 impl App {
@@ -238,6 +244,9 @@ impl App {
             thinking_content: None,
             status: String::new(),
             provider_info,
+            history: Vec::new(),
+            history_index: None,
+            history_draft: String::new(),
         }
     }
 
@@ -264,6 +273,46 @@ impl App {
     /// Scroll down by one line
     pub fn scroll_down(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_add(1);
+    }
+
+    /// Push input to history
+    pub fn push_history(&mut self, input: String) {
+        if !input.is_empty() {
+            self.history.push(input);
+        }
+        self.history_index = None;
+        self.history_draft.clear();
+    }
+
+    /// Navigate to previous history entry
+    pub fn history_prev(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        let new_index = match self.history_index {
+            None => {
+                // Save current input and start browsing from the end
+                self.history_draft = self.input.value().to_string();
+                self.history.len() - 1
+            }
+            Some(0) => return, // Already at oldest
+            Some(i) => i - 1,
+        };
+        self.history_index = Some(new_index);
+        self.input = Input::new(self.history[new_index].clone());
+    }
+
+    /// Navigate to next history entry
+    pub fn history_next(&mut self) {
+        let Some(idx) = self.history_index else { return };
+        if idx + 1 >= self.history.len() {
+            // Restore draft
+            self.history_index = None;
+            self.input = Input::new(self.history_draft.clone());
+        } else {
+            self.history_index = Some(idx + 1);
+            self.input = Input::new(self.history[idx + 1].clone());
+        }
     }
 
     /// Check if a tool should be auto-approved

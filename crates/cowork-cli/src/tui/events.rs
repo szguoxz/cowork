@@ -95,6 +95,10 @@ pub enum KeyAction {
     PageUp,
     /// Page down
     PageDown,
+    /// History previous
+    HistoryPrev,
+    /// History next
+    HistoryNext,
 }
 
 /// Handle a key event in normal mode
@@ -113,6 +117,8 @@ pub fn handle_key_normal(key: KeyEvent, input: &mut tui_input::Input) -> KeyActi
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => KeyAction::Quit,
         KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => KeyAction::ScrollUp,
         KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => KeyAction::ScrollDown,
+        KeyCode::Up => KeyAction::HistoryPrev,
+        KeyCode::Down => KeyAction::HistoryNext,
         KeyCode::PageUp => KeyAction::PageUp,
         KeyCode::PageDown => KeyAction::PageDown,
         KeyCode::Char(c) => {

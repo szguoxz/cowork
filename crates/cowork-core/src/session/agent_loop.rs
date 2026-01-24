@@ -596,7 +596,7 @@ impl AgentLoop {
                         (true, output_str, inject_info)
                     }
                     Err(e) => {
-                        warn!("Tool {} failed: {}", tool_call.name, e);
+                        debug!("Tool {} failed: {}", tool_call.name, e);
                         (false, format!("Error: {}", e), None)
                     }
                 }
@@ -724,7 +724,7 @@ impl AgentLoop {
                     ((true, output_str), inject_info)
                 }
                 Err(e) => {
-                    warn!("Tool {} failed: {}", tool_call.name, e);
+                    debug!("Tool {} failed: {}", tool_call.name, e);
                     ((false, format!("Error: {}", e)), None)
                 }
             }

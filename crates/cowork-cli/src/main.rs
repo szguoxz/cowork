@@ -535,6 +535,7 @@ async fn run_event_loop(
                             break;
                         }
                         KeyAction::Submit(input) => {
+                            app.push_history(input.clone());
                             handle_user_input(app, session_manager, session_id, workspace, &input).await?;
                         }
                         KeyAction::ApproveTool => {
@@ -644,6 +645,8 @@ async fn run_event_loop(
                                 app.scroll_down();
                             }
                         }
+                        KeyAction::HistoryPrev => app.history_prev(),
+                        KeyAction::HistoryNext => app.history_next(),
                         KeyAction::None => {}
                     }
                 }
