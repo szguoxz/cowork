@@ -39,7 +39,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ3QzlEMjhEQThEQzdFMjMKUldRamZ0eW9qZExKUjBab2g3M09mbnBOUS9COVRPOThpR2RoN3pSeVRkZytEYSt3K2NXN2xTTFcK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIxMENGNEJEOTRFM0NCREEKUldUYXkrT1V2ZlFNSWQ2N1JrVnhyTVdBelFGeDVnVGhNVUlWUUdKYlpaS1JTYXlOaXBtdXI5Zi8K",
       "endpoints": [
         "https://github.com/szguoxz/cowork/releases/latest/download/latest.json"
       ]
