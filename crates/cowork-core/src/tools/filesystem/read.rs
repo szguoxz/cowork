@@ -59,6 +59,16 @@ impl Tool for ReadFile {
             let path = self.workspace.join(path_str);
             let validated = validate_path(&path, &self.workspace)?;
 
+            // Check if this is a document file (PDF, Word, Excel, PowerPoint)
+            let ext = validated
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            if super::document::is_document(&ext) {
+                return super::document::extract_document(&validated);
+            }
+
             let content = tokio::fs::read_to_string(&validated)
                 .await
                 .map_err(ToolError::Io)?;

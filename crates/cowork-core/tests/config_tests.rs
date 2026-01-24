@@ -2,7 +2,7 @@
 //!
 //! Tests for ConfigManager and Config structures.
 
-use cowork_core::config::{Config, ConfigManager, ProviderConfig, ApprovalConfig, BrowserConfig, GeneralConfig, WebSearchConfig, PromptSystemConfig};
+use cowork_core::config::{Config, ConfigManager, ProviderConfig, ApprovalConfig, GeneralConfig, WebSearchConfig, PromptSystemConfig};
 use tempfile::TempDir;
 use std::fs;
 use std::path::PathBuf;
@@ -37,10 +37,6 @@ mod config_structure_tests {
         assert!(config.approval.show_dialogs);
         assert!(config.approval.timeout_secs > 0);
 
-        // Check browser defaults
-        assert!(config.browser.headless);
-        assert!(config.browser.timeout_secs > 0);
-
         // Check general defaults
         assert_eq!(config.general.log_level, "info");
         assert!(!config.general.telemetry);
@@ -62,15 +58,6 @@ mod config_structure_tests {
         assert_eq!(approval.auto_approve_level, "low");
         assert!(approval.show_dialogs);
         assert_eq!(approval.timeout_secs, 300); // 5 minutes
-    }
-
-    #[test]
-    fn test_browser_config_defaults() {
-        let browser = BrowserConfig::default();
-
-        assert!(browser.headless);
-        assert_eq!(browser.timeout_secs, 30);
-        assert!(browser.screenshot_dir.is_none());
     }
 
     #[test]
@@ -141,10 +128,6 @@ auto_approve_level = "medium"
 show_dialogs = false
 timeout_secs = 600
 
-[browser]
-headless = false
-timeout_secs = 60
-
 [general]
 log_level = "debug"
 telemetry = true
@@ -164,7 +147,6 @@ telemetry = true
 
         assert_eq!(config.approval.auto_approve_level, "medium");
         assert!(!config.approval.show_dialogs);
-        assert!(!config.browser.headless);
         assert_eq!(config.general.log_level, "debug");
         assert!(config.general.telemetry);
     }
@@ -221,11 +203,6 @@ timeout_secs = 600
                 show_dialogs: true,
                 timeout_secs: 120,
             },
-            browser: BrowserConfig {
-                headless: true,
-                timeout_secs: 45,
-                screenshot_dir: Some(PathBuf::from("/tmp/screenshots")),
-            },
             general: GeneralConfig {
                 workspace_dir: Some(PathBuf::from("/home/user/projects")),
                 log_level: "warn".to_string(),
@@ -247,7 +224,6 @@ timeout_secs = 600
         let original_anthropic = original.get_provider("anthropic").unwrap();
         assert_eq!(restored_anthropic.model, original_anthropic.model);
         assert_eq!(restored.approval.timeout_secs, original.approval.timeout_secs);
-        assert_eq!(restored.browser.headless, original.browser.headless);
         assert_eq!(restored.general.log_level, original.general.log_level);
     }
 
@@ -318,10 +294,6 @@ default_temperature = 0.7
 auto_approve_level = "low"
 show_dialogs = true
 timeout_secs = 300
-
-[browser]
-headless = true
-timeout_secs = 30
 
 [general]
 log_level = "info"

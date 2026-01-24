@@ -1,25 +1,18 @@
 //! Filesystem tools for file operations
 
-mod delete;
+mod document;
 mod edit;
 mod glob;
 mod grep;
-mod list;
-mod move_file;
 mod path_utils;
 mod read;
-mod search;
 mod write;
 
 // Re-export tools
-pub use delete::DeleteFile;
 pub use edit::EditFile;
 pub use glob::GlobFiles;
 pub use grep::GrepFiles;
-pub use list::ListDirectory;
-pub use move_file::MoveFile;
 pub use read::ReadFile;
-pub use search::SearchFiles;
 pub use write::WriteFile;
 
 // Re-export path utilities for use by other modules

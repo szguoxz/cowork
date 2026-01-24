@@ -1,122 +1,63 @@
-//! Office document reading tool
+//! Document extraction helper for the Read tool
+//!
+//! Supports extracting text from PDF, Word, Excel, and PowerPoint files.
+
+use std::io::{BufReader, Read};
+use std::path::Path;
 
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
-use serde_json::{json, Value};
-use std::io::{BufReader, Read};
-use std::path::PathBuf;
+use serde_json::json;
 
-use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::filesystem::{path_to_display, validate_path};
-use crate::tools::{BoxFuture, Tool, ToolOutput};
+use crate::tools::ToolOutput;
 
-use super::DocumentFormat;
+use super::path_to_display;
 
 /// Maximum output size in bytes to prevent DoS from very large documents
 const MAX_OUTPUT_SIZE: usize = 512 * 1024; // 512 KB
 
-/// Tool for reading Office documents (Word, Excel, PowerPoint)
-pub struct ReadOfficeDoc {
-    workspace: PathBuf,
+/// Check if a file extension corresponds to a supported document format.
+pub fn is_document(ext: &str) -> bool {
+    matches!(
+        ext.to_lowercase().as_str(),
+        "pdf" | "doc" | "docx" | "xls" | "xlsx" | "pptx"
+    )
 }
 
-impl ReadOfficeDoc {
-    pub fn new(workspace: PathBuf) -> Self {
-        Self { workspace }
-    }
+/// Extract text content from a document file, dispatching to the appropriate extractor.
+pub fn extract_document(path: &Path) -> Result<ToolOutput, ToolError> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let (content, format) = match ext.as_str() {
+        "pdf" => (extract_pdf_text(path)?, "pdf"),
+        "doc" | "docx" => (extract_word_text(path)?, "word"),
+        "xls" | "xlsx" => (extract_excel_text(path)?, "excel"),
+        "pptx" => (extract_pptx_text(path)?, "powerpoint"),
+        _ => {
+            return Err(ToolError::InvalidParams(format!(
+                "Unsupported document format: .{}",
+                ext
+            )));
+        }
+    };
+
+    Ok(ToolOutput::success(json!({
+        "path": path_to_display(path),
+        "format": format,
+        "content": content,
+    })))
 }
 
-impl Tool for ReadOfficeDoc {
-    fn name(&self) -> &str {
-        "ReadOfficeDoc"
-    }
+/// Extract text from a PDF file using pdf-extract
+fn extract_pdf_text(path: &Path) -> Result<String, ToolError> {
+    let mut text = pdf_extract::extract_text(path)
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to extract PDF text: {}", e)))?;
 
-    fn description(&self) -> &str {
-        "Extract content from Office documents (Word, Excel, PowerPoint)."
-    }
-
-    fn parameters_schema(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the Office document"
-                },
-                "extract_images": {
-                    "type": "boolean",
-                    "description": "Also extract embedded images (not yet supported)",
-                    "default": false
-                }
-            },
-            "required": ["path"]
-        })
-    }
-
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
-        Box::pin(async move {
-            let path_str = params["path"]
-                .as_str()
-                .ok_or_else(|| ToolError::InvalidParams("path is required".into()))?;
-
-            let _extract_images = params["extract_images"].as_bool().unwrap_or(false);
-
-            let path = self.workspace.join(path_str);
-            let validated = validate_path(&path, &self.workspace)?;
-
-            // Check file exists
-            if !validated.exists() {
-                return Err(ToolError::ExecutionFailed(format!(
-                    "File not found: {}",
-                    validated.display()
-                )));
-            }
-
-            let ext = validated
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-
-            let format = DocumentFormat::from_extension(&ext);
-
-            let content = match format {
-                DocumentFormat::Word => extract_word_text(&validated)?,
-                DocumentFormat::Excel => extract_excel_text(&validated)?,
-                DocumentFormat::PowerPoint => extract_pptx_text(&validated)?,
-                _ => {
-                    return Err(ToolError::InvalidParams(format!(
-                        "Unsupported format: .{} (expected .docx, .xlsx, or .pptx)",
-                        ext
-                    )));
-                }
-            };
-
-            Ok(ToolOutput::success(json!({
-                "path": path_to_display(&validated),
-                "format": format!("{:?}", format),
-                "content": content
-            })))
-        })
-    }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::None
-    }
-}
-
-/// Extract text from a Word document (.docx)
-fn extract_word_text(path: &std::path::Path) -> Result<String, ToolError> {
-    use dotext::*;
-
-    let mut text = String::new();
-    Docx::open(path)
-        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to parse DOCX: {}", e)))?
-        .read_to_string(&mut text)
-        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read DOCX content: {}", e)))?;
-
-    // Truncate if too large
     if text.len() > MAX_OUTPUT_SIZE {
         text.truncate(MAX_OUTPUT_SIZE);
         text.push_str("\n\n... [Content truncated due to size limit]");
@@ -125,8 +66,26 @@ fn extract_word_text(path: &std::path::Path) -> Result<String, ToolError> {
     Ok(text)
 }
 
-/// Extract text from an Excel spreadsheet (.xlsx, .xls)
-fn extract_excel_text(path: &std::path::Path) -> Result<String, ToolError> {
+/// Extract text from a Word document (.docx) using dotext
+fn extract_word_text(path: &Path) -> Result<String, ToolError> {
+    use dotext::*;
+
+    let mut text = String::new();
+    Docx::open(path)
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to parse DOCX: {}", e)))?
+        .read_to_string(&mut text)
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read DOCX content: {}", e)))?;
+
+    if text.len() > MAX_OUTPUT_SIZE {
+        text.truncate(MAX_OUTPUT_SIZE);
+        text.push_str("\n\n... [Content truncated due to size limit]");
+    }
+
+    Ok(text)
+}
+
+/// Extract text from an Excel spreadsheet (.xlsx, .xls) using calamine
+fn extract_excel_text(path: &Path) -> Result<String, ToolError> {
     use calamine::{open_workbook_auto, Data, Reader};
 
     let mut workbook = open_workbook_auto(path)
@@ -141,7 +100,6 @@ fn extract_excel_text(path: &std::path::Path) -> Result<String, ToolError> {
             output.push_str(&format!("=== Sheet: {} ===\n", sheet_name));
 
             for row in range.rows() {
-                // Check size limit before processing more rows
                 if output.len() >= MAX_OUTPUT_SIZE {
                     truncated = true;
                     break 'outer;
@@ -162,7 +120,6 @@ fn extract_excel_text(path: &std::path::Path) -> Result<String, ToolError> {
                     })
                     .collect();
 
-                // Skip empty rows
                 if cells.iter().all(|c| c.is_empty()) {
                     continue;
                 }
@@ -182,7 +139,7 @@ fn extract_excel_text(path: &std::path::Path) -> Result<String, ToolError> {
 }
 
 /// Extract text from a PowerPoint presentation (.pptx)
-fn extract_pptx_text(path: &std::path::Path) -> Result<String, ToolError> {
+fn extract_pptx_text(path: &Path) -> Result<String, ToolError> {
     let file = std::fs::File::open(path)
         .map_err(|e| ToolError::ExecutionFailed(format!("Failed to open file: {}", e)))?;
 
@@ -194,9 +151,7 @@ fn extract_pptx_text(path: &std::path::Path) -> Result<String, ToolError> {
     let mut slide_num = 1;
     let mut truncated = false;
 
-    // PPTX files store slides in ppt/slides/slide1.xml, slide2.xml, etc.
     loop {
-        // Check size limit before processing more slides
         if output.len() >= MAX_OUTPUT_SIZE {
             truncated = true;
             break;
@@ -207,9 +162,9 @@ fn extract_pptx_text(path: &std::path::Path) -> Result<String, ToolError> {
         match archive.by_name(&slide_path) {
             Ok(mut slide_file) => {
                 let mut xml_content = String::new();
-                slide_file
-                    .read_to_string(&mut xml_content)
-                    .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read slide: {}", e)))?;
+                slide_file.read_to_string(&mut xml_content).map_err(|e| {
+                    ToolError::ExecutionFailed(format!("Failed to read slide: {}", e))
+                })?;
 
                 let slide_text = extract_text_from_pptx_xml(&xml_content)?;
                 if !slide_text.trim().is_empty() {
@@ -249,15 +204,12 @@ fn extract_text_from_pptx_xml(xml: &str) -> Result<String, ToolError> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                // Text content in PPTX is in <a:t> elements
                 if e.name().as_ref() == b"a:t" {
                     in_text_element = true;
                 }
             }
             Ok(Event::Text(e)) => {
                 if in_text_element {
-                    // quick-xml 0.38+ replaced unescape() with decode()
-                    // Entity references are now reported as Event::GeneralRef
                     let text = String::from_utf8_lossy(e.as_ref()).to_string();
                     if !text.trim().is_empty() {
                         output.push_str(&text);
@@ -269,7 +221,6 @@ fn extract_text_from_pptx_xml(xml: &str) -> Result<String, ToolError> {
                 if e.name().as_ref() == b"a:t" {
                     in_text_element = false;
                 }
-                // Add newline after paragraphs
                 if e.name().as_ref() == b"a:p" {
                     output.push('\n');
                 }
@@ -286,30 +237,4 @@ fn extract_text_from_pptx_xml(xml: &str) -> Result<String, ToolError> {
     }
 
     Ok(output)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_document_format_detection() {
-        assert_eq!(DocumentFormat::from_extension("docx"), DocumentFormat::Word);
-        assert_eq!(DocumentFormat::from_extension("doc"), DocumentFormat::Word);
-        assert_eq!(DocumentFormat::from_extension("xlsx"), DocumentFormat::Excel);
-        assert_eq!(DocumentFormat::from_extension("xls"), DocumentFormat::Excel);
-        assert_eq!(
-            DocumentFormat::from_extension("pptx"),
-            DocumentFormat::PowerPoint
-        );
-        assert_eq!(
-            DocumentFormat::from_extension("ppt"),
-            DocumentFormat::PowerPoint
-        );
-        assert_eq!(DocumentFormat::from_extension("txt"), DocumentFormat::Text);
-        assert_eq!(
-            DocumentFormat::from_extension("unknown"),
-            DocumentFormat::Unknown
-        );
-    }
 }

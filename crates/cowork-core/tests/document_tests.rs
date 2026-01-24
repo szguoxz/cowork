@@ -1,9 +1,9 @@
-//! Document tool tests
+//! Document reading tests
 //!
-//! Tests for ReadPdf and ReadOfficeDoc tools.
+//! Tests for reading PDF and Office documents through the Read tool.
 //! Note: Full integration tests require actual PDF/Office files.
 
-use cowork_core::tools::document::{ReadOfficeDoc, ReadPdf};
+use cowork_core::tools::filesystem::ReadFile;
 use cowork_core::tools::Tool;
 use serde_json::json;
 use tempfile::TempDir;
@@ -17,75 +17,35 @@ mod read_pdf_tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_pdf_tool_exists() {
-        let dir = setup_test_dir();
-        let tool = ReadPdf::new(dir.path().to_path_buf());
-
-        // Verify tool name and description
-        assert_eq!(tool.name(), "ReadPdf");
-        assert!(tool.description().contains("PDF"));
-    }
-
-    #[tokio::test]
-    async fn test_pdf_missing_path_param() {
-        let dir = setup_test_dir();
-        let tool = ReadPdf::new(dir.path().to_path_buf());
-
-        let result = tool
-            .execute(json!({
-                "pages": "all"
-            }))
-            .await;
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("path is required"));
-    }
-
-    #[tokio::test]
     async fn test_pdf_file_not_found() {
         let dir = setup_test_dir();
-        let tool = ReadPdf::new(dir.path().to_path_buf());
+        let tool = ReadFile::new(dir.path().to_path_buf());
 
         let result = tool
             .execute(json!({
-                "path": "nonexistent.pdf"
+                "file_path": "nonexistent.pdf"
             }))
             .await;
 
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("not found"));
     }
 
     #[tokio::test]
-    async fn test_pdf_wrong_extension() {
+    async fn test_pdf_invalid_content() {
         let dir = setup_test_dir();
-        let tool = ReadPdf::new(dir.path().to_path_buf());
+        let tool = ReadFile::new(dir.path().to_path_buf());
 
-        // Create a .txt file
-        std::fs::write(dir.path().join("test.txt"), "Hello world").unwrap();
+        // Create a file with .pdf extension but invalid content
+        std::fs::write(dir.path().join("fake.pdf"), "not a real pdf").unwrap();
 
         let result = tool
             .execute(json!({
-                "path": "test.txt"
+                "file_path": "fake.pdf"
             }))
             .await;
 
+        // Should fail because the content is not a valid PDF
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("Expected PDF"));
-    }
-
-    #[tokio::test]
-    async fn test_pdf_parameters_schema() {
-        let dir = setup_test_dir();
-        let tool = ReadPdf::new(dir.path().to_path_buf());
-
-        let schema = tool.parameters_schema();
-        assert!(schema.get("properties").is_some());
-        assert!(schema["properties"].get("path").is_some());
-        assert!(schema["properties"].get("pages").is_some());
     }
 }
 
@@ -93,145 +53,90 @@ mod read_office_tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_office_tool_exists() {
+    async fn test_docx_file_not_found() {
         let dir = setup_test_dir();
-        let tool = ReadOfficeDoc::new(dir.path().to_path_buf());
-
-        // Verify tool name and description
-        assert_eq!(tool.name(), "ReadOfficeDoc");
-        assert!(tool.description().contains("Office"));
-    }
-
-    #[tokio::test]
-    async fn test_office_missing_path_param() {
-        let dir = setup_test_dir();
-        let tool = ReadOfficeDoc::new(dir.path().to_path_buf());
-
-        let result = tool.execute(json!({})).await;
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("path is required"));
-    }
-
-    #[tokio::test]
-    async fn test_office_file_not_found() {
-        let dir = setup_test_dir();
-        let tool = ReadOfficeDoc::new(dir.path().to_path_buf());
+        let tool = ReadFile::new(dir.path().to_path_buf());
 
         let result = tool
             .execute(json!({
-                "path": "nonexistent.docx"
+                "file_path": "nonexistent.docx"
             }))
             .await;
 
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("not found"));
     }
 
     #[tokio::test]
-    async fn test_office_unsupported_format() {
+    async fn test_xlsx_file_not_found() {
         let dir = setup_test_dir();
-        let tool = ReadOfficeDoc::new(dir.path().to_path_buf());
-
-        // Create a .txt file (unsupported)
-        std::fs::write(dir.path().join("test.txt"), "Hello world").unwrap();
+        let tool = ReadFile::new(dir.path().to_path_buf());
 
         let result = tool
             .execute(json!({
-                "path": "test.txt"
+                "file_path": "nonexistent.xlsx"
             }))
             .await;
 
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("Unsupported format"));
     }
 
     #[tokio::test]
-    async fn test_office_parameters_schema() {
+    async fn test_pptx_file_not_found() {
         let dir = setup_test_dir();
-        let tool = ReadOfficeDoc::new(dir.path().to_path_buf());
+        let tool = ReadFile::new(dir.path().to_path_buf());
 
-        let schema = tool.parameters_schema();
-        assert!(schema.get("properties").is_some());
-        assert!(schema["properties"].get("path").is_some());
-        assert!(schema["properties"].get("extract_images").is_some());
-    }
-}
+        let result = tool
+            .execute(json!({
+                "file_path": "nonexistent.pptx"
+            }))
+            .await;
 
-mod document_format_tests {
-    use cowork_core::tools::document::DocumentFormat;
-
-    #[test]
-    fn test_pdf_format() {
-        assert_eq!(DocumentFormat::from_extension("pdf"), DocumentFormat::Pdf);
-        assert_eq!(DocumentFormat::from_extension("PDF"), DocumentFormat::Pdf);
+        assert!(result.is_err());
     }
 
-    #[test]
-    fn test_word_format() {
-        assert_eq!(DocumentFormat::from_extension("doc"), DocumentFormat::Word);
-        assert_eq!(DocumentFormat::from_extension("docx"), DocumentFormat::Word);
-        assert_eq!(DocumentFormat::from_extension("DOC"), DocumentFormat::Word);
-        assert_eq!(DocumentFormat::from_extension("DOCX"), DocumentFormat::Word);
+    #[tokio::test]
+    async fn test_regular_text_file_still_works() {
+        let dir = setup_test_dir();
+        let tool = ReadFile::new(dir.path().to_path_buf());
+
+        std::fs::write(dir.path().join("test.txt"), "Hello world\nLine 2").unwrap();
+
+        let result = tool
+            .execute(json!({
+                "file_path": "test.txt"
+            }))
+            .await;
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.success);
+        let content = output.content["content"].as_str().unwrap();
+        assert!(content.contains("Hello world"));
+        assert!(content.contains("Line 2"));
     }
 
-    #[test]
-    fn test_excel_format() {
-        assert_eq!(DocumentFormat::from_extension("xls"), DocumentFormat::Excel);
-        assert_eq!(
-            DocumentFormat::from_extension("xlsx"),
-            DocumentFormat::Excel
-        );
-        assert_eq!(DocumentFormat::from_extension("XLS"), DocumentFormat::Excel);
-        assert_eq!(
-            DocumentFormat::from_extension("XLSX"),
-            DocumentFormat::Excel
-        );
-    }
+    #[tokio::test]
+    async fn test_document_extension_dispatches_to_extractor() {
+        let dir = setup_test_dir();
+        let tool = ReadFile::new(dir.path().to_path_buf());
 
-    #[test]
-    fn test_powerpoint_format() {
-        assert_eq!(
-            DocumentFormat::from_extension("ppt"),
-            DocumentFormat::PowerPoint
-        );
-        assert_eq!(
-            DocumentFormat::from_extension("pptx"),
-            DocumentFormat::PowerPoint
-        );
-        assert_eq!(
-            DocumentFormat::from_extension("PPT"),
-            DocumentFormat::PowerPoint
-        );
-        assert_eq!(
-            DocumentFormat::from_extension("PPTX"),
-            DocumentFormat::PowerPoint
-        );
-    }
+        // Create a file with .docx extension but invalid content
+        std::fs::write(dir.path().join("fake.docx"), "not a real docx").unwrap();
 
-    #[test]
-    fn test_text_format() {
-        assert_eq!(DocumentFormat::from_extension("txt"), DocumentFormat::Text);
-        assert_eq!(
-            DocumentFormat::from_extension("md"),
-            DocumentFormat::Markdown
-        );
-        assert_eq!(DocumentFormat::from_extension("html"), DocumentFormat::Html);
-        assert_eq!(DocumentFormat::from_extension("htm"), DocumentFormat::Html);
-    }
+        let result = tool
+            .execute(json!({
+                "file_path": "fake.docx"
+            }))
+            .await;
 
-    #[test]
-    fn test_unknown_format() {
-        assert_eq!(
-            DocumentFormat::from_extension("xyz"),
-            DocumentFormat::Unknown
-        );
-        assert_eq!(
-            DocumentFormat::from_extension(""),
-            DocumentFormat::Unknown
+        // Should fail with a document extraction error (not a text file error)
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        // The error should be about parsing the DOCX, not about invalid UTF-8
+        assert!(
+            err.contains("DOCX") || err.contains("Failed"),
+            "Unexpected error: {}",
+            err
         );
     }
 }

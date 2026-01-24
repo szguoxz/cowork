@@ -6,8 +6,6 @@
 //! - An execute method
 //! - An approval level
 
-pub mod browser;
-pub mod document;
 pub mod filesystem;
 pub mod interaction;
 pub mod lsp;

@@ -29,9 +29,6 @@ glob = "0.3"
 regex = "1"
 notify = "8"
 
-# Browser automation
-chromiumoxide = { version = "0.8", features = ["tokio-runtime"], optional = true }
-
 # Error handling
 thiserror.workspace = true
 anyhow.workspace = true
@@ -68,8 +65,7 @@ cowork-mcp = { workspace = true, optional = true }
 cowork-sandbox = { workspace = true, optional = true }
 
 [features]
-default = ["browser", "mcp", "sandbox", "tiktoken", "lsp"]
-browser = ["dep:chromiumoxide"]
+default = ["mcp", "sandbox", "tiktoken", "lsp"]
 mcp = ["dep:cowork-mcp"]
 sandbox = ["dep:cowork-sandbox"]
 tiktoken = ["dep:tiktoken-rs"]

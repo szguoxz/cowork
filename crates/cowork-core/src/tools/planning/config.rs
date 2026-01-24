@@ -138,9 +138,6 @@ fn get_config_value(config: &ConfigManager, key: &str) -> Value {
         ["auto_approve_level"] => json!(config.config().approval.auto_approve_level),
         ["show_dialogs"] => json!(config.config().approval.show_dialogs),
         ["approval_timeout"] => json!(config.config().approval.timeout_secs),
-        // Browser settings
-        ["headless"] => json!(config.config().browser.headless),
-        ["browser_timeout"] => json!(config.config().browser.timeout_secs),
         // General settings
         ["log_level"] => json!(config.config().general.log_level),
         ["telemetry"] => json!(config.config().general.telemetry),
@@ -199,15 +196,6 @@ fn set_config_value(config: &mut ConfigManager, key: &str, value: Value) -> Resu
         ["approval_timeout"] => {
             let timeout = value.as_u64().ok_or("approval_timeout must be a number")?;
             config.config_mut().approval.timeout_secs = timeout;
-        }
-        // Browser settings
-        ["headless"] => {
-            let headless = value.as_bool().ok_or("headless must be a boolean")?;
-            config.config_mut().browser.headless = headless;
-        }
-        ["browser_timeout"] => {
-            let timeout = value.as_u64().ok_or("browser_timeout must be a number")?;
-            config.config_mut().browser.timeout_secs = timeout;
         }
         // General settings
         ["log_level"] => {

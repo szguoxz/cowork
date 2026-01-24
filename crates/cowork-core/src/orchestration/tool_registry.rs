@@ -8,12 +8,7 @@ use std::sync::Arc;
 
 use crate::config::{ModelTiers, WebSearchConfig};
 use crate::provider::ProviderType;
-use crate::tools::browser::BrowserController;
-use crate::tools::document::{ReadOfficeDoc, ReadPdf};
-use crate::tools::filesystem::{
-    DeleteFile, EditFile, GlobFiles, GrepFiles, ListDirectory, MoveFile, ReadFile, SearchFiles,
-    WriteFile,
-};
+use crate::tools::filesystem::{EditFile, GlobFiles, GrepFiles, ReadFile, WriteFile};
 use crate::tools::interaction::AskUserQuestion;
 use crate::tools::lsp::LspTool;
 use crate::tools::notebook::NotebookEdit;
@@ -28,9 +23,9 @@ use crate::skills::SkillRegistry;
 /// Defines which subset of tools a subagent should have access to
 #[derive(Debug, Clone)]
 pub enum ToolScope {
-    /// Bash, Read, Write, ListDirectory
+    /// Bash, Read, Write
     Bash,
-    /// Read-only exploration: Read, Glob, Grep, ListDirectory, SearchFiles, LSP
+    /// Read-only exploration: Read, Glob, Grep, LSP
     Explore,
     /// Explore + TodoWrite
     Plan,
@@ -48,10 +43,8 @@ pub struct ToolRegistryBuilder {
     include_filesystem: bool,
     include_shell: bool,
     include_web: bool,
-    include_browser: bool,
     include_notebook: bool,
     include_lsp: bool,
-    include_document: bool,
     include_task: bool,
     include_planning: bool,
     include_interaction: bool,
@@ -71,10 +64,8 @@ impl ToolRegistryBuilder {
             include_filesystem: true,
             include_shell: true,
             include_web: true,
-            include_browser: true,
             include_notebook: true,
             include_lsp: true,
-            include_document: true,
             include_task: true,
             include_planning: true,
             include_interaction: true,
@@ -131,12 +122,6 @@ impl ToolRegistryBuilder {
         self
     }
 
-    /// Enable/disable browser tools
-    pub fn with_browser(mut self, enabled: bool) -> Self {
-        self.include_browser = enabled;
-        self
-    }
-
     /// Enable/disable notebook tools
     pub fn with_notebook(mut self, enabled: bool) -> Self {
         self.include_notebook = enabled;
@@ -146,12 +131,6 @@ impl ToolRegistryBuilder {
     /// Enable/disable LSP tools
     pub fn with_lsp(mut self, enabled: bool) -> Self {
         self.include_lsp = enabled;
-        self
-    }
-
-    /// Enable/disable document tools
-    pub fn with_document(mut self, enabled: bool) -> Self {
-        self.include_document = enabled;
         self
     }
 
@@ -194,10 +173,6 @@ impl ToolRegistryBuilder {
             registry.register(Arc::new(EditFile::new(self.workspace.clone())));
             registry.register(Arc::new(GlobFiles::new(self.workspace.clone())));
             registry.register(Arc::new(GrepFiles::new(self.workspace.clone())));
-            registry.register(Arc::new(ListDirectory::new(self.workspace.clone())));
-            registry.register(Arc::new(SearchFiles::new(self.workspace.clone())));
-            registry.register(Arc::new(DeleteFile::new(self.workspace.clone())));
-            registry.register(Arc::new(MoveFile::new(self.workspace.clone())));
         }
 
         // Shell tools with shared process registry
@@ -260,20 +235,6 @@ impl ToolRegistryBuilder {
             registry.register(Arc::new(AskUserQuestion::new()));
         }
 
-        // Document tools
-        if self.include_document {
-            registry.register(Arc::new(ReadPdf::new(self.workspace.clone())));
-            registry.register(Arc::new(ReadOfficeDoc::new(self.workspace.clone())));
-        }
-
-        // Browser tools (headless by default)
-        if self.include_browser {
-            let browser_controller = BrowserController::new(true, self.workspace.clone());
-            for tool in browser_controller.create_tools() {
-                registry.register(tool);
-            }
-        }
-
         // Planning tools with shared state
         if self.include_planning {
             let plan_mode_state =
@@ -324,23 +285,18 @@ impl ToolRegistryBuilder {
                     ExecuteCommand::new(workspace.clone()).with_registry(shell_registry),
                 ));
                 registry.register(Arc::new(ReadFile::new(workspace.clone())));
-                registry.register(Arc::new(WriteFile::new(workspace.clone())));
-                registry.register(Arc::new(ListDirectory::new(workspace)));
+                registry.register(Arc::new(WriteFile::new(workspace)));
             }
             ToolScope::Explore => {
                 registry.register(Arc::new(ReadFile::new(workspace.clone())));
                 registry.register(Arc::new(GlobFiles::new(workspace.clone())));
                 registry.register(Arc::new(GrepFiles::new(workspace.clone())));
-                registry.register(Arc::new(ListDirectory::new(workspace.clone())));
-                registry.register(Arc::new(SearchFiles::new(workspace.clone())));
                 registry.register(Arc::new(LspTool::new(workspace)));
             }
             ToolScope::Plan => {
                 registry.register(Arc::new(ReadFile::new(workspace.clone())));
                 registry.register(Arc::new(GlobFiles::new(workspace.clone())));
                 registry.register(Arc::new(GrepFiles::new(workspace.clone())));
-                registry.register(Arc::new(ListDirectory::new(workspace.clone())));
-                registry.register(Arc::new(SearchFiles::new(workspace.clone())));
                 registry.register(Arc::new(LspTool::new(workspace)));
                 registry.register(Arc::new(TodoWrite::new()));
             }
@@ -350,8 +306,6 @@ impl ToolRegistryBuilder {
                 registry.register(Arc::new(EditFile::new(workspace.clone())));
                 registry.register(Arc::new(GlobFiles::new(workspace.clone())));
                 registry.register(Arc::new(GrepFiles::new(workspace.clone())));
-                registry.register(Arc::new(ListDirectory::new(workspace.clone())));
-                registry.register(Arc::new(SearchFiles::new(workspace.clone())));
                 let shell_registry = Arc::new(ShellProcessRegistry::new());
                 registry.register(Arc::new(
                     ExecuteCommand::new(workspace.clone()).with_registry(shell_registry),

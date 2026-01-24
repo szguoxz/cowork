@@ -540,7 +540,6 @@ mod tests {
         assert!(bash_registry.get("Bash").is_some());
         assert!(bash_registry.get("Read").is_some());
         assert!(bash_registry.get("Write").is_some());
-        assert!(bash_registry.get("ListDirectory").is_some());
         assert!(bash_registry.get("Glob").is_none());
 
         // Explore scope (read-only)

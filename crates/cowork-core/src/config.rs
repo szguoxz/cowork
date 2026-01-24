@@ -41,9 +41,6 @@ pub mod defaults {
     /// Maximum context size in characters before truncation
     pub const MAX_CONTEXT_SIZE: usize = 100_000;
 
-    /// Default browser timeout in seconds
-    pub const BROWSER_TIMEOUT_SECS: u64 = 30;
-
     /// Default number of search results to return
     pub const DEFAULT_SEARCH_RESULTS: usize = 50;
 }
@@ -164,9 +161,6 @@ pub struct Config {
     /// Approval settings
     #[serde(default)]
     pub approval: ApprovalConfig,
-    /// Browser automation settings
-    #[serde(default)]
-    pub browser: BrowserConfig,
     /// General application settings
     #[serde(default)]
     pub general: GeneralConfig,
@@ -198,7 +192,6 @@ impl Default for Config {
             provider: None,
             mcp_servers: HashMap::new(),
             approval: ApprovalConfig::default(),
-            browser: BrowserConfig::default(),
             general: GeneralConfig::default(),
             web_search: WebSearchConfig::default(),
             prompt: PromptSystemConfig::default(),
@@ -678,27 +671,6 @@ impl Default for ApprovalConfig {
             auto_approve_level: "low".to_string(),
             show_dialogs: true,
             timeout_secs: 300,
-        }
-    }
-}
-
-/// Browser automation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrowserConfig {
-    /// Run browser in headless mode
-    pub headless: bool,
-    /// Default page load timeout (seconds)
-    pub timeout_secs: u64,
-    /// Screenshot output directory
-    pub screenshot_dir: Option<PathBuf>,
-}
-
-impl Default for BrowserConfig {
-    fn default() -> Self {
-        Self {
-            headless: true,
-            timeout_secs: 30,
-            screenshot_dir: None,
         }
     }
 }
