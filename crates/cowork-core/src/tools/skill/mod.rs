@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::prompt::builtin::claude_code::tools::SKILL as SKILL_DESCRIPTION;
 use crate::prompt::substitution::substitute_commands;
@@ -103,5 +104,9 @@ impl Tool for SkillTool {
 
             Ok(output)
         })
+    }
+
+    fn approval_level(&self) -> ApprovalLevel {
+        ApprovalLevel::None
     }
 }

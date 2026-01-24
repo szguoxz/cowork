@@ -151,8 +151,7 @@ impl Tool for AskUserQuestion {
                             },
                             "header": {
                                 "type": "string",
-                                "description": "Short label (max 12 chars) displayed as a chip/tag",
-                                "maxLength": 12
+                                "description": "Very short label displayed as a chip/tag (max 12 chars). Examples: \"Auth method\", \"Library\", \"Approach\"."
                             },
                             "options": {
                                 "type": "array",
@@ -171,7 +170,7 @@ impl Tool for AskUserQuestion {
                                             "description": "Explanation of what this option means"
                                         }
                                     },
-                                    "required": ["label", "description"]
+                                    "required": ["label"]
                                 }
                             },
                             "multiSelect": {
@@ -235,12 +234,6 @@ impl Tool for AskUserQuestion {
             if q.options.len() < 2 || q.options.len() > 4 {
                 return Err(ToolError::InvalidParams(format!(
                     "Question {} must have 2-4 options",
-                    i + 1
-                )));
-            }
-            if q.header.len() > 12 {
-                return Err(ToolError::InvalidParams(format!(
-                    "Question {} header must be max 12 chars",
                     i + 1
                 )));
             }
@@ -398,12 +391,6 @@ pub fn validate_questions(questions: &[Question]) -> Result<(), String> {
         }
         if q.options.len() > 4 {
             return Err(format!("Question {} must have at most 4 options", i + 1));
-        }
-        if q.header.len() > 12 {
-            return Err(format!(
-                "Question {} header must be at most 12 characters",
-                i + 1
-            ));
         }
     }
 

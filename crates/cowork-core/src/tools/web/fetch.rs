@@ -38,21 +38,12 @@ impl Tool for WebFetch {
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "The URL to fetch content from. Must be a fully-formed valid URL."
+                    "format": "uri",
+                    "description": "The URL to fetch content from"
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "The prompt to run on the fetched content. Describes what information to extract."
-                },
-                "extract_text": {
-                    "type": "boolean",
-                    "description": "Extract main text content only (strip HTML tags). Default true.",
-                    "default": true
-                },
-                "max_length": {
-                    "type": "integer",
-                    "description": "Maximum content length to return. Default 50000 characters.",
-                    "default": 50000
+                    "description": "The prompt to run on the fetched content"
                 }
             },
             "required": ["url", "prompt"]
@@ -69,8 +60,8 @@ impl Tool for WebFetch {
             .as_str()
             .ok_or_else(|| ToolError::InvalidParams("prompt is required".into()))?;
 
-        let extract_text = params["extract_text"].as_bool().unwrap_or(true);
-        let max_length = params["max_length"].as_u64().unwrap_or(50000) as usize;
+        let extract_text = true;
+        let max_length: usize = 50000;
 
         // Validate URL
         let parsed_url = url::Url::parse(url)
@@ -149,7 +140,7 @@ impl Tool for WebFetch {
     }
 
     fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::Low
+        ApprovalLevel::None
     }
 }
 

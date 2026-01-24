@@ -75,11 +75,6 @@ impl std::str::FromStr for ModelTier {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            // Provider-agnostic names
-            "fast" => Ok(ModelTier::Fast),
-            "balanced" => Ok(ModelTier::Balanced),
-            "powerful" => Ok(ModelTier::Powerful),
-            // Legacy Anthropic-style aliases for backwards compatibility
             "haiku" => Ok(ModelTier::Fast),
             "sonnet" => Ok(ModelTier::Balanced),
             "opus" => Ok(ModelTier::Powerful),
@@ -247,8 +242,8 @@ impl Tool for TaskTool {
                 },
                 "model": {
                     "type": "string",
-                    "description": "Model tier: fast (quick tasks), balanced (default), powerful (complex reasoning). Also accepts: haiku, sonnet, opus as aliases.",
-                    "enum": ["fast", "balanced", "powerful", "haiku", "sonnet", "opus"]
+                    "description": "Optional model to use for this agent. If not specified, inherits from parent.",
+                    "enum": ["sonnet", "opus", "haiku"]
                 },
                 "resume": {
                     "type": "string",
@@ -261,8 +256,8 @@ impl Tool for TaskTool {
                 },
                 "max_turns": {
                     "type": "integer",
-                    "description": "Maximum number of agentic turns before stopping",
-                    "default": 50
+                    "description": "Maximum number of agentic turns (API round-trips) before stopping.",
+                    "exclusiveMinimum": 0
                 }
             },
             "required": ["description", "prompt", "subagent_type"]
@@ -395,7 +390,7 @@ impl Tool for TaskTool {
     }
 
     fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::Low
+        ApprovalLevel::None
     }
 }
 
@@ -441,11 +436,13 @@ impl Tool for TaskOutputTool {
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Max wait time in milliseconds",
-                    "default": 30000
+                    "description": "Max wait time in ms",
+                    "default": 30000,
+                    "minimum": 0,
+                    "maximum": 600000
                 }
             },
-            "required": ["task_id"]
+            "required": ["task_id", "block", "timeout"]
         })
     }
 

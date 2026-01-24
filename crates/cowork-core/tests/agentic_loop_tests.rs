@@ -632,24 +632,6 @@ mod question_parsing_tests {
     }
 
     #[test]
-    fn test_parse_questions_header_too_long() {
-        let args = json!({
-            "questions": [{
-                "question": "Q1",
-                "header": "VeryLongHeader123", // > 12 chars
-                "multiSelect": false,
-                "options": [
-                    { "label": "A", "description": "D" },
-                    { "label": "B", "description": "D" }
-                ]
-            }]
-        });
-        let result = parse_questions(&args);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("12 characters"));
-    }
-
-    #[test]
     fn test_parse_questions_lenient() {
         // Missing some fields, but lenient parser should handle it
         let args = json!({

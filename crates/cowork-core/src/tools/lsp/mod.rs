@@ -145,10 +145,6 @@ impl Tool for LspTool {
                 "character": {
                     "type": "integer",
                     "description": "The character offset (1-based)"
-                },
-                "query": {
-                    "type": "string",
-                    "description": "Search query for workspaceSymbol operation"
                 }
             },
             "required": ["operation", "filePath", "line", "character"]

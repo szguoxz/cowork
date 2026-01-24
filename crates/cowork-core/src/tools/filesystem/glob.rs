@@ -40,10 +40,6 @@ impl Tool for GlobFiles {
                 "path": {
                     "type": "string",
                     "description": "The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided."
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of files to return (default: 100). Use a smaller limit for large directories to avoid context overflow."
                 }
             },
             "required": ["pattern"]
@@ -62,7 +58,7 @@ impl Tool for GlobFiles {
                 self.workspace.clone()
             };
 
-            let limit = params["limit"].as_u64().unwrap_or(100) as usize;
+            let limit = 100;
 
             // Construct full glob pattern with forward slashes (required by glob crate)
             let full_pattern = path_to_glob_pattern(&base_path.join(pattern));

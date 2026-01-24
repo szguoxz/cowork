@@ -80,6 +80,7 @@ impl Tool for TodoWrite {
                         "properties": {
                             "content": {
                                 "type": "string",
+                                "minLength": 1,
                                 "description": "The imperative form describing what needs to be done (e.g., 'Run tests', 'Build the project')"
                             },
                             "status": {
@@ -89,6 +90,7 @@ impl Tool for TodoWrite {
                             },
                             "activeForm": {
                                 "type": "string",
+                                "minLength": 1,
                                 "description": "Present continuous form shown during execution (e.g., 'Running tests', 'Building the project')"
                             }
                         },

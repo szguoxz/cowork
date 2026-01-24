@@ -2,6 +2,7 @@
 //!
 //! Used when starting a complex task to enter planning mode for user approval.
 
+use rand::Rng;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -41,20 +42,11 @@ impl Tool for EnterPlanMode {
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
-            "properties": {
-                "task_description": {
-                    "type": "string",
-                    "description": "Brief description of the task being planned"
-                },
-                "plan_file": {
-                    "type": "string",
-                    "description": "Path to write the plan file (optional, defaults to PLAN.md)"
-                }
-            }
+            "properties": {}
         })
     }
 
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, _params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             let mut state = self.state.write().await;
 
@@ -62,21 +54,18 @@ impl Tool for EnterPlanMode {
             if state.active {
                 return Ok(ToolOutput::success(json!({
                     "status": "already_in_plan_mode",
-                    "message": "Already in plan mode. Use exit_plan_mode when ready for approval.",
+                    "message": "Already in plan mode. Use ExitPlanMode when ready for approval.",
                     "plan_file": state.plan_file
                 })));
             }
 
-            let task_description = params
-                .get("task_description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Implementation task");
+            // Generate plan file path: ~/.claude/plans/<random-name>.md
+            let plan_file = generate_plan_file_path();
 
-            let plan_file = params
-                .get("plan_file")
-                .and_then(|v| v.as_str())
-                .unwrap_or("PLAN.md")
-                .to_string();
+            // Ensure the directory exists
+            if let Some(parent) = std::path::Path::new(&plan_file).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
 
             // Enter plan mode
             state.active = true;
@@ -86,19 +75,10 @@ impl Tool for EnterPlanMode {
             Ok(ToolOutput::success(json!({
                 "status": "entered_plan_mode",
                 "message": format!(
-                    "Entered plan mode for: {}. \
-                     You can now explore the codebase and design an implementation. \
-                     Write your plan to {} and use exit_plan_mode when ready for approval.",
-                    task_description, plan_file
+                    "You are now in plan mode. Write your plan to {} and use ExitPlanMode when ready for approval.",
+                    plan_file
                 ),
-                "plan_file": plan_file,
-                "guidelines": [
-                    "Explore the codebase using read-only tools (read_file, glob, grep)",
-                    "Understand existing patterns and architecture",
-                    "Design an implementation approach",
-                    "Write your plan to the plan file",
-                    "Use exit_plan_mode with any needed permissions when ready"
-                ]
+                "plan_file": plan_file
             })))
         })
     }
@@ -107,4 +87,36 @@ impl Tool for EnterPlanMode {
         // Entering plan mode requires user consent
         ApprovalLevel::Low
     }
+}
+
+/// Generate a plan file path in ~/.claude/plans/ with a random adjective-noun name
+fn generate_plan_file_path() -> String {
+    const ADJECTIVES: &[&str] = &[
+        "keen", "bold", "calm", "dark", "fair", "glad", "warm", "wise",
+        "bright", "clean", "crisp", "eager", "fresh", "quick", "sharp",
+        "swift", "vivid", "gentle", "steady", "silent",
+    ];
+    const NOUNS: &[&str] = &[
+        "beam", "dawn", "dusk", "fern", "glow", "lake", "leaf", "moon",
+        "pine", "rain", "star", "tide", "wind", "cloud", "flame", "frost",
+        "grove", "ridge", "stone", "brook",
+    ];
+    const MODIFIERS: &[&str] = &[
+        "amber", "azure", "coral", "ivory", "jade", "pearl", "ruby",
+        "silver", "golden", "copper", "crystal", "cobalt", "scarlet",
+        "violet", "indigo", "crimson", "emerald", "obsidian", "sapphire",
+        "stirring",
+    ];
+
+    let mut rng = rand::rng();
+    let adj = ADJECTIVES[rng.random_range(0..ADJECTIVES.len())];
+    let modifier = MODIFIERS[rng.random_range(0..MODIFIERS.len())];
+    let noun = NOUNS[rng.random_range(0..NOUNS.len())];
+
+    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    let plans_dir = home.join(".claude").join("plans");
+    plans_dir
+        .join(format!("{}-{}-{}.md", adj, modifier, noun))
+        .to_string_lossy()
+        .to_string()
 }

@@ -372,7 +372,7 @@ impl Tool for WebSearch {
     }
 
     fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::Low
+        ApprovalLevel::None
     }
 }
 

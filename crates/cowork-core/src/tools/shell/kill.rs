@@ -143,6 +143,6 @@ impl Tool for KillShell {
     }
 
     fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::Low
+        ApprovalLevel::None
     }
 }
