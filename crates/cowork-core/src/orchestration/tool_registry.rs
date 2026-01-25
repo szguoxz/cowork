@@ -227,9 +227,9 @@ impl ToolRegistryBuilder {
         if self.include_web {
             registry.register(Arc::new(WebFetch::new()));
 
-            // Only include WebSearch fallback tool when provider doesn't support native search
-            // Providers with native search (Anthropic, OpenAI, Gemini, etc.) handle search
-            // through their own API capabilities
+            // Only include WebSearch fallback tool when:
+            // 1. Provider doesn't support native search (Anthropic, OpenAI, etc. handle it natively)
+            // 2. AND a fallback search provider is configured (has API key or is SearXNG)
             let provider_has_native = self
                 .provider_type
                 .as_ref()
@@ -237,21 +237,32 @@ impl ToolRegistryBuilder {
                 .unwrap_or(false);
 
             if !provider_has_native {
-                // Create WebSearch with config and provider type for fallback
-                let web_search = if let Some(config) = self.web_search_config.clone() {
-                    let mut ws = WebSearch::with_config(config);
-                    if let Some(ref provider_type) = self.provider_type {
-                        ws = ws.with_provider(provider_type.as_str());
-                    }
-                    ws
-                } else {
-                    let mut ws = WebSearch::new();
-                    if let Some(ref provider_type) = self.provider_type {
-                        ws = ws.with_provider(provider_type.as_str());
-                    }
-                    ws
-                };
-                registry.register(Arc::new(web_search));
+                // Check if fallback search is configured
+                let fallback_configured = self
+                    .web_search_config
+                    .as_ref()
+                    .map(|c| c.is_fallback_configured())
+                    .unwrap_or(false);
+
+                if fallback_configured {
+                    // Create WebSearch with config and provider type for fallback
+                    let web_search = if let Some(config) = self.web_search_config.clone() {
+                        let mut ws = WebSearch::with_config(config);
+                        if let Some(ref provider_type) = self.provider_type {
+                            ws = ws.with_provider(provider_type.as_str());
+                        }
+                        ws
+                    } else {
+                        let mut ws = WebSearch::new();
+                        if let Some(ref provider_type) = self.provider_type {
+                            ws = ws.with_provider(provider_type.as_str());
+                        }
+                        ws
+                    };
+                    registry.register(Arc::new(web_search));
+                }
+                // If fallback not configured, WebSearch tool is simply not available
+                // The AI won't see it in its tool list
             }
         }
 
@@ -340,7 +351,11 @@ impl ToolRegistryBuilder {
                     ExecuteCommand::new(workspace.clone()).with_registry(shell_registry),
                 ));
                 registry.register(Arc::new(WebFetch::new()));
-                registry.register(Arc::new(WebSearch::new()));
+                // Only include WebSearch if fallback is configured
+                if self.web_search_config.as_ref().map(|c| c.is_fallback_configured()).unwrap_or(false) {
+                    let ws = WebSearch::with_config(self.web_search_config.clone().unwrap());
+                    registry.register(Arc::new(ws));
+                }
                 registry.register(Arc::new(LspTool::new(workspace)));
                 registry.register(Arc::new(TodoWrite::new()));
             }
@@ -354,7 +369,11 @@ impl ToolRegistryBuilder {
                     ExecuteCommand::new(workspace.clone()).with_registry(shell_registry),
                 ));
                 registry.register(Arc::new(WebFetch::new()));
-                registry.register(Arc::new(WebSearch::new()));
+                // Only include WebSearch if fallback is configured
+                if self.web_search_config.as_ref().map(|c| c.is_fallback_configured()).unwrap_or(false) {
+                    let ws = WebSearch::with_config(self.web_search_config.clone().unwrap());
+                    registry.register(Arc::new(ws));
+                }
                 registry.register(Arc::new(LspTool::new(workspace)));
                 registry.register(Arc::new(TodoWrite::new()));
             }
@@ -369,7 +388,11 @@ impl ToolRegistryBuilder {
                     ExecuteCommand::new(workspace.clone()).with_registry(shell_registry),
                 ));
                 registry.register(Arc::new(WebFetch::new()));
-                registry.register(Arc::new(WebSearch::new()));
+                // Only include WebSearch if fallback is configured
+                if self.web_search_config.as_ref().map(|c| c.is_fallback_configured()).unwrap_or(false) {
+                    let ws = WebSearch::with_config(self.web_search_config.clone().unwrap());
+                    registry.register(Arc::new(ws));
+                }
                 registry.register(Arc::new(LspTool::new(workspace)));
                 registry.register(Arc::new(TodoWrite::new()));
             }

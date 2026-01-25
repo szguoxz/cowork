@@ -611,8 +611,8 @@ impl ConfigManager {
 
     /// Save the current configuration to disk
     ///
-    /// If the config file doesn't exist yet, includes sample configuration
-    /// for MCP servers, skills, and other advanced features as comments.
+    /// Includes sample configuration for MCP servers, skills, and other
+    /// advanced features as comments (if not already present).
     pub fn save(&self) -> Result<()> {
         // Ensure parent directory exists
         if let Some(parent) = self.config_path.parent() {
@@ -623,14 +623,25 @@ impl ConfigManager {
         let config_toml = toml::to_string_pretty(&self.config)
             .map_err(|e| Error::Config(format!("Failed to serialize config: {}", e)))?;
 
-        // Check if this is a new config file (doesn't exist yet)
-        let is_new_config = !self.config_path.exists();
+        // Check if existing config already has sample comments
+        let has_samples = self.config_path.exists() && {
+            std::fs::read_to_string(&self.config_path)
+                .map(|content| content.contains("# MCP (Model Context Protocol) Servers"))
+                .unwrap_or(false)
+        };
 
-        let content = if is_new_config {
-            // Include sample configuration as comments for new config files
-            format!("{}\n{}", config_toml, Self::sample_config_comments())
+        let content = if has_samples {
+            // Samples already present, just update the config portion
+            // Read existing file, find where samples start, replace config but keep samples
+            let existing = std::fs::read_to_string(&self.config_path).unwrap_or_default();
+            if let Some(sample_start) = existing.find("\n# ─────────────────") {
+                format!("{}{}", config_toml, &existing[sample_start..])
+            } else {
+                format!("{}\n{}", config_toml, Self::sample_config_comments())
+            }
         } else {
-            config_toml
+            // No samples yet, add them
+            format!("{}\n{}", config_toml, Self::sample_config_comments())
         };
 
         std::fs::write(&self.config_path, content)
