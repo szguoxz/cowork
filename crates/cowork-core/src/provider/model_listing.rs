@@ -1,4 +1,4 @@
-//! Model listing from catalog constants
+//! Model listing from catalog
 //!
 //! Returns known models for each provider from the centralized catalog.
 
@@ -22,171 +22,25 @@ pub struct ModelInfo {
     pub recommended: bool,
 }
 
-/// Get context window limit for a model without making API calls
+/// Get context window limit for a model from the catalog.
 ///
-/// This uses hardcoded known values for common models. Returns None if unknown.
+/// Looks up the model in the provider's catalog. If the exact model isn't found,
+/// falls back to the provider's default (balanced tier) context window.
 pub fn get_model_context_limit(provider: ProviderType, model: &str) -> Option<usize> {
-    let model_lower = model.to_lowercase();
+    let provider_id = provider.to_string();
+    let cat_provider = catalog::get(&provider_id)?;
 
-    match provider {
-        ProviderType::Anthropic => get_anthropic_context_window(&model_lower),
-        ProviderType::OpenAI => get_openai_context_window(&model_lower).map(|v| v as usize),
-        ProviderType::DeepSeek => get_deepseek_context_window(&model_lower).map(|v| v as usize),
-        ProviderType::Gemini => get_gemini_context_window(&model_lower),
-        ProviderType::Groq => get_groq_context_window(&model_lower),
-        ProviderType::XAI => Some(131_072), // Grok models
-        ProviderType::Together | ProviderType::Fireworks | ProviderType::Nebius => {
-            get_open_source_context_window(&model_lower)
+    // Check if model matches any of the three tiers
+    for tier in [catalog::ModelTier::Fast, catalog::ModelTier::Balanced, catalog::ModelTier::Powerful] {
+        if let Some(m) = cat_provider.model(tier) {
+            if m.id == model {
+                return Some(m.context);
+            }
         }
-        ProviderType::Ollama => get_ollama_context_window(&model_lower),
-        _ => None,
-    }
-}
-
-fn get_anthropic_context_window(model: &str) -> Option<usize> {
-    // All current Claude models have 200K context
-    if model.contains("claude") {
-        // Claude 2.0/instant had 100K
-        if model.contains("2.0") || model.contains("instant") {
-            return Some(100_000);
-        }
-        return Some(200_000);
-    }
-    None
-}
-
-fn get_openai_context_window(model_id: &str) -> Option<u32> {
-    let id = model_id.to_lowercase();
-
-    // GPT-5 series
-    if id.starts_with("gpt-5") {
-        return Some(400_000);
     }
 
-    // GPT-4.1 series (1M context window)
-    if id.starts_with("gpt-4.1") {
-        return Some(1_000_000);
-    }
-
-    // o-series reasoning models
-    if id.starts_with("o1") || id.starts_with("o3") || id.starts_with("o4") {
-        return Some(200_000);
-    }
-
-    // GPT-4o and variants
-    if id.contains("gpt-4o") || id.contains("4o-") {
-        return Some(128_000);
-    }
-
-    // GPT-4 Turbo
-    if id.contains("gpt-4-turbo") || id.contains("gpt-4-1106") || id.contains("gpt-4-0125") {
-        return Some(128_000);
-    }
-
-    // GPT-4 32K
-    if id.contains("gpt-4-32k") {
-        return Some(32_768);
-    }
-
-    // Base GPT-4
-    if id.starts_with("gpt-4") {
-        return Some(8_192);
-    }
-
-    // GPT-3.5 16K
-    if id.contains("gpt-3.5") && id.contains("16k") {
-        return Some(16_385);
-    }
-
-    // Base GPT-3.5
-    if id.contains("gpt-3.5") {
-        return Some(4_096);
-    }
-
-    None
-}
-
-fn get_deepseek_context_window(model_id: &str) -> Option<u32> {
-    let id = model_id.to_lowercase();
-    if id.contains("coder") {
-        Some(128_000)
-    } else {
-        // deepseek-chat, deepseek-reasoner, etc.
-        Some(131_072)
-    }
-}
-
-fn get_gemini_context_window(model: &str) -> Option<usize> {
-    if model.contains("gemini") {
-        if model.contains("1.5") || model.contains("2.0") || model.contains("2.5") || model.contains("3") {
-            return Some(1_000_000);
-        }
-        if model.contains("1.0") {
-            return Some(32_000);
-        }
-        // Default for newer Gemini
-        return Some(1_000_000);
-    }
-    None
-}
-
-fn get_groq_context_window(model: &str) -> Option<usize> {
-    // Groq hosts various open source models
-    if model.contains("llama") {
-        if model.contains("3.1") || model.contains("3.2") || model.contains("3.3") {
-            return Some(128_000);
-        }
-        return Some(8_192);
-    }
-    if model.contains("mixtral") {
-        return Some(32_000);
-    }
-    Some(32_000) // Conservative default for Groq
-}
-
-fn get_open_source_context_window(model: &str) -> Option<usize> {
-    // Common open source models hosted on Together, Fireworks, etc.
-    if model.contains("llama") {
-        if model.contains("llama-4") || model.contains("llama4") {
-            return Some(1_000_000); // Llama 4 Maverick: 1M context
-        }
-        if model.contains("3.1") || model.contains("3.2") || model.contains("3.3") {
-            return Some(128_000);
-        }
-        return Some(8_192);
-    }
-    if model.contains("mistral") || model.contains("mixtral") {
-        if model.contains("large") {
-            return Some(128_000);
-        }
-        return Some(32_000);
-    }
-    if model.contains("qwen") {
-        return Some(32_000);
-    }
-    if model.contains("codellama") || model.contains("deepseek") {
-        return Some(16_000);
-    }
-    None
-}
-
-fn get_ollama_context_window(model: &str) -> Option<usize> {
-    // Ollama uses default context of 2048, but can be configured
-    // These are the model's native context limits
-    if model.contains("llama3") {
-        return Some(8_192);
-    }
-    if model.contains("mistral") || model.contains("mixtral") {
-        return Some(32_000);
-    }
-    if model.contains("codellama") {
-        return Some(16_000);
-    }
-    if model.contains("qwen") {
-        return Some(32_000);
-    }
-    // Conservative default for local models
-    Some(4_096)
+    // Fall back to default (balanced) context window
+    Some(cat_provider.default_model().context)
 }
 
 impl ModelInfo {

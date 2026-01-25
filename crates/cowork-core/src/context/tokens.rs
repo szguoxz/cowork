@@ -273,67 +273,40 @@ mod tests {
 
     #[test]
     fn test_model_specific_limits() {
-        // Claude models
-        let claude_sonnet = TokenCounter::with_model(ProviderType::Anthropic, "claude-3-5-sonnet-20241022");
-        assert_eq!(claude_sonnet.context_limit(), 200_000);
+        use crate::provider::catalog;
 
-        let claude_haiku = TokenCounter::with_model(ProviderType::Anthropic, "claude-3-haiku");
-        assert_eq!(claude_haiku.context_limit(), 200_000);
+        // Models in the catalog return their exact context
+        let anthropic_ctx = catalog::context_window("anthropic").unwrap();
+        let claude = TokenCounter::with_model(ProviderType::Anthropic, catalog::default_model("anthropic").unwrap());
+        assert_eq!(claude.context_limit(), anthropic_ctx);
 
-        // GPT-4.1 models
-        let gpt41 = TokenCounter::with_model(ProviderType::OpenAI, "gpt-4.1");
-        assert_eq!(gpt41.context_limit(), 1_000_000);
+        let openai_ctx = catalog::context_window("openai").unwrap();
+        let gpt = TokenCounter::with_model(ProviderType::OpenAI, catalog::default_model("openai").unwrap());
+        assert_eq!(gpt.context_limit(), openai_ctx);
 
-        // GPT-4 models
-        let gpt4o = TokenCounter::with_model(ProviderType::OpenAI, "gpt-4o");
-        assert_eq!(gpt4o.context_limit(), 128_000);
+        let deepseek_ctx = catalog::context_window("deepseek").unwrap();
+        let deepseek = TokenCounter::with_model(ProviderType::DeepSeek, catalog::default_model("deepseek").unwrap());
+        assert_eq!(deepseek.context_limit(), deepseek_ctx);
 
-        let gpt4_turbo = TokenCounter::with_model(ProviderType::OpenAI, "gpt-4-turbo");
-        assert_eq!(gpt4_turbo.context_limit(), 128_000);
-
-        let gpt4_base = TokenCounter::with_model(ProviderType::OpenAI, "gpt-4");
-        assert_eq!(gpt4_base.context_limit(), 8_192);
-
-        let gpt35 = TokenCounter::with_model(ProviderType::OpenAI, "gpt-3.5-turbo");
-        assert_eq!(gpt35.context_limit(), 4_096);
-
-        let gpt35_16k = TokenCounter::with_model(ProviderType::OpenAI, "gpt-3.5-turbo-16k");
-        assert_eq!(gpt35_16k.context_limit(), 16_385);
-
-        // GPT-5 models (new)
-        let gpt5 = TokenCounter::with_model(ProviderType::OpenAI, "gpt-5");
-        assert_eq!(gpt5.context_limit(), 400_000);
-
-        // DeepSeek models
-        let deepseek = TokenCounter::with_model(ProviderType::DeepSeek, "deepseek-chat");
-        assert_eq!(deepseek.context_limit(), 131_072);
-
-        let deepseek_coder = TokenCounter::with_model(ProviderType::DeepSeek, "deepseek-coder");
-        assert_eq!(deepseek_coder.context_limit(), 128_000);
-
-        // Gemini models
-        let gemini_pro = TokenCounter::with_model(ProviderType::Gemini, "gemini-1.5-pro");
-        assert_eq!(gemini_pro.context_limit(), 1_000_000);
-
-        // Llama models
-        let llama3 = TokenCounter::with_model(ProviderType::Groq, "llama-3.1-70b");
-        assert_eq!(llama3.context_limit(), 128_000);
-
-        // Unknown model should fall back to provider default
+        // Unknown models fall back to provider default
         let unknown = TokenCounter::with_model(ProviderType::OpenAI, "some-unknown-model");
-        assert_eq!(unknown.context_limit(), 400_000); // OpenAI default (GPT-5 era)
+        assert_eq!(unknown.context_limit(), openai_ctx);
     }
 
     #[test]
     fn test_model_limit_via_provider_module() {
+        use crate::provider::catalog;
         use crate::provider::model_listing::get_model_context_limit;
 
-        // Test via the centralized function
-        assert_eq!(get_model_context_limit(ProviderType::Anthropic, "claude-3-opus"), Some(200_000));
-        assert_eq!(get_model_context_limit(ProviderType::OpenAI, "gpt-4.1"), Some(1_000_000));
-        assert_eq!(get_model_context_limit(ProviderType::OpenAI, "gpt-4o-mini"), Some(128_000));
-        assert_eq!(get_model_context_limit(ProviderType::OpenAI, "gpt-5"), Some(400_000));
-        assert_eq!(get_model_context_limit(ProviderType::OpenAI, "o1-preview"), Some(200_000));
-        assert_eq!(get_model_context_limit(ProviderType::DeepSeek, "deepseek-chat"), Some(131_072));
+        // Known models return their catalog context
+        let anthropic_ctx = catalog::context_window("anthropic").unwrap();
+        assert_eq!(get_model_context_limit(ProviderType::Anthropic, catalog::default_model("anthropic").unwrap()), Some(anthropic_ctx));
+
+        let deepseek_ctx = catalog::context_window("deepseek").unwrap();
+        assert_eq!(get_model_context_limit(ProviderType::DeepSeek, "deepseek-chat"), Some(deepseek_ctx));
+
+        // Unknown models fall back to provider default
+        let openai_ctx = catalog::context_window("openai").unwrap();
+        assert_eq!(get_model_context_limit(ProviderType::OpenAI, "unknown-model"), Some(openai_ctx));
     }
 }
