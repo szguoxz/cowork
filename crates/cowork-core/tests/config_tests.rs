@@ -191,7 +191,7 @@ timeout_secs = 600
             default_max_tokens: 2048,
             default_temperature: 0.8,
         });
-        providers.insert("openai".to_string(), ProviderConfig::openai());
+        providers.insert("openai".to_string(), ProviderConfig::for_provider("openai"));
 
         let original = Config {
             default_provider: "anthropic".to_string(),

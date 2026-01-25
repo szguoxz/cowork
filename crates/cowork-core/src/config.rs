@@ -178,9 +178,9 @@ fn default_provider_name() -> String {
 
 fn default_providers() -> HashMap<String, ProviderConfig> {
     let mut providers = HashMap::new();
-    providers.insert("anthropic".to_string(), ProviderConfig::anthropic());
-    providers.insert("openai".to_string(), ProviderConfig::openai());
-    providers.insert("gemini".to_string(), ProviderConfig::gemini());
+    providers.insert("anthropic".to_string(), ProviderConfig::for_provider("anthropic"));
+    providers.insert("openai".to_string(), ProviderConfig::for_provider("openai"));
+    providers.insert("gemini".to_string(), ProviderConfig::for_provider("gemini"));
     providers
 }
 
@@ -248,81 +248,6 @@ impl ModelTiers {
         })
     }
 
-    /// Default tiers for Anthropic
-    pub fn anthropic() -> Self {
-        Self::from_catalog("anthropic").unwrap()
-    }
-
-    /// Default tiers for OpenAI
-    pub fn openai() -> Self {
-        Self::from_catalog("openai").unwrap()
-    }
-
-    /// Default tiers for Gemini
-    pub fn gemini() -> Self {
-        Self::from_catalog("gemini").unwrap()
-    }
-
-    /// Default tiers for DeepSeek
-    pub fn deepseek() -> Self {
-        Self::from_catalog("deepseek").unwrap()
-    }
-
-    /// Default tiers for Groq
-    pub fn groq() -> Self {
-        Self::from_catalog("groq").unwrap()
-    }
-
-    /// Default tiers for xAI
-    pub fn xai() -> Self {
-        Self::from_catalog("xai").unwrap()
-    }
-
-    /// Default tiers for Cohere
-    pub fn cohere() -> Self {
-        Self::from_catalog("cohere").unwrap()
-    }
-
-    /// Default tiers for Perplexity
-    pub fn perplexity() -> Self {
-        Self::from_catalog("perplexity").unwrap()
-    }
-
-    /// Default tiers for Ollama
-    pub fn ollama() -> Self {
-        Self::from_catalog("ollama").unwrap()
-    }
-
-    /// Default tiers for Together AI
-    pub fn together() -> Self {
-        Self::from_catalog("together").unwrap()
-    }
-
-    /// Default tiers for Fireworks AI
-    pub fn fireworks() -> Self {
-        Self::from_catalog("fireworks").unwrap()
-    }
-
-    /// Default tiers for Zai (Zhipu AI)
-    pub fn zai() -> Self {
-        Self::from_catalog("zai").unwrap()
-    }
-
-    /// Default tiers for Nebius
-    pub fn nebius() -> Self {
-        Self::from_catalog("nebius").unwrap()
-    }
-
-    /// Default tiers for MIMO
-    pub fn mimo() -> Self {
-        Self::from_catalog("mimo").unwrap()
-    }
-
-    /// Default tiers for BigModel.cn
-    pub fn bigmodel() -> Self {
-        Self::from_catalog("bigmodel").unwrap()
-    }
-
     /// Get default tiers for a provider type
     pub fn for_provider(provider_type: &str) -> Self {
         let lower = provider_type.to_lowercase();
@@ -332,7 +257,7 @@ impl ModelTiers {
             "zai" | "zhipu" => "zai",
             other => other,
         };
-        Self::from_catalog(provider_id).unwrap_or_else(Self::anthropic)
+        Self::from_catalog(provider_id).unwrap_or_else(|| Self::from_catalog("anthropic").unwrap())
     }
 
     /// Get the model name for a given tier
@@ -373,13 +298,13 @@ pub struct ProviderConfig {
 
 impl Default for ProviderConfig {
     fn default() -> Self {
-        Self::anthropic()
+        Self::for_provider("anthropic")
     }
 }
 
 impl ProviderConfig {
     /// Create provider config from catalog
-    fn from_catalog(provider_id: &str) -> Self {
+    pub fn for_provider(provider_id: &str) -> Self {
         let provider = catalog::get(provider_id);
         Self {
             provider_type: provider_id.to_string(),
@@ -393,51 +318,13 @@ impl ProviderConfig {
         }
     }
 
-    /// Create Anthropic provider config
-    pub fn anthropic() -> Self { Self::from_catalog("anthropic") }
-
-    /// Create OpenAI provider config
-    pub fn openai() -> Self { Self::from_catalog("openai") }
-
-    /// Create Gemini provider config
-    pub fn gemini() -> Self { Self::from_catalog("gemini") }
-
-    /// Create Groq provider config
-    pub fn groq() -> Self { Self::from_catalog("groq") }
-
-    /// Create DeepSeek provider config
-    pub fn deepseek() -> Self { Self::from_catalog("deepseek") }
-
-    /// Create Cohere provider config
-    pub fn cohere() -> Self { Self::from_catalog("cohere") }
-
-    /// Create Together AI provider config
-    pub fn together() -> Self { Self::from_catalog("together") }
-
-    /// Create Fireworks AI provider config
-    pub fn fireworks() -> Self { Self::from_catalog("fireworks") }
-
-    /// Create Zai (Zhipu AI) provider config
-    pub fn zai() -> Self { Self::from_catalog("zai") }
-
-    /// Create Nebius provider config
-    pub fn nebius() -> Self { Self::from_catalog("nebius") }
-
-    /// Create MIMO provider config
-    pub fn mimo() -> Self { Self::from_catalog("mimo") }
-
-    /// Create BigModel.cn provider config
-    pub fn bigmodel() -> Self { Self::from_catalog("bigmodel") }
-
     /// Get model tiers, falling back to provider defaults
     pub fn get_model_tiers(&self) -> ModelTiers {
         self.model_tiers
             .clone()
             .unwrap_or_else(|| ModelTiers::for_provider(&self.provider_type))
     }
-}
 
-impl ProviderConfig {
     /// Get the API key, checking environment variable if not set directly
     pub fn get_api_key(&self) -> Option<String> {
         // First check direct API key
@@ -446,33 +333,21 @@ impl ProviderConfig {
                 return Some(key.clone());
             }
 
-        // Then check environment variable
+        // Then check configured environment variable
         if let Some(env_name) = &self.api_key_env
             && let Ok(key) = std::env::var(env_name)
-                && !key.is_empty() {
-                    return Some(key);
-                }
+            && !key.is_empty() {
+                return Some(key);
+            }
 
-        // Try default environment variables based on provider
-        match self.provider_type.as_str() {
-            "anthropic" => std::env::var("ANTHROPIC_API_KEY").ok(),
-            "openai" => std::env::var("OPENAI_API_KEY").ok(),
-            "gemini" | "google" => std::env::var("GEMINI_API_KEY")
-                .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-                .ok(),
-            "cohere" => std::env::var("COHERE_API_KEY").ok(),
-            "perplexity" => std::env::var("PERPLEXITY_API_KEY").ok(),
-            "groq" => std::env::var("GROQ_API_KEY").ok(),
-            "xai" | "grok" => std::env::var("XAI_API_KEY").ok(),
-            "deepseek" => std::env::var("DEEPSEEK_API_KEY").ok(),
-            "together" => std::env::var("TOGETHER_API_KEY").ok(),
-            "fireworks" => std::env::var("FIREWORKS_API_KEY").ok(),
-            "zai" | "zhipu" => std::env::var("ZAI_API_KEY").ok(),
-            "nebius" => std::env::var("NEBIUS_API_KEY").ok(),
-            "mimo" => std::env::var("MIMO_API_KEY").ok(),
-            "bigmodel" => std::env::var("BIGMODEL_API_KEY").ok(),
-            _ => None,
-        }
+        // Fall back to catalog's default env var for this provider
+        if let Some(env_name) = catalog::api_key_env(&self.provider_type)
+            && let Ok(key) = std::env::var(env_name)
+            && !key.is_empty() {
+                return Some(key);
+            }
+
+        None
     }
 }
 
@@ -914,15 +789,15 @@ mod tests {
 
     #[test]
     fn test_provider_factories() {
-        let anthropic = ProviderConfig::anthropic();
+        let anthropic = ProviderConfig::for_provider("anthropic");
         assert_eq!(anthropic.provider_type, "anthropic");
         assert_eq!(anthropic.api_key_env, Some("ANTHROPIC_API_KEY".to_string()));
 
-        let openai = ProviderConfig::openai();
+        let openai = ProviderConfig::for_provider("openai");
         assert_eq!(openai.provider_type, "openai");
         assert_eq!(openai.api_key_env, Some("OPENAI_API_KEY".to_string()));
 
-        let gemini = ProviderConfig::gemini();
+        let gemini = ProviderConfig::for_provider("gemini");
         assert_eq!(gemini.provider_type, "gemini");
         assert_eq!(gemini.api_key_env, Some("GEMINI_API_KEY".to_string()));
     }

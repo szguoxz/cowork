@@ -476,7 +476,7 @@ mod tests {
             temp_dir.path(),
             ProviderType::Anthropic,
             Some("test-key"),
-            Some(ModelTiers::anthropic()),
+            Some(ModelTiers::for_provider("anthropic")),
             None, // web_search_config
         );
 

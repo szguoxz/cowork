@@ -494,7 +494,7 @@ impl OnboardingWizard {
 
     fn save_config(
         &mut self,
-        provider_type: ProviderType,
+        _provider_type: ProviderType,
         provider_info: &ProviderInfo,
         api_key: Option<&str>,
     ) -> anyhow::Result<()> {
@@ -507,14 +507,7 @@ impl OnboardingWizard {
             .providers
             .get(provider_name)
             .cloned()
-            .unwrap_or_else(|| match provider_type {
-                ProviderType::Anthropic => ProviderConfig::anthropic(),
-                ProviderType::OpenAI => ProviderConfig::openai(),
-                ProviderType::Gemini => ProviderConfig::gemini(),
-                ProviderType::Groq => ProviderConfig::groq(),
-                ProviderType::DeepSeek => ProviderConfig::deepseek(),
-                _ => ProviderConfig::anthropic(),
-            });
+            .unwrap_or_else(|| ProviderConfig::for_provider(provider_name));
 
         provider_config.model = provider_info.default_model.to_string();
         if let Some(key) = api_key {

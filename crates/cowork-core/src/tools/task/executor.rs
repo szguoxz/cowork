@@ -62,7 +62,7 @@ impl AgentExecutionConfig {
             provider_type: ProviderType::Anthropic,
             api_key: None,
             max_turns: 50,
-            model_tiers: ModelTiers::anthropic(),
+            model_tiers: ModelTiers::for_provider("anthropic"),
             registry: None,
             progress_tx: None,
             parent_session_id: None,
@@ -523,7 +523,7 @@ mod tests {
         use crate::provider::catalog;
 
         // Test with Anthropic tiers
-        let anthropic_tiers = ModelTiers::anthropic();
+        let anthropic_tiers = ModelTiers::for_provider("anthropic");
         assert_eq!(
             get_model_for_tier(&ModelTier::Balanced, &anthropic_tiers),
             catalog::default_model("anthropic").unwrap()
@@ -538,7 +538,7 @@ mod tests {
         );
 
         // Test with OpenAI tiers
-        let openai_tiers = ModelTiers::openai();
+        let openai_tiers = ModelTiers::for_provider("openai");
         assert_eq!(
             get_model_for_tier(&ModelTier::Balanced, &openai_tiers),
             catalog::default_model("openai").unwrap()
@@ -549,7 +549,7 @@ mod tests {
         );
 
         // Test with DeepSeek tiers
-        let deepseek_tiers = ModelTiers::deepseek();
+        let deepseek_tiers = ModelTiers::for_provider("deepseek");
         assert_eq!(
             get_model_for_tier(&ModelTier::Fast, &deepseek_tiers),
             catalog::model_id("deepseek", catalog::ModelTier::Fast).unwrap()
