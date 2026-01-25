@@ -46,16 +46,87 @@ interface SessionProviderProps {
   children: ReactNode
 }
 
-function summarizeArgs(args: Record<string, unknown>): string {
-  const entries = Object.entries(args)
-  if (entries.length === 0) return ''
-  // Take the first meaningful value
-  for (const [, value] of entries) {
-    if (typeof value === 'string' && value.length > 0) {
-      return value.length > 60 ? value.slice(0, 60) + '...' : value
+function truncateStr(s: string, max: number): string {
+  if (s.length <= max) return s
+  return s.slice(0, max - 3) + '...'
+}
+
+/** Format ephemeral display for tool execution (up to 3 lines) */
+function formatEphemeral(toolName: string, args: Record<string, unknown>): string {
+  const lines: string[] = []
+
+  switch (toolName) {
+    case 'Read':
+    case 'Glob': {
+      const path = (args.file_path as string) || (args.pattern as string) || '?'
+      lines.push(`${toolName}: ${truncateStr(path, 60)}`)
+      break
+    }
+    case 'Write': {
+      const path = args.file_path as string
+      if (path) lines.push(`Write: ${truncateStr(path, 60)}`)
+      const content = args.content as string
+      if (content) {
+        const lineCount = content.split('\n').length
+        lines.push(`  ${lineCount} lines`)
+      }
+      break
+    }
+    case 'Edit': {
+      const path = args.file_path as string
+      if (path) lines.push(`Edit: ${truncateStr(path, 60)}`)
+      const oldStr = args.old_string as string
+      if (oldStr) {
+        const preview = oldStr.split('\n')[0] || ''
+        lines.push(`  - ${truncateStr(preview, 50)}`)
+      }
+      const newStr = args.new_string as string
+      if (newStr) {
+        const preview = newStr.split('\n')[0] || ''
+        lines.push(`  + ${truncateStr(preview, 50)}`)
+      }
+      break
+    }
+    case 'Grep': {
+      const pattern = (args.pattern as string) || '?'
+      const path = (args.path as string) || '.'
+      lines.push(`Grep: ${truncateStr(pattern, 30)} in ${truncateStr(path, 30)}`)
+      break
+    }
+    case 'Bash': {
+      const cmd = args.command as string
+      if (cmd) {
+        const firstLine = cmd.split('\n')[0] || cmd
+        lines.push(`Bash: ${truncateStr(firstLine, 60)}`)
+        const lineCount = cmd.split('\n').length
+        if (lineCount > 1) {
+          lines.push(`  (${lineCount} lines)`)
+        }
+      }
+      break
+    }
+    case 'Task': {
+      const desc = (args.description as string) || '?'
+      const agent = (args.subagent_type as string) || '?'
+      lines.push(`Task [${agent}]: ${truncateStr(desc, 50)}`)
+      break
+    }
+    default: {
+      // Generic: take first string value
+      const entries = Object.entries(args)
+      for (const [, value] of entries) {
+        if (typeof value === 'string' && value.length > 0) {
+          lines.push(`${toolName}: ${truncateStr(value, 60)}`)
+          break
+        }
+      }
+      if (lines.length === 0) {
+        lines.push(`${toolName}: ${truncateStr(JSON.stringify(args), 60)}`)
+      }
     }
   }
-  return JSON.stringify(args).slice(0, 60)
+
+  return lines.slice(0, 3).join('\n')
 }
 
 export function SessionProvider({ children }: SessionProviderProps) {
@@ -132,7 +203,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
         updateSession(sessionId, s => ({
           ...s,
           status: 'Processing...',
-          ephemeral: `${output.name}: ${summarizeArgs(output.arguments)}`,
+          ephemeral: formatEphemeral(output.name, output.arguments),
           updatedAt: new Date(),
         }))
         break

@@ -181,10 +181,12 @@ export default function Chat() {
           </div>
         ))}
 
-        {/* Ephemeral tool activity line */}
+        {/* Ephemeral tool activity (up to 3 lines) */}
         {ephemeral && (
-          <div className="text-sm text-muted-foreground/70 font-mono pl-2 truncate">
-            {ephemeral}
+          <div className="text-sm text-muted-foreground/70 font-mono pl-2 space-y-0.5">
+            {ephemeral.split('\n').slice(0, 3).map((line, i) => (
+              <div key={i} className="truncate">{line}</div>
+            ))}
           </div>
         )}
 
