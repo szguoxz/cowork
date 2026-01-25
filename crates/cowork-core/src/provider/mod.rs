@@ -14,7 +14,6 @@
 pub mod catalog;
 pub mod factory;
 mod genai_provider;
-pub mod model_catalog;
 pub mod model_listing;
 
 pub use factory::{
