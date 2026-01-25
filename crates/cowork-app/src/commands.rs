@@ -90,7 +90,7 @@ pub struct ApiTestResult {
 pub async fn test_api_connection(
     provider_type: String,
     api_key: String,
-    model: String,
+    model: Option<String>,
 ) -> Result<ApiTestResult, String> {
     let ptype: ProviderType = match provider_type.parse() {
         Ok(p) => p,
@@ -102,7 +102,16 @@ pub async fn test_api_connection(
         }
     };
 
-    let provider = create_provider_with_settings(ptype, &api_key, &model);
+    // Use provided model or fall back to provider's default
+    let model_id = model
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| {
+            cowork_core::provider::catalog::default_model(&provider_type)
+                .unwrap_or("gpt-4o")
+                .to_string()
+        });
+
+    let provider = create_provider_with_settings(ptype, &api_key, &model_id);
 
     // Try a simple completion
     let request = LlmRequest::new(vec![cowork_core::provider::LlmMessage::user(
