@@ -11,6 +11,7 @@ pub mod approval;
 pub mod config;
 pub mod context;
 pub mod error;
+pub mod formatting;
 pub mod mcp_manager;
 pub mod orchestration;
 pub mod prompt;
@@ -51,4 +52,9 @@ pub use orchestration::{
 pub use session::{
     AgentLoop, QuestionInfo, QuestionOption, SessionConfig, SessionId,
     SessionInput, SessionManager, SessionOutput, SessionRegistry,
+};
+
+// Formatting exports (shared between CLI and Tauri)
+pub use formatting::{
+    format_approval_args, format_ephemeral, format_tool_summary, truncate_str,
 };

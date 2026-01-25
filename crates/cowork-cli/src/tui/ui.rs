@@ -9,8 +9,9 @@ use ratatui::{
     Frame,
 };
 
+use cowork_core::formatting::format_approval_args;
+
 use super::{App, Message, MessageType, Modal, PendingApproval, PendingQuestion};
-use super::app::format_approval_args;
 
 /// Draw the entire UI
 pub fn draw(frame: &mut Frame, app: &mut App) {
