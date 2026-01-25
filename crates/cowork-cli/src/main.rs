@@ -288,7 +288,8 @@ async fn run_one_shot(
     let mut session_config = SessionConfig::new(workspace.clone())
         .with_provider(provider_type)
         .with_approval_config(approval_config.clone())
-        .with_system_prompt(system_prompt);
+        .with_system_prompt(system_prompt)
+        .with_web_search_config(config_manager.config().web_search.clone());
     if let Some(ref m) = model {
         session_config = session_config.with_model(m.clone());
     }
@@ -430,7 +431,8 @@ async fn run_chat(
     let mut session_config = SessionConfig::new(workspace_path.clone())
         .with_provider(provider_type)
         .with_approval_config(approval_config.clone())
-        .with_system_prompt(system_prompt);
+        .with_system_prompt(system_prompt)
+        .with_web_search_config(config_manager.config().web_search.clone());
     if let Some(ref m) = model {
         session_config = session_config.with_model(m.clone());
     }
