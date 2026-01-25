@@ -1,0 +1,169 @@
+{
+  "providers": {
+    "anthropic": {
+      "name": "Anthropic",
+      "base_url": "https://api.anthropic.com",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "native_web_search": true,
+      "models": {
+        "fast": { "id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5", "context": 200000 },
+        "balanced": { "id": "claude-sonnet-4-5-20250929", "name": "Claude Sonnet 4.5", "context": 200000 },
+        "powerful": { "id": "claude-opus-4-5-20251101", "name": "Claude Opus 4.5", "context": 200000 }
+      }
+    },
+    "openai": {
+      "name": "OpenAI",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "native_web_search": true,
+      "models": {
+        "fast": { "id": "gpt-4o-mini", "name": "GPT-4o Mini", "context": 128000 },
+        "balanced": { "id": "gpt-4o", "name": "GPT-4o", "context": 128000 },
+        "powerful": { "id": "o1", "name": "o1", "context": 200000 }
+      }
+    },
+    "gemini": {
+      "name": "Google Gemini",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta",
+      "api_key_env": "GEMINI_API_KEY",
+      "native_web_search": true,
+      "models": {
+        "fast": { "id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "context": 1000000 },
+        "balanced": { "id": "gemini-2.5-pro-preview-05-06", "name": "Gemini 2.5 Pro", "context": 1000000 },
+        "powerful": { "id": "gemini-2.5-pro-preview-05-06", "name": "Gemini 2.5 Pro", "context": 1000000 }
+      }
+    },
+    "deepseek": {
+      "name": "DeepSeek",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "native_web_search": false,
+      "models": {
+        "fast": { "id": "deepseek-chat", "name": "DeepSeek Chat", "context": 131072 },
+        "balanced": { "id": "deepseek-chat", "name": "DeepSeek Chat", "context": 131072 },
+        "powerful": { "id": "deepseek-reasoner", "name": "DeepSeek Reasoner (R1)", "context": 131072 }
+      }
+    },
+    "groq": {
+      "name": "Groq",
+      "base_url": "https://api.groq.com/openai/v1",
+      "api_key_env": "GROQ_API_KEY",
+      "native_web_search": true,
+      "models": {
+        "fast": { "id": "llama-3.1-8b-instant", "name": "Llama 3.1 8B", "context": 128000 },
+        "balanced": { "id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B", "context": 128000 },
+        "powerful": { "id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B", "context": 128000 }
+      }
+    },
+    "xai": {
+      "name": "xAI",
+      "base_url": "https://api.x.ai/v1",
+      "api_key_env": "XAI_API_KEY",
+      "native_web_search": true,
+      "models": {
+        "fast": { "id": "grok-3-mini-beta", "name": "Grok 3 Mini", "context": 131072 },
+        "balanced": { "id": "grok-3-beta", "name": "Grok 3", "context": 131072 },
+        "powerful": { "id": "grok-3-beta", "name": "Grok 3", "context": 131072 }
+      }
+    },
+    "cohere": {
+      "name": "Cohere",
+      "base_url": "https://api.cohere.com/v2",
+      "api_key_env": "COHERE_API_KEY",
+      "native_web_search": true,
+      "models": {
+        "fast": { "id": "command-r", "name": "Command R", "context": 128000 },
+        "balanced": { "id": "command-r-plus", "name": "Command R+", "context": 128000 },
+        "powerful": { "id": "command-r-plus", "name": "Command R+", "context": 128000 }
+      }
+    },
+    "perplexity": {
+      "name": "Perplexity",
+      "base_url": "https://api.perplexity.ai",
+      "api_key_env": "PERPLEXITY_API_KEY",
+      "native_web_search": true,
+      "models": {
+        "fast": { "id": "sonar", "name": "Sonar", "context": 128000 },
+        "balanced": { "id": "sonar-pro", "name": "Sonar Pro", "context": 128000 },
+        "powerful": { "id": "sonar-reasoning", "name": "Sonar Reasoning", "context": 128000 }
+      }
+    },
+    "together": {
+      "name": "Together AI",
+      "base_url": "https://api.together.xyz/v1",
+      "api_key_env": "TOGETHER_API_KEY",
+      "native_web_search": false,
+      "models": {
+        "fast": { "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo", "name": "Llama 3.3 70B Turbo", "context": 128000 },
+        "balanced": { "id": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", "name": "Llama 4 Maverick", "context": 1000000 },
+        "powerful": { "id": "deepseek-ai/DeepSeek-R1", "name": "DeepSeek R1", "context": 131072 }
+      }
+    },
+    "fireworks": {
+      "name": "Fireworks AI",
+      "base_url": "https://api.fireworks.ai/inference/v1",
+      "api_key_env": "FIREWORKS_API_KEY",
+      "native_web_search": false,
+      "models": {
+        "fast": { "id": "accounts/fireworks/models/llama-v3p3-70b-instruct", "name": "Llama 3.3 70B", "context": 128000 },
+        "balanced": { "id": "accounts/fireworks/models/llama-v3p3-70b-instruct", "name": "Llama 3.3 70B", "context": 128000 },
+        "powerful": { "id": "accounts/fireworks/models/deepseek-r1", "name": "DeepSeek R1", "context": 131072 }
+      }
+    },
+    "ollama": {
+      "name": "Ollama",
+      "base_url": "http://localhost:11434",
+      "api_key_env": null,
+      "native_web_search": false,
+      "models": {
+        "fast": { "id": "llama3.2:3b", "name": "Llama 3.2 3B", "context": 8192 },
+        "balanced": { "id": "llama3.2", "name": "Llama 3.2", "context": 8192 },
+        "powerful": { "id": "llama3.3:70b", "name": "Llama 3.3 70B", "context": 128000 }
+      }
+    },
+    "nebius": {
+      "name": "Nebius AI",
+      "base_url": "https://api.studio.nebius.ai/v1",
+      "api_key_env": "NEBIUS_API_KEY",
+      "native_web_search": false,
+      "models": {
+        "fast": { "id": "meta-llama/Meta-Llama-3.1-8B-Instruct", "name": "Llama 3.1 8B", "context": 128000 },
+        "balanced": { "id": "meta-llama/Meta-Llama-3.1-70B-Instruct", "name": "Llama 3.1 70B", "context": 128000 },
+        "powerful": { "id": "deepseek-ai/DeepSeek-R1", "name": "DeepSeek R1", "context": 131072 }
+      }
+    },
+    "zai": {
+      "name": "Zhipu AI",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "api_key_env": "ZAI_API_KEY",
+      "native_web_search": false,
+      "models": {
+        "fast": { "id": "glm-4-flash", "name": "GLM-4 Flash", "context": 128000 },
+        "balanced": { "id": "glm-4-plus", "name": "GLM-4 Plus", "context": 128000 },
+        "powerful": { "id": "glm-4-plus", "name": "GLM-4 Plus", "context": 128000 }
+      }
+    },
+    "bigmodel": {
+      "name": "BigModel.cn",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "api_key_env": "BIGMODEL_API_KEY",
+      "native_web_search": false,
+      "models": {
+        "fast": { "id": "glm-4-flash", "name": "GLM-4 Flash", "context": 128000 },
+        "balanced": { "id": "glm-4-plus", "name": "GLM-4 Plus", "context": 128000 },
+        "powerful": { "id": "glm-4-plus", "name": "GLM-4 Plus", "context": 128000 }
+      }
+    },
+    "mimo": {
+      "name": "MIMO",
+      "base_url": "https://api.xiaomimimo.com/v1",
+      "api_key_env": "MIMO_API_KEY",
+      "native_web_search": false,
+      "models": {
+        "fast": { "id": "mimo-v2-flash", "name": "MIMO v2 Flash", "context": 128000 },
+        "balanced": { "id": "mimo-v2-flash", "name": "MIMO v2 Flash", "context": 128000 },
+        "powerful": { "id": "mimo-v2-flash", "name": "MIMO v2 Flash", "context": 128000 }
+      }
+    }
+  }
+}

@@ -11,6 +11,7 @@
 //! - xAI
 //! - Ollama (local)
 
+pub mod catalog;
 pub mod factory;
 mod genai_provider;
 pub mod model_catalog;
