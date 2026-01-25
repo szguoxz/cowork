@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Settings as SettingsIcon, Save, RefreshCw, Sparkles, ArrowUpCircle } from 'lucide-react'
+import { Settings as SettingsIcon, Save, RefreshCw, Sparkles, ArrowUpCircle, FolderOpen, FileCode } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -30,6 +30,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [configPath, setConfigPath] = useState<string | null>(null)
 
   const loadSettings = async () => {
     setLoading(true)
@@ -58,8 +59,26 @@ export default function SettingsPage() {
     }
   }
 
+  const loadConfigPath = async () => {
+    try {
+      const path = await invoke<string>('get_config_path')
+      setConfigPath(path)
+    } catch (err) {
+      console.error('Failed to load config path:', err)
+    }
+  }
+
+  const openConfigFolder = async () => {
+    try {
+      await invoke('open_config_folder')
+    } catch (err) {
+      setMessage({ type: 'error', text: `Failed to open config folder: ${err}` })
+    }
+  }
+
   useEffect(() => {
     loadSettings()
+    loadConfigPath()
   }, [])
 
   if (loading || !settings) {
@@ -286,6 +305,45 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent>
               <UpdateChecker />
+            </CardContent>
+          </Card>
+
+          {/* Advanced Configuration */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileCode className="w-5 h-5 text-primary" />
+                Advanced Configuration
+              </CardTitle>
+              <CardDescription>
+                Configure MCP servers, skills, and more via config file
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <label className="text-sm font-medium mb-1.5 block text-foreground">Config File</label>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 px-3 py-2 text-sm bg-secondary rounded-lg text-muted-foreground overflow-x-auto">
+                    {configPath || 'Loading...'}
+                  </code>
+                  <Button variant="outline" size="sm" onClick={openConfigFolder}>
+                    <FolderOpen className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="text-sm text-muted-foreground space-y-2">
+                <p>Edit the config file to configure:</p>
+                <ul className="list-disc list-inside space-y-1 ml-2">
+                  <li><strong>MCP Servers</strong> - Add tools via Model Context Protocol</li>
+                  <li><strong>Skills</strong> - Custom prompt templates in <code className="text-xs bg-secondary px-1 rounded">~/.claude/skills/</code></li>
+                  <li><strong>Agents</strong> - Custom subagent definitions</li>
+                  <li><strong>Web Search</strong> - Configure fallback search providers</li>
+                </ul>
+                <p className="mt-3">
+                  The config file contains sample configuration with comments.
+                </p>
+              </div>
             </CardContent>
           </Card>
         </div>

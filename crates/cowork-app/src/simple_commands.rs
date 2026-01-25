@@ -497,3 +497,54 @@ pub async fn open_sessions_folder() -> Result<String, String> {
 
     Ok(path_str)
 }
+
+/// Get the config file path
+#[tauri::command]
+pub async fn get_config_path() -> Result<String, String> {
+    cowork_core::config::ConfigManager::default_config_path()
+        .map(|p| p.display().to_string())
+        .map_err(|e| format!("Failed to get config path: {}", e))
+}
+
+/// Open the config file in the system's default editor/file manager
+#[tauri::command]
+pub async fn open_config_folder() -> Result<String, String> {
+    let config_path = cowork_core::config::ConfigManager::default_config_path()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let config_dir = config_path.parent()
+        .ok_or_else(|| "Could not determine config directory".to_string())?;
+
+    // Create directory if it doesn't exist
+    std::fs::create_dir_all(config_dir)
+        .map_err(|e| format!("Failed to create config directory: {}", e))?;
+
+    let path_str = config_dir.display().to_string();
+
+    // Open in file manager
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(config_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(config_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(config_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    Ok(path_str)
+}

@@ -210,6 +210,9 @@ pub fn run() {
             simple_commands::load_saved_session,
             simple_commands::delete_saved_session,
             simple_commands::open_sessions_folder,
+            // Config commands
+            simple_commands::get_config_path,
+            simple_commands::open_config_folder,
             // MCP server commands
             simple_commands::add_mcp_server,
             simple_commands::remove_mcp_server,
