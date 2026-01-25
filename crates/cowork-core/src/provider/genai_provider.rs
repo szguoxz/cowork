@@ -131,23 +131,7 @@ pub enum ProviderType {
 
 impl std::fmt::Display for ProviderType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProviderType::OpenAI => write!(f, "openai"),
-            ProviderType::Anthropic => write!(f, "anthropic"),
-            ProviderType::Gemini => write!(f, "gemini"),
-            ProviderType::Cohere => write!(f, "cohere"),
-            ProviderType::Perplexity => write!(f, "perplexity"),
-            ProviderType::Groq => write!(f, "groq"),
-            ProviderType::XAI => write!(f, "xai"),
-            ProviderType::DeepSeek => write!(f, "deepseek"),
-            ProviderType::Together => write!(f, "together"),
-            ProviderType::Fireworks => write!(f, "fireworks"),
-            ProviderType::Zai => write!(f, "zai"),
-            ProviderType::Nebius => write!(f, "nebius"),
-            ProviderType::MIMO => write!(f, "mimo"),
-            ProviderType::BigModel => write!(f, "bigmodel"),
-            ProviderType::Ollama => write!(f, "ollama"),
-        }
+        f.write_str(self.as_str())
     }
 }
 
@@ -184,23 +168,7 @@ impl ProviderType {
 
     /// Get the environment variable name for API key
     pub fn api_key_env(&self) -> Option<&'static str> {
-        match self {
-            ProviderType::OpenAI => Some("OPENAI_API_KEY"),
-            ProviderType::Anthropic => Some("ANTHROPIC_API_KEY"),
-            ProviderType::Gemini => Some("GEMINI_API_KEY"),
-            ProviderType::Cohere => Some("COHERE_API_KEY"),
-            ProviderType::Perplexity => Some("PERPLEXITY_API_KEY"),
-            ProviderType::Groq => Some("GROQ_API_KEY"),
-            ProviderType::XAI => Some("XAI_API_KEY"),
-            ProviderType::DeepSeek => Some("DEEPSEEK_API_KEY"),
-            ProviderType::Together => Some("TOGETHER_API_KEY"),
-            ProviderType::Fireworks => Some("FIREWORKS_API_KEY"),
-            ProviderType::Zai => Some("ZAI_API_KEY"),
-            ProviderType::Nebius => Some("NEBIUS_API_KEY"),
-            ProviderType::MIMO => Some("MIMO_API_KEY"),
-            ProviderType::BigModel => Some("BIGMODEL_API_KEY"),
-            ProviderType::Ollama => None, // Local, no API key needed
-        }
+        catalog::api_key_env(self.as_str())
     }
 
     /// Get the provider type as a string
