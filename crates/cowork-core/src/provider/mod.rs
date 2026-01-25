@@ -22,7 +22,6 @@ pub use factory::{
 };
 pub use genai_provider::{
     create_provider, CompletionResult, GenAIProvider, PendingToolCall, ProviderType,
-    StreamChunk,
 };
 
 pub use model_listing::{get_known_models, get_model_context_limit, ModelInfo};

@@ -27,7 +27,13 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-process = "2"
 tauri-plugin-notification = "2"
-tauri-plugin-updater = "2"
+# Self-update (same approach as CLI - no private key needed)
+self_update = { version = "0.41", features = ["archive-tar", "archive-zip", "compression-flate2"] }
+self-replace = "1"
+reqwest = { version = "0.13", features = ["blocking"] }
+flate2 = "1"
+tar = "0.4"
+zip = "7"
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

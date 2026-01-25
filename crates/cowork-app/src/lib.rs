@@ -6,20 +6,43 @@ pub mod commands;
 pub mod session_storage;
 pub mod simple_commands;
 pub mod state;
-pub mod streaming;
 
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
-use tauri_plugin_updater::UpdaterExt;
-
 use cowork_core::orchestration::SystemPrompt;
 use cowork_core::prompt::TemplateVars;
 use cowork_core::session::{OutputReceiver, SessionConfig, SessionManager, SessionOutput};
 use cowork_core::{ApprovalLevel, ConfigManager, Context, Workspace};
 use state::AppState;
+
+const REPO_OWNER: &str = "szguoxz";
+const REPO_NAME: &str = "cowork";
+
+/// Check for updates in the background (same approach as CLI).
+/// Returns Some(version) if an update is available, None otherwise.
+fn check_for_update_background() -> Option<String> {
+    let current = env!("CARGO_PKG_VERSION");
+
+    let releases = self_update::backends::github::ReleaseList::configure()
+        .repo_owner(REPO_OWNER)
+        .repo_name(REPO_NAME)
+        .build()
+        .ok()?
+        .fetch()
+        .ok()?;
+
+    let latest = releases.first()?;
+    let latest_version = latest.version.trim_start_matches('v');
+
+    if self_update::version::bump_is_greater(current, latest_version).unwrap_or(false) {
+        Some(latest_version.to_string())
+    } else {
+        None
+    }
+}
 
 /// Build the system prompt with all template variables properly substituted
 fn build_system_prompt(workspace: &std::path::Path, model_info: Option<&str>) -> String {
@@ -184,7 +207,6 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Use current working directory as workspace
             let workspace_path = std::env::current_dir()
@@ -217,34 +239,25 @@ pub fn run() {
             // Spawn output handler to forward session outputs to frontend
             spawn_output_handler(app.handle().clone(), output_rx);
 
-            // Background update check: the Tauri updater only finds an update if
-            // latest.json exists on the release (which is only uploaded for [auto-update] releases).
-            let handle = app.handle().clone();
+            // Background update check using same approach as CLI (no private key needed)
             tauri::async_runtime::spawn(async move {
                 // Delay to avoid blocking startup
                 tokio::time::sleep(Duration::from_secs(10)).await;
 
-                let updater = match handle.updater_builder().build() {
-                    Ok(u) => u,
-                    Err(e) => {
-                        tracing::debug!("Updater init failed: {}", e);
-                        return;
-                    }
-                };
+                // Use spawn_blocking for the sync self_update calls
+                let result = tokio::task::spawn_blocking(|| {
+                    check_for_update_background()
+                }).await;
 
-                match updater.check().await {
-                    Ok(Some(update)) => {
-                        tracing::info!("Update available: {}", update.version);
-                        // Download silently; applies on next app restart
-                        if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
-                            tracing::debug!("Update download/install failed: {}", e);
-                        }
+                match result {
+                    Ok(Some(version)) => {
+                        tracing::info!("Update available: {}", version);
                     }
                     Ok(None) => {
-                        tracing::debug!("No update available");
+                        tracing::debug!("No update available or already up to date");
                     }
                     Err(e) => {
-                        tracing::debug!("Update check failed: {}", e);
+                        tracing::debug!("Update check failed: {:?}", e);
                     }
                 }
             });

@@ -12,7 +12,6 @@
     "dialog:default",
     "fs:default",
     "process:default",
-    "notification:default",
-    "updater:default"
+    "notification:default"
   ]
 }
