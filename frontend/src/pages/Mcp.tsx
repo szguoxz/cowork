@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Server, Plus, Play, Square, Trash2, RefreshCw, Wrench, Globe, Terminal } from 'lucide-react'
+import { Server, Plus, Trash2, RefreshCw, Wrench, Globe, Terminal } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -70,30 +70,6 @@ export default function McpPage() {
       await refresh()
     } catch (err) {
       console.error('Failed to add server:', err)
-    } finally {
-      setActionLoading(null)
-    }
-  }
-
-  const startServer = async (name: string) => {
-    setActionLoading(name)
-    try {
-      await invoke('start_mcp_server', { name })
-      await refresh()
-    } catch (err) {
-      console.error('Failed to start server:', err)
-    } finally {
-      setActionLoading(null)
-    }
-  }
-
-  const stopServer = async (name: string) => {
-    setActionLoading(name)
-    try {
-      await invoke('stop_mcp_server', { name })
-      await refresh()
-    } catch (err) {
-      console.error('Failed to stop server:', err)
     } finally {
       setActionLoading(null)
     }
@@ -260,47 +236,20 @@ export default function McpPage() {
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-1">
-                        {server.status === 'running' ? (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => stopServer(server.name)}
-                            disabled={actionLoading === server.name}
-                            title="Stop server"
-                          >
-                            {actionLoading === server.name ? (
-                              <RefreshCw className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Square className="w-4 h-4" />
-                            )}
-                          </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeServer(server.name)}
+                        disabled={actionLoading === server.name}
+                        title="Remove server"
+                        className="text-destructive hover:text-destructive"
+                      >
+                        {actionLoading === server.name ? (
+                          <RefreshCw className="w-4 h-4 animate-spin" />
                         ) : (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => startServer(server.name)}
-                            disabled={actionLoading === server.name}
-                            title="Start server"
-                          >
-                            {actionLoading === server.name ? (
-                              <RefreshCw className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Play className="w-4 h-4" />
-                            )}
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeServer(server.name)}
-                          disabled={actionLoading === server.name}
-                          title="Remove server"
-                          className="text-destructive hover:text-destructive"
-                        >
                           <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
+                        )}
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>

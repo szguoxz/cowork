@@ -24,7 +24,6 @@ interface ContextUsage {
 
 interface ContextIndicatorProps {
   sessionId: string | null
-  onCompact?: () => void
   onClear?: () => void
 }
 
@@ -43,10 +42,9 @@ const mockUsage: ContextUsage = {
   },
 }
 
-export default function ContextIndicator({ sessionId, onCompact, onClear }: ContextIndicatorProps) {
+export default function ContextIndicator({ sessionId, onClear }: ContextIndicatorProps) {
   const [usage, setUsage] = useState<ContextUsage | null>(isTauri ? null : mockUsage)
   const [isExpanded, setIsExpanded] = useState(false)
-  const [isCompacting, setIsCompacting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const fetchUsage = useCallback(async () => {
@@ -86,9 +84,6 @@ export default function ContextIndicator({ sessionId, onCompact, onClear }: Cont
         (event) => {
           if (event.payload.type === 'usage_updated' && event.payload.usage) {
             setUsage(event.payload.usage)
-          } else if (event.payload.type === 'compact_completed') {
-            setIsCompacting(false)
-            fetchUsage()
           }
         }
       )
@@ -111,41 +106,6 @@ export default function ContextIndicator({ sessionId, onCompact, onClear }: Cont
       unlistenLoop?.()
     }
   }, [sessionId, fetchUsage])
-
-  const handleCompact = async () => {
-    if (isCompacting) return
-
-    if (!isTauri) {
-      // Mock compact in browser
-      setIsCompacting(true)
-      setTimeout(() => {
-        setUsage({
-          ...mockUsage,
-          used_tokens: 15000,
-          used_percentage: 0.075,
-          remaining_tokens: 185000,
-          breakdown: { ...mockUsage.breakdown, conversation_tokens: 8000 },
-        })
-        setIsCompacting(false)
-        onCompact?.()
-      }, 1000)
-      return
-    }
-
-    if (!sessionId) return
-
-    setIsCompacting(true)
-    try {
-      await invoke('compact_session', { sessionId })
-      await fetchUsage()
-      onCompact?.()
-    } catch (err) {
-      console.error('Failed to compact:', err)
-      setError(String(err))
-    } finally {
-      setIsCompacting(false)
-    }
-  }
 
   const handleClear = async () => {
     if (!isTauri) {
@@ -294,44 +254,23 @@ export default function ContextIndicator({ sessionId, onCompact, onClear }: Cont
             {usage.should_compact && (
               <div className="mb-4 p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded border border-yellow-200 dark:border-yellow-800">
                 <p className="text-xs text-yellow-800 dark:text-yellow-200">
-                  Context is getting full. Consider compacting to summarize older messages.
+                  Context is getting full. Older messages will be summarized automatically.
                 </p>
               </div>
             )}
 
             {/* Actions */}
-            <div className="flex gap-2">
-              <button
-                onClick={handleCompact}
-                disabled={isCompacting}
-                className={`
-                  flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm
-                  transition-colors duration-200
-                  ${usage.should_compact
-                    ? 'bg-yellow-500 text-white hover:bg-yellow-600'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                  }
-                  disabled:opacity-50 disabled:cursor-not-allowed
-                `}
-              >
-                {isCompacting ? (
-                  <span className="animate-spin">...</span>
-                ) : (
-                  <Minimize2 className="w-4 h-4" />
-                )}
-                Compact
-              </button>
-              <button
-                onClick={handleClear}
-                className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm
-                  bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300
-                  hover:bg-red-200 dark:hover:bg-red-900/50
-                  transition-colors duration-200"
-                title="Clear conversation"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
+            <button
+              onClick={handleClear}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm
+                bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300
+                hover:bg-red-200 dark:hover:bg-red-900/50
+                transition-colors duration-200"
+              title="Clear conversation"
+            >
+              <Trash2 className="w-4 h-4" />
+              Clear History
+            </button>
 
             {/* Error message */}
             {error && (

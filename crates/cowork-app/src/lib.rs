@@ -203,10 +203,21 @@ pub fn run() {
             simple_commands::answer_question,
             simple_commands::list_sessions,
             simple_commands::create_session,
+            simple_commands::clear_session,
             // Saved session commands
             simple_commands::list_saved_sessions,
             simple_commands::load_saved_session,
             simple_commands::delete_saved_session,
+            simple_commands::open_sessions_folder,
+            // MCP server commands
+            simple_commands::add_mcp_server,
+            simple_commands::remove_mcp_server,
+            simple_commands::list_mcp_servers,
+            simple_commands::list_mcp_tools,
+            // Skill commands
+            simple_commands::install_skill,
+            simple_commands::remove_skill,
+            simple_commands::list_installed_skills,
             // Settings commands
             commands::get_settings,
             commands::update_settings,

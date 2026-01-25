@@ -87,8 +87,17 @@ impl Tool for EditFile {
                 .await
                 .map_err(ToolError::Io)?;
 
-            // Count occurrences
-            let occurrences = content.matches(old_string).count();
+            // Detect original line ending style (for preserving on write)
+            let uses_crlf = content.contains("\r\n");
+
+            // Normalize line endings to LF for matching
+            // This handles Windows files (CRLF) when the LLM sends LF
+            let content_normalized = content.replace("\r\n", "\n");
+            let old_string_normalized = old_string.replace("\r\n", "\n");
+            let new_string_normalized = new_string.replace("\r\n", "\n");
+
+            // Count occurrences using normalized strings
+            let occurrences = content_normalized.matches(&old_string_normalized).count();
 
             if occurrences == 0 {
                 return Err(ToolError::InvalidParams(
@@ -104,17 +113,24 @@ impl Tool for EditFile {
                 )));
             }
 
-            // Perform replacement
-            let new_content = if replace_all {
-                content.replace(old_string, new_string)
+            // Perform replacement on normalized content
+            let new_content_normalized = if replace_all {
+                content_normalized.replace(&old_string_normalized, &new_string_normalized)
             } else {
-                content.replacen(old_string, new_string, 1)
+                content_normalized.replacen(&old_string_normalized, &new_string_normalized, 1)
             };
 
-            // Calculate diff info
-            let old_lines = content.lines().count();
-            let new_lines = new_content.lines().count();
+            // Calculate diff info (before moving new_content_normalized)
+            let old_lines = content_normalized.lines().count();
+            let new_lines = new_content_normalized.lines().count();
             let lines_changed = (new_lines as i64 - old_lines as i64).abs();
+
+            // Restore original line ending style if the file used CRLF
+            let new_content = if uses_crlf {
+                new_content_normalized.replace("\n", "\r\n")
+            } else {
+                new_content_normalized
+            };
 
             // Write back
             tokio::fs::write(&validated, &new_content)
