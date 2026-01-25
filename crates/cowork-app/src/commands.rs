@@ -117,8 +117,11 @@ pub async fn reload_session_config(state: State<'_, AppState>) -> Result<(), Str
         }
     }
 
-    // Update the session manager
+    // Update the session manager config
     state.session_manager.update_config(session_config);
+
+    // Stop all existing sessions so they get recreated with new config
+    let _ = state.session_manager.stop_all();
 
     Ok(())
 }
