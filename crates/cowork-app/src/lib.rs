@@ -121,13 +121,12 @@ pub fn init_state(
 
     // Use configured provider if available
     if let Some(ref provider_config) = default_provider {
-        let provider_type = match provider_config.provider_type.as_str() {
-            "openai" => cowork_core::provider::ProviderType::OpenAI,
-            "anthropic" => cowork_core::provider::ProviderType::Anthropic,
-            "ollama" => cowork_core::provider::ProviderType::Ollama,
-            "gemini" => cowork_core::provider::ProviderType::Gemini,
-            _ => cowork_core::provider::ProviderType::Anthropic,
-        };
+        // Parse provider type - supports all providers in ProviderType enum
+        let provider_type: cowork_core::provider::ProviderType = provider_config
+            .provider_type
+            .parse()
+            .unwrap_or(cowork_core::provider::ProviderType::Anthropic);
+
         session_config = session_config.with_provider(provider_type);
         session_config = session_config.with_model(&provider_config.model);
         if let Some(api_key) = provider_config.get_api_key() {
