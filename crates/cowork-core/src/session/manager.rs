@@ -15,45 +15,42 @@ use crate::error::Result;
 /// Type alias for the output receiver
 pub type OutputReceiver = mpsc::Receiver<(SessionId, SessionOutput)>;
 
+/// Provider for session configuration - called when creating new sessions
+pub type ConfigProvider = Box<dyn Fn() -> SessionConfig + Send + Sync>;
+
 /// Manages multiple concurrent agent sessions
 pub struct SessionManager {
     /// Map of session ID to input sender
     sessions: super::types::SessionRegistry,
     /// Channel for all session outputs (session_id, output)
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
-    /// Base config used for new sessions (RwLock for updates after onboarding)
-    base_config: RwLock<SessionConfig>,
+    /// Config provider called when creating new sessions (reads fresh config each time)
+    config_provider: ConfigProvider,
 }
 
 impl SessionManager {
-    /// Create a new session manager with the given base config
+    /// Create a new session manager with a config provider
     ///
-    /// Returns the manager and an output receiver for consuming session outputs.
-    pub fn new(mut config: SessionConfig) -> (Self, OutputReceiver) {
+    /// The config provider is called each time a new session is created,
+    /// allowing config changes (e.g., from settings) to take effect immediately.
+    pub fn with_config_provider(config_provider: ConfigProvider) -> (Self, OutputReceiver) {
         let (output_tx, output_rx) = mpsc::channel(256);
-
         let sessions = Arc::new(RwLock::new(HashMap::new()));
-
-        // Share the session registry so subagents can register themselves
-        config.session_registry = Some(sessions.clone());
 
         let manager = Self {
             sessions,
             output_tx,
-            base_config: RwLock::new(config),
+            config_provider,
         };
 
         (manager, output_rx)
     }
 
-    /// Update the base config for new sessions
+    /// Create a new session manager with a fixed config (for CLI or tests)
     ///
-    /// Existing sessions are not affected. New sessions will use the updated config.
-    pub fn update_config(&self, mut config: SessionConfig) {
-        // Preserve the session registry
-        config.session_registry = Some(self.sessions.clone());
-        *self.base_config.write() = config;
-        info!("Session manager config updated");
+    /// Returns the manager and an output receiver for consuming session outputs.
+    pub fn new(config: SessionConfig) -> (Self, OutputReceiver) {
+        Self::with_config_provider(Box::new(move || config.clone()))
     }
 
     /// Push a message to a session
@@ -67,7 +64,7 @@ impl SessionManager {
             .map_err(|e| crate::error::Error::Agent(format!("Failed to send input: {}", e)))
     }
 
-    /// Create a new session with the given ID using the base config
+    /// Create a new session with the given ID, fetching fresh config
     async fn get_or_create_session(
         &self,
         session_id: &str
@@ -79,12 +76,13 @@ impl SessionManager {
 
         info!("Creating new session: {}", session_id);
 
-
         // Create input channel for this session
         let (input_tx, input_rx) = mpsc::channel(256);
 
-        // Create the agent loop with current config
-        let config = self.base_config.read().clone();
+        // Get fresh config from provider and set session registry
+        let mut config = (self.config_provider)();
+        config.session_registry = Some(self.sessions.clone());
+
         let agent_loop = AgentLoop::new(
             session_id.to_string(),
             input_rx,

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 use cowork_core::provider::catalog;
 use cowork_core::session::SessionManager;
@@ -22,20 +22,20 @@ pub struct AppState {
 
 impl AppState {
     /// Get the current configuration
-    pub async fn config(&self) -> Config {
-        let cm = self.config_manager.read().await;
+    pub fn config(&self) -> Config {
+        let cm = self.config_manager.read();
         cm.config().clone()
     }
 
     /// Check if API key is configured
-    pub async fn has_api_key(&self) -> bool {
-        let cm = self.config_manager.read().await;
+    pub fn has_api_key(&self) -> bool {
+        let cm = self.config_manager.read();
         cm.has_api_key()
     }
 
     /// Get API key
-    pub async fn get_api_key(&self) -> Option<String> {
-        let cm = self.config_manager.read().await;
+    pub fn get_api_key(&self) -> Option<String> {
+        let cm = self.config_manager.read();
         cm.get_api_key()
     }
 }

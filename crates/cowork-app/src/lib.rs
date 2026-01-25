@@ -10,7 +10,7 @@ pub mod state;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::Manager;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 use cowork_core::orchestration::SystemPrompt;
 use cowork_core::prompt::TemplateVars;
@@ -88,20 +88,17 @@ fn build_system_prompt(workspace: &std::path::Path, model_info: Option<&str>) ->
         .build()
 }
 
-/// Initialize the application state
-///
-/// Returns the state and the output receiver (to be consumed by the output handler).
-pub fn init_state(
-    workspace_path: std::path::PathBuf,
-    config_manager: ConfigManager,
-) -> (AppState, OutputReceiver) {
-    let workspace = Workspace::new(&workspace_path);
-    let context = Context::new(workspace);
+/// Build a SessionConfig from current ConfigManager settings
+fn build_session_config(
+    workspace_path: &std::path::Path,
+    config_manager: &Arc<RwLock<ConfigManager>>,
+) -> SessionConfig {
+    let cm = config_manager.read();
+    let config = cm.config();
 
-    // Get provider config for session creation - clone everything we need
-    let default_provider = config_manager.config().get_default_provider().cloned();
-    let approval_level: ApprovalLevel = config_manager
-        .config()
+    // Get provider config
+    let default_provider = config.get_default_provider().cloned();
+    let approval_level: ApprovalLevel = config
         .approval
         .auto_approve_level
         .parse()
@@ -109,19 +106,18 @@ pub fn init_state(
 
     // Build system prompt with template variables
     let model_info = default_provider.as_ref().map(|p| p.model.as_str());
-    let system_prompt = build_system_prompt(&workspace_path, model_info);
+    let system_prompt = build_system_prompt(workspace_path, model_info);
 
     // Create session config
     let mut tool_approval_config = cowork_core::ToolApprovalConfig::default();
     tool_approval_config.set_level(approval_level);
 
-    let mut session_config = SessionConfig::new(workspace_path.clone())
+    let mut session_config = SessionConfig::new(workspace_path.to_path_buf())
         .with_approval_config(tool_approval_config)
         .with_system_prompt(system_prompt);
 
     // Use configured provider if available
     if let Some(ref provider_config) = default_provider {
-        // Parse provider type - supports all providers in ProviderType enum
         let provider_type: cowork_core::provider::ProviderType = provider_config
             .provider_type
             .parse()
@@ -134,13 +130,34 @@ pub fn init_state(
         }
     }
 
-    // Create session manager
-    let (session_manager, output_rx) = SessionManager::new(session_config);
+    session_config
+}
+
+/// Initialize the application state
+///
+/// Returns the state and the output receiver (to be consumed by the output handler).
+pub fn init_state(
+    workspace_path: std::path::PathBuf,
+    config_manager: ConfigManager,
+) -> (AppState, OutputReceiver) {
+    let workspace = Workspace::new(&workspace_path);
+    let context = Context::new(workspace);
+
+    // Wrap config manager in Arc<RwLock> for shared access
+    let config_manager = Arc::new(RwLock::new(config_manager));
+
+    // Create config provider that reads fresh config for each new session
+    let cm_clone = config_manager.clone();
+    let ws_clone = workspace_path.clone();
+    let config_provider = Box::new(move || build_session_config(&ws_clone, &cm_clone));
+
+    // Create session manager with config provider
+    let (session_manager, output_rx) = SessionManager::with_config_provider(config_provider);
 
     let state = AppState {
         context: Arc::new(RwLock::new(context)),
         workspace_path,
-        config_manager: Arc::new(RwLock::new(config_manager)),
+        config_manager,
         session_manager: Arc::new(session_manager),
     };
 
@@ -282,7 +299,6 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::save_settings,
-            commands::reload_session_config,
             commands::check_api_key,
             commands::test_api_connection,
             commands::is_setup_complete,
