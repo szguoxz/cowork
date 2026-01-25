@@ -19,7 +19,7 @@ use crate::tools::planning::{EnterPlanMode, ExitPlanMode, PlanModeState};
 use crate::tools::shell::{ExecuteCommand, KillShell, ShellProcessRegistry};
 use crate::tools::skill::SkillTool;
 use crate::tools::task::{AgentInstanceRegistry, TaskOutputTool, TaskTool, TodoWrite};
-use crate::tools::web::{WebFetch, WebSearch};
+use crate::tools::web::{supports_native_search, WebFetch, WebSearch};
 use crate::tools::ToolRegistry;
 use crate::skills::SkillRegistry;
 
@@ -227,31 +227,44 @@ impl ToolRegistryBuilder {
         if self.include_web {
             registry.register(Arc::new(WebFetch::new()));
 
-            // Register WebSearch if SerpAPI is configured
-            let is_configured = self
-                .web_search_config
+            // Check if provider has built-in web search
+            let provider_has_native = self
+                .provider_type
                 .as_ref()
-                .map(|c| {
-                    let configured = c.is_configured();
-                    tracing::debug!(
-                        has_api_key = c.api_key.is_some(),
-                        is_configured = configured,
-                        "WebSearch SerpAPI config check"
-                    );
-                    configured
-                })
+                .map(|p| supports_native_search(p.as_str()))
                 .unwrap_or(false);
 
-            if is_configured {
-                tracing::info!("Registering WebSearch tool with SerpAPI");
-                let web_search = if let Some(config) = self.web_search_config.clone() {
-                    WebSearch::with_config(config)
+            // Only register WebSearch (SerpAPI) if:
+            // 1. Provider does NOT have native search, AND
+            // 2. SerpAPI is configured
+            if !provider_has_native {
+                let is_configured = self
+                    .web_search_config
+                    .as_ref()
+                    .map(|c| {
+                        let configured = c.is_configured();
+                        tracing::debug!(
+                            has_api_key = c.api_key.is_some(),
+                            is_configured = configured,
+                            "WebSearch SerpAPI config check"
+                        );
+                        configured
+                    })
+                    .unwrap_or(false);
+
+                if is_configured {
+                    tracing::info!("Registering WebSearch tool with SerpAPI");
+                    let web_search = if let Some(config) = self.web_search_config.clone() {
+                        WebSearch::with_config(config)
+                    } else {
+                        WebSearch::new()
+                    };
+                    registry.register(Arc::new(web_search));
                 } else {
-                    WebSearch::new()
-                };
-                registry.register(Arc::new(web_search));
+                    tracing::debug!("WebSearch not registered: SerpAPI not configured");
+                }
             } else {
-                tracing::debug!("WebSearch not registered: SerpAPI not configured");
+                tracing::debug!("WebSearch not registered: provider has native search");
             }
         }
 
