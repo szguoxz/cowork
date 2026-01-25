@@ -17,9 +17,9 @@
       "api_key_env": "OPENAI_API_KEY",
       "native_web_search": true,
       "models": {
-        "fast": { "id": "gpt-4o-mini", "name": "GPT-4o Mini", "context": 128000 },
-        "balanced": { "id": "gpt-4o", "name": "GPT-4o", "context": 128000 },
-        "powerful": { "id": "o1", "name": "o1", "context": 200000 }
+        "fast": { "id": "gpt-4.1-mini", "name": "GPT-4.1 Mini", "context": 1000000 },
+        "balanced": { "id": "gpt-4.1", "name": "GPT-4.1", "context": 1000000 },
+        "powerful": { "id": "o3", "name": "o3", "context": 200000 }
       }
     },
     "gemini": {
@@ -28,9 +28,9 @@
       "api_key_env": "GEMINI_API_KEY",
       "native_web_search": true,
       "models": {
-        "fast": { "id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "context": 1000000 },
-        "balanced": { "id": "gemini-2.5-pro-preview-05-06", "name": "Gemini 2.5 Pro", "context": 1000000 },
-        "powerful": { "id": "gemini-2.5-pro-preview-05-06", "name": "Gemini 2.5 Pro", "context": 1000000 }
+        "fast": { "id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash", "context": 1000000 },
+        "balanced": { "id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "context": 1000000 },
+        "powerful": { "id": "gemini-3-pro-preview", "name": "Gemini 3 Pro", "context": 1000000 }
       }
     },
     "deepseek": {
@@ -48,11 +48,11 @@
       "name": "Groq",
       "base_url": "https://api.groq.com/openai/v1",
       "api_key_env": "GROQ_API_KEY",
-      "native_web_search": true,
+      "native_web_search": false,
       "models": {
         "fast": { "id": "llama-3.1-8b-instant", "name": "Llama 3.1 8B", "context": 128000 },
         "balanced": { "id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B", "context": 128000 },
-        "powerful": { "id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B", "context": 128000 }
+        "powerful": { "id": "deepseek-r1-distill-llama-70b", "name": "DeepSeek R1 Distill 70B", "context": 128000 }
       }
     },
     "xai": {
