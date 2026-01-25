@@ -136,8 +136,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
         // Add web_search config if serpapi key provided
         if (serpApiKey.trim()) {
           settings.web_search = {
-            fallback_provider: 'serpapi',
-            fallback_api_key: serpApiKey,
+            api_key: serpApiKey,
           }
         }
 

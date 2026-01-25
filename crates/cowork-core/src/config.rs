@@ -465,29 +465,15 @@ impl PromptSystemConfig {
     }
 }
 
-/// Web search configuration
+/// Web search configuration (SerpAPI only)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSearchConfig {
-    /// Fallback search provider when native search is not available
-    /// Options: "brave", "serpapi", "serper", "tavily", "searxng"
-    #[serde(default = "default_fallback_provider")]
-    pub fallback_provider: String,
-    /// API endpoint for fallback search (e.g., SearXNG instance URL)
+    /// API key for SerpAPI
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback_endpoint: Option<String>,
-    /// API key for fallback search provider
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback_api_key: Option<String>,
-    /// Environment variable name for fallback API key
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback_api_key_env: Option<String>,
+    pub api_key: Option<String>,
     /// Maximum results to return
     #[serde(default = "default_max_results")]
     pub max_results: usize,
-}
-
-fn default_fallback_provider() -> String {
-    "brave".to_string()
 }
 
 fn default_max_results() -> usize {
@@ -497,115 +483,50 @@ fn default_max_results() -> usize {
 impl Default for WebSearchConfig {
     fn default() -> Self {
         Self {
-            fallback_provider: default_fallback_provider(),
-            fallback_endpoint: None,
-            fallback_api_key: None,
-            fallback_api_key_env: Some("BRAVE_API_KEY".to_string()),
+            api_key: None,
             max_results: default_max_results(),
         }
     }
 }
 
 impl WebSearchConfig {
-    /// Get the fallback API key, checking environment variable if not set directly
-    pub fn get_fallback_api_key(&self) -> Option<String> {
+    /// Get the SerpAPI key, checking environment variable if not set directly
+    pub fn get_api_key(&self) -> Option<String> {
         // First check direct API key
-        if let Some(key) = &self.fallback_api_key
-            && !key.is_empty()
-        {
-            return Some(key.clone());
+        if let Some(key) = &self.api_key {
+            if !key.is_empty() {
+                tracing::debug!("WebSearch: using direct api_key from config");
+                return Some(key.clone());
+            }
         }
 
         // Then check environment variable
-        if let Some(env_name) = &self.fallback_api_key_env
-            && let Ok(key) = std::env::var(env_name)
-            && !key.is_empty()
-        {
-            return Some(key);
-        }
-
-        // Try default environment variables based on provider
-        match self.fallback_provider.as_str() {
-            "brave" => std::env::var("BRAVE_API_KEY").ok().filter(|k| !k.is_empty()),
-            "serper" => std::env::var("SERPER_API_KEY").ok().filter(|k| !k.is_empty()),
-            "serpapi" => std::env::var("SERPAPI_API_KEY").ok().filter(|k| !k.is_empty()),
-            "tavily" => std::env::var("TAVILY_API_KEY").ok().filter(|k| !k.is_empty()),
-            "searxng" => None, // SearXNG typically doesn't need an API key
-            _ => None,
-        }
-    }
-
-    /// Auto-detect and return the best available search provider
-    /// Checks for API keys in environment and returns the first configured provider
-    pub fn detect_available_provider(&self) -> Option<(String, String)> {
-        // If explicitly configured with API key, use that
-        if let Some(key) = self.get_fallback_api_key() {
-            return Some((self.fallback_provider.clone(), key));
-        }
-
-        // Otherwise, check all known providers for API keys in env
-        let providers = [
-            ("brave", "BRAVE_API_KEY"),
-            ("serpapi", "SERPAPI_API_KEY"),
-            ("serper", "SERPER_API_KEY"),
-            ("tavily", "TAVILY_API_KEY"),
-        ];
-
-        for (provider, env_var) in providers {
-            if let Ok(key) = std::env::var(env_var) {
-                if !key.is_empty() {
-                    return Some((provider.to_string(), key));
-                }
+        if let Ok(key) = std::env::var("SERPAPI_API_KEY") {
+            if !key.is_empty() {
+                tracing::debug!("WebSearch: using SERPAPI_API_KEY from env");
+                return Some(key);
             }
         }
 
         None
     }
 
-    /// Get the default endpoint for the fallback provider
-    pub fn get_fallback_endpoint(&self) -> Option<String> {
-        if self.fallback_endpoint.is_some() {
-            return self.fallback_endpoint.clone();
-        }
-
-        // Default endpoints for known providers
-        match self.fallback_provider.as_str() {
-            "brave" => Some("https://api.search.brave.com/res/v1/web/search".to_string()),
-            "serper" => Some("https://google.serper.dev/search".to_string()),
-            "serpapi" => Some("https://serpapi.com/search".to_string()),
-            "tavily" => Some("https://api.tavily.com/search".to_string()),
-            _ => None,
-        }
+    /// Check if web search is configured (has API key)
+    pub fn is_configured(&self) -> bool {
+        let has_key = self.get_api_key().is_some();
+        tracing::debug!(has_key = has_key, "WebSearch: is_configured check");
+        has_key
     }
 
-    /// Check if fallback search is configured
-    /// Returns true if any supported search provider has an API key available
+    // Keep old method names for compatibility during transition
     pub fn is_fallback_configured(&self) -> bool {
-        // SearXNG doesn't need API key
-        if self.fallback_provider == "searxng" && self.fallback_endpoint.is_some() {
-            return true;
-        }
-
-        // Check if any provider is available (auto-detection)
-        self.detect_available_provider().is_some()
+        self.is_configured()
     }
 
-    /// Get the effective provider and API key to use
-    /// Auto-detects if the configured provider doesn't have a key
     pub fn get_effective_provider(&self) -> Option<(String, String, String)> {
-        if let Some((provider, key)) = self.detect_available_provider() {
-            // Get endpoint for the detected provider
-            let endpoint = match provider.as_str() {
-                "brave" => "https://api.search.brave.com/res/v1/web/search",
-                "serper" => "https://google.serper.dev/search",
-                "serpapi" => "https://serpapi.com/search",
-                "tavily" => "https://api.tavily.com/search",
-                _ => return None,
-            };
-            Some((provider, key, endpoint.to_string()))
-        } else {
-            None
-        }
+        self.get_api_key().map(|key| {
+            ("serpapi".to_string(), key, "https://serpapi.com/search".to_string())
+        })
     }
 }
 
@@ -704,6 +625,18 @@ impl ConfigManager {
     /// Sample configuration comments for MCP servers, skills, etc.
     fn sample_config_comments() -> &'static str {
         r#"
+# ─────────────────────────────────────────────────────────────────────────────
+# Web Search (SerpAPI)
+# ─────────────────────────────────────────────────────────────────────────────
+# Enable web search for providers that don't support native search (like DeepSeek).
+# Get your API key from https://serpapi.com/
+#
+# [web_search]
+# api_key = "your-serpapi-key"
+# max_results = 10
+#
+# Alternatively, set the SERPAPI_API_KEY environment variable.
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MCP (Model Context Protocol) Servers
 # ─────────────────────────────────────────────────────────────────────────────

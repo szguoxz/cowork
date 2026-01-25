@@ -74,11 +74,8 @@ pub async fn update_settings(
 
     // Update web search settings if provided
     if let Some(web_search) = &settings.web_search {
-        if let Some(provider) = &web_search.fallback_provider {
-            config.web_search.fallback_provider = provider.clone();
-        }
-        if let Some(api_key) = &web_search.fallback_api_key {
-            config.web_search.fallback_api_key = Some(api_key.clone());
+        if let Some(api_key) = &web_search.api_key {
+            config.web_search.api_key = Some(api_key.clone());
         }
     }
 

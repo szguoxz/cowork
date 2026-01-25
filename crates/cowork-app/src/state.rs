@@ -98,8 +98,7 @@ pub struct UiSettings {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WebSearchSettings {
-    pub fallback_provider: Option<String>,
-    pub fallback_api_key: Option<String>,
+    pub api_key: Option<String>,
 }
 
 impl From<&Config> for Settings {
@@ -123,13 +122,10 @@ impl From<&Config> for Settings {
                 )
             };
 
-        // Convert web_search config if it has meaningful values
-        let web_search = if config.web_search.fallback_provider != "brave"
-            || config.web_search.fallback_api_key.is_some()
-        {
+        // Convert web_search config if API key is configured
+        let web_search = if config.web_search.api_key.is_some() {
             Some(WebSearchSettings {
-                fallback_provider: Some(config.web_search.fallback_provider.clone()),
-                fallback_api_key: config.web_search.fallback_api_key.clone(),
+                api_key: config.web_search.api_key.clone(),
             })
         } else {
             None

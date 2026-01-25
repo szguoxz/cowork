@@ -236,15 +236,31 @@ impl ToolRegistryBuilder {
                 .map(|p| supports_native_search(p.as_str()))
                 .unwrap_or(false);
 
+            tracing::debug!(
+                provider_type = ?self.provider_type,
+                provider_has_native = provider_has_native,
+                has_web_search_config = self.web_search_config.is_some(),
+                "WebSearch registration check"
+            );
+
             if !provider_has_native {
-                // Check if fallback search is configured
+                // Check if SerpAPI is configured
                 let fallback_configured = self
                     .web_search_config
                     .as_ref()
-                    .map(|c| c.is_fallback_configured())
+                    .map(|c| {
+                        let configured = c.is_configured();
+                        tracing::debug!(
+                            has_api_key = c.api_key.is_some(),
+                            is_configured = configured,
+                            "WebSearch SerpAPI config check"
+                        );
+                        configured
+                    })
                     .unwrap_or(false);
 
                 if fallback_configured {
+                    tracing::info!("Registering WebSearch tool with fallback provider");
                     // Create WebSearch with config and provider type for fallback
                     let web_search = if let Some(config) = self.web_search_config.clone() {
                         let mut ws = WebSearch::with_config(config);
@@ -260,9 +276,11 @@ impl ToolRegistryBuilder {
                         ws
                     };
                     registry.register(Arc::new(web_search));
+                } else {
+                    tracing::debug!("WebSearch not registered: fallback not configured");
                 }
-                // If fallback not configured, WebSearch tool is simply not available
-                // The AI won't see it in its tool list
+            } else {
+                tracing::debug!("WebSearch not registered: provider has native search");
             }
         }
 
@@ -459,7 +477,9 @@ mod tests {
 
         // Should have web tools
         assert!(registry.get("WebFetch").is_some());
-        assert!(registry.get("WebSearch").is_some());
+        // WebSearch requires fallback config when provider doesn't have native search
+        // Without config or native provider, it won't be registered
+        assert!(registry.get("WebSearch").is_none());
 
         // Should have planning tools
         assert!(registry.get("EnterPlanMode").is_some());
@@ -470,6 +490,35 @@ mod tests {
         assert!(registry.get("AskUserQuestion").is_some());
         assert!(registry.get("NotebookEdit").is_some());
         assert!(registry.get("LSP").is_some());
+    }
+
+    #[test]
+    fn test_websearch_with_configured_api_key() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create a config with SerpAPI key set directly
+        let mut ws_config = WebSearchConfig::default();
+        ws_config.api_key = Some("test-api-key".to_string());
+
+        let registry = ToolRegistryBuilder::new(temp_dir.path().to_path_buf())
+            .with_web_search_config(ws_config)
+            .build();
+
+        // WebSearch should be registered when API key is configured
+        assert!(registry.get("WebSearch").is_some());
+    }
+
+    #[test]
+    fn test_websearch_with_native_provider() {
+        let temp_dir = tempdir().unwrap();
+
+        // Anthropic has native web search, so WebSearch fallback shouldn't be registered
+        let registry = ToolRegistryBuilder::new(temp_dir.path().to_path_buf())
+            .with_provider(ProviderType::Anthropic)
+            .build();
+
+        // WebSearch fallback should NOT be registered for native providers
+        assert!(registry.get("WebSearch").is_none());
     }
 
     #[test]

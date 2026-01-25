@@ -1,8 +1,8 @@
-//! WebSearch tool - Search the web for information
+//! WebSearch tool - Search the web using SerpAPI
 //!
-//! Provides web search capability with support for multiple search providers.
+//! Provides web search capability via SerpAPI.
 //! For providers with native web search (Anthropic, OpenAI, Groq, xAI, Gemini, Cohere),
-//! native search is preferred. For others, falls back to external search APIs.
+//! native search is preferred. For others, this tool uses SerpAPI.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -38,7 +38,7 @@ pub fn supports_native_search(provider_type: &str) -> bool {
     NATIVE_SEARCH_PROVIDERS.contains(&provider_type.to_lowercase().as_str())
 }
 
-/// Tool for searching the web
+/// Tool for searching the web using SerpAPI
 pub struct WebSearch {
     config: WebSearchConfig,
     provider_type: Option<String>,
@@ -72,17 +72,16 @@ impl WebSearch {
             .unwrap_or(false)
     }
 
-    /// Perform search using fallback provider
-    async fn search_fallback(
+    /// Perform search using SerpAPI
+    async fn search(
         &self,
         query: &str,
         allowed_domains: &[String],
         blocked_domains: &[String],
     ) -> Result<Vec<SearchResult>, String> {
-        // Use auto-detection to find an available provider
-        let (provider, api_key, endpoint) = self.config.get_effective_provider()
+        let api_key = self.config.get_api_key()
             .ok_or_else(|| {
-                "No search API key configured. Set one of: BRAVE_API_KEY, SERPAPI_API_KEY, SERPER_API_KEY, or TAVILY_API_KEY environment variable.".to_string()
+                "SerpAPI key not configured. Set SERPAPI_API_KEY environment variable or api_key in [web_search] config.".to_string()
             })?;
 
         // Build search query with domain filters
@@ -106,116 +105,11 @@ impl WebSearch {
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-        // Build request based on detected provider
-        let response = match provider.as_str() {
-            "brave" => self.search_brave(&client, &endpoint, &search_query, Some(&api_key)).await?,
-            "serper" => self.search_serper(&client, &endpoint, &search_query, Some(&api_key)).await?,
-            "serpapi" => self.search_serpapi(&client, &endpoint, &search_query, Some(&api_key)).await?,
-            "tavily" => self.search_tavily(&client, &endpoint, &search_query, Some(&api_key)).await?,
-            "searxng" => self.search_searxng(&client, &endpoint, &search_query).await?,
-            _ => return Err(format!("Unknown search provider: {}", provider)),
-        };
-
-        Ok(response)
-    }
-
-    async fn search_brave(
-        &self,
-        client: &reqwest::Client,
-        endpoint: &str,
-        query: &str,
-        api_key: Option<&str>,
-    ) -> Result<Vec<SearchResult>, String> {
-        let api_key = api_key.ok_or("Brave API key required")?;
-
         let response = client
-            .get(endpoint)
-            .header("X-Subscription-Token", api_key)
+            .get("https://serpapi.com/search")
             .query(&[
-                ("q", query),
-                ("count", &self.config.max_results.to_string()),
-            ])
-            .send()
-            .await
-            .map_err(|e| format!("Brave search failed: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(format!("Brave API error: {}", response.status()));
-        }
-
-        let body: Value = response.json().await
-            .map_err(|e| format!("Failed to parse Brave response: {}", e))?;
-
-        let mut results = Vec::new();
-        if let Some(web) = body.get("web").and_then(|w| w.get("results")).and_then(|r| r.as_array()) {
-            for item in web.iter().take(self.config.max_results) {
-                results.push(SearchResult {
-                    title: item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-                    url: item.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
-                    snippet: item.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
-                });
-            }
-        }
-
-        Ok(results)
-    }
-
-    async fn search_serper(
-        &self,
-        client: &reqwest::Client,
-        endpoint: &str,
-        query: &str,
-        api_key: Option<&str>,
-    ) -> Result<Vec<SearchResult>, String> {
-        let api_key = api_key.ok_or("Serper API key required")?;
-
-        let response = client
-            .post(endpoint)
-            .header("X-API-KEY", api_key)
-            .header("Content-Type", "application/json")
-            .json(&json!({
-                "q": query,
-                "num": self.config.max_results
-            }))
-            .send()
-            .await
-            .map_err(|e| format!("Serper search failed: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(format!("Serper API error: {}", response.status()));
-        }
-
-        let body: Value = response.json().await
-            .map_err(|e| format!("Failed to parse Serper response: {}", e))?;
-
-        let mut results = Vec::new();
-        if let Some(organic) = body.get("organic").and_then(|o| o.as_array()) {
-            for item in organic.iter().take(self.config.max_results) {
-                results.push(SearchResult {
-                    title: item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-                    url: item.get("link").and_then(|l| l.as_str()).unwrap_or("").to_string(),
-                    snippet: item.get("snippet").and_then(|s| s.as_str()).unwrap_or("").to_string(),
-                });
-            }
-        }
-
-        Ok(results)
-    }
-
-    async fn search_serpapi(
-        &self,
-        client: &reqwest::Client,
-        endpoint: &str,
-        query: &str,
-        api_key: Option<&str>,
-    ) -> Result<Vec<SearchResult>, String> {
-        let api_key = api_key.ok_or("SerpAPI API key required")?;
-
-        let response = client
-            .get(endpoint)
-            .query(&[
-                ("q", query),
-                ("api_key", api_key),
+                ("q", search_query.as_str()),
+                ("api_key", api_key.as_str()),
                 ("engine", "google"),
                 ("num", &self.config.max_results.to_string()),
             ])
@@ -237,87 +131,6 @@ impl WebSearch {
                     title: item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
                     url: item.get("link").and_then(|l| l.as_str()).unwrap_or("").to_string(),
                     snippet: item.get("snippet").and_then(|s| s.as_str()).unwrap_or("").to_string(),
-                });
-            }
-        }
-
-        Ok(results)
-    }
-
-    async fn search_tavily(
-        &self,
-        client: &reqwest::Client,
-        endpoint: &str,
-        query: &str,
-        api_key: Option<&str>,
-    ) -> Result<Vec<SearchResult>, String> {
-        let api_key = api_key.ok_or("Tavily API key required")?;
-
-        let response = client
-            .post(endpoint)
-            .header("Content-Type", "application/json")
-            .json(&json!({
-                "api_key": api_key,
-                "query": query,
-                "max_results": self.config.max_results,
-                "include_answer": false
-            }))
-            .send()
-            .await
-            .map_err(|e| format!("Tavily search failed: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(format!("Tavily API error: {}", response.status()));
-        }
-
-        let body: Value = response.json().await
-            .map_err(|e| format!("Failed to parse Tavily response: {}", e))?;
-
-        let mut results = Vec::new();
-        if let Some(items) = body.get("results").and_then(|r| r.as_array()) {
-            for item in items.iter().take(self.config.max_results) {
-                results.push(SearchResult {
-                    title: item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-                    url: item.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
-                    snippet: item.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string(),
-                });
-            }
-        }
-
-        Ok(results)
-    }
-
-    async fn search_searxng(
-        &self,
-        client: &reqwest::Client,
-        endpoint: &str,
-        query: &str,
-    ) -> Result<Vec<SearchResult>, String> {
-        let response = client
-            .get(endpoint)
-            .query(&[
-                ("q", query),
-                ("format", "json"),
-                ("categories", "general"),
-            ])
-            .send()
-            .await
-            .map_err(|e| format!("SearXNG search failed: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(format!("SearXNG error: {}", response.status()));
-        }
-
-        let body: Value = response.json().await
-            .map_err(|e| format!("Failed to parse SearXNG response: {}", e))?;
-
-        let mut results = Vec::new();
-        if let Some(items) = body.get("results").and_then(|r| r.as_array()) {
-            for item in items.iter().take(self.config.max_results) {
-                results.push(SearchResult {
-                    title: item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-                    url: item.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
-                    snippet: item.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string(),
                 });
             }
         }
@@ -389,16 +202,15 @@ impl Tool for WebSearch {
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default();
 
-            // For now, always use fallback search
-            // Native search integration will be handled at the provider level
-            match self.search_fallback(query, &allowed_domains, &blocked_domains).await {
+            // Use SerpAPI for search
+            match self.search(query, &allowed_domains, &blocked_domains).await {
                 Ok(results) => {
                     let count = results.len();
                     Ok(ToolOutput::success(json!({
                         "query": query,
                         "results": results,
                         "count": count,
-                        "provider": self.config.fallback_provider
+                        "provider": "serpapi"
                     })))
                 }
                 Err(e) => Err(ToolError::ExecutionFailed(e)),
@@ -431,9 +243,9 @@ mod tests {
     }
 
     #[test]
-    fn test_default_endpoints() {
+    fn test_config_default() {
         let config = WebSearchConfig::default();
-        assert!(config.get_fallback_endpoint().is_some());
-        assert!(config.get_fallback_endpoint().unwrap().contains("brave"));
+        assert!(config.api_key.is_none());
+        assert_eq!(config.max_results, 10);
     }
 }

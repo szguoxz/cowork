@@ -565,8 +565,13 @@ mod tests {
     #[test]
     fn test_tool_scope_via_builder() {
         use crate::orchestration::ToolRegistryBuilder;
+        use crate::config::WebSearchConfig;
 
         let workspace = PathBuf::from("/tmp/test");
+
+        // Create a WebSearchConfig with API key for testing
+        let mut ws_config = WebSearchConfig::default();
+        ws_config.api_key = Some("test-key".to_string());
 
         // Bash scope (only Bash)
         let bash_registry = ToolRegistryBuilder::new(workspace.clone())
@@ -578,8 +583,18 @@ mod tests {
         assert!(bash_registry.get("Glob").is_none());
 
         // Explore scope (all tools except Task, Edit, Write)
+        // Without WebSearchConfig, WebSearch is not registered
+        let explore_registry_no_ws = ToolRegistryBuilder::new(workspace.clone())
+            .with_tool_scope(ToolScope::Explore)
+            .build();
+        assert!(explore_registry_no_ws.get("Read").is_some());
+        assert!(explore_registry_no_ws.get("WebFetch").is_some());
+        assert!(explore_registry_no_ws.get("WebSearch").is_none()); // No config
+
+        // Explore scope with WebSearchConfig
         let explore_registry = ToolRegistryBuilder::new(workspace.clone())
             .with_tool_scope(ToolScope::Explore)
+            .with_web_search_config(ws_config.clone())
             .build();
         assert!(explore_registry.get("Read").is_some());
         assert!(explore_registry.get("Glob").is_some());
@@ -595,6 +610,7 @@ mod tests {
         // Plan scope (same as Explore: all except Task, Edit, Write)
         let plan_registry = ToolRegistryBuilder::new(workspace.clone())
             .with_tool_scope(ToolScope::Plan)
+            .with_web_search_config(ws_config.clone())
             .build();
         assert!(plan_registry.get("Read").is_some());
         assert!(plan_registry.get("Glob").is_some());
