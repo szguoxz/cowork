@@ -406,7 +406,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
     const targetId = sessionId || activeSessionId
     if (!targetId) throw new Error('No active session')
 
-    await invoke('answer_loop_question', { sessionId: targetId, requestId, answers })
+    await invoke('answer_question', { sessionId: targetId, requestId, answers })
     updateSession(targetId, s => ({ ...s, modal: null }))
   }, [activeSessionId, updateSession])
 
