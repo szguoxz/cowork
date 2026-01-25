@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::cmp::Ordering;
 
-use crate::provider::model_catalog;
+use crate::provider::catalog;
 
 /// Tool specification for matching tools by name or pattern
 ///
@@ -363,9 +363,9 @@ impl ModelPreference {
     pub fn model_id(&self) -> Option<&str> {
         match self {
             ModelPreference::Inherit => None,
-            ModelPreference::Opus => Some(model_catalog::ANTHROPIC_POWERFUL.0),
-            ModelPreference::Sonnet => Some(model_catalog::ANTHROPIC_BALANCED.0),
-            ModelPreference::Haiku => Some(model_catalog::ANTHROPIC_FAST.0),
+            ModelPreference::Opus => catalog::model_id("anthropic", catalog::ModelTier::Powerful),
+            ModelPreference::Sonnet => catalog::default_model("anthropic"),
+            ModelPreference::Haiku => catalog::model_id("anthropic", catalog::ModelTier::Fast),
             ModelPreference::Custom(id) => Some(id),
         }
     }
@@ -728,9 +728,9 @@ mod tests {
         #[test]
         fn test_model_id() {
             assert_eq!(ModelPreference::Inherit.model_id(), None);
-            assert_eq!(ModelPreference::Opus.model_id(), Some(model_catalog::ANTHROPIC_POWERFUL.0));
-            assert_eq!(ModelPreference::Sonnet.model_id(), Some(model_catalog::ANTHROPIC_BALANCED.0));
-            assert_eq!(ModelPreference::Haiku.model_id(), Some(model_catalog::ANTHROPIC_FAST.0));
+            assert_eq!(ModelPreference::Opus.model_id(), catalog::model_id("anthropic", catalog::ModelTier::Powerful));
+            assert_eq!(ModelPreference::Sonnet.model_id(), catalog::default_model("anthropic"));
+            assert_eq!(ModelPreference::Haiku.model_id(), catalog::model_id("anthropic", catalog::ModelTier::Fast));
             assert_eq!(
                 ModelPreference::Custom("custom-model".to_string()).model_id(),
                 Some("custom-model")

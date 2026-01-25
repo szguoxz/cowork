@@ -180,7 +180,7 @@ pub fn create_provider_from_provider_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::model_catalog;
+    use super::super::catalog;
     use crate::provider::LlmProvider;
     use tempfile::tempdir;
 
@@ -190,7 +190,7 @@ mod tests {
             [providers.anthropic]
             provider_type = "anthropic"
             model = "{}"
-        "#, model_catalog::ANTHROPIC_BALANCED.0)).unwrap();
+        "#, catalog::default_model("anthropic").unwrap())).unwrap();
     }
 
     #[test]
@@ -237,9 +237,9 @@ mod tests {
         let config_manager = ConfigManager::with_path(config_path).unwrap();
 
         let tiers = get_model_tiers(&config_manager, ProviderType::Anthropic);
-        assert_eq!(tiers.fast, model_catalog::ANTHROPIC_FAST.0);
-        assert_eq!(tiers.balanced, model_catalog::ANTHROPIC_BALANCED.0);
-        assert_eq!(tiers.powerful, model_catalog::ANTHROPIC_POWERFUL.0);
+        assert_eq!(tiers.fast, catalog::model_id("anthropic", catalog::ModelTier::Fast).unwrap());
+        assert_eq!(tiers.balanced, catalog::default_model("anthropic").unwrap());
+        assert_eq!(tiers.powerful, catalog::model_id("anthropic", catalog::ModelTier::Powerful).unwrap());
     }
 
     #[test]
@@ -247,7 +247,7 @@ mod tests {
         let provider = create_provider_with_settings(
             ProviderType::Anthropic,
             "test-key",
-            model_catalog::ANTHROPIC_BALANCED.0,
+            catalog::default_model("anthropic").unwrap(),
         );
         assert_eq!(provider.name(), "anthropic");
     }

@@ -510,7 +510,7 @@ mod tests {
                 metadata: AssemblyMetadata::default(),
             };
 
-            assert_eq!(prompt.model_id(), Some(crate::provider::model_catalog::ANTHROPIC_FAST.0));
+            assert_eq!(prompt.model_id(), crate::provider::catalog::model_id("anthropic", crate::provider::catalog::ModelTier::Fast));
         }
     }
 

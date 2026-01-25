@@ -152,6 +152,28 @@ pub fn context_window(provider_id: &str) -> Option<usize> {
     get(provider_id).map(|p| p.default_model().context)
 }
 
+/// Get context window for a specific model tier
+pub fn context_window_for_tier(provider_id: &str, tier: ModelTier) -> Option<usize> {
+    get(provider_id).and_then(|p| p.model(tier).map(|m| m.context))
+}
+
+/// Get model name for a provider and tier
+pub fn model_name(provider_id: &str, tier: ModelTier) -> Option<&'static str> {
+    get(provider_id).and_then(|p| p.model(tier).map(|m| m.name.as_str()))
+}
+
+/// Get all three model tier IDs for a provider (fast, balanced, powerful)
+/// Returns (fast_id, balanced_id, powerful_id)
+pub fn model_tiers(provider_id: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    get(provider_id).map(|p| {
+        (
+            p.model_id(ModelTier::Fast),
+            p.model_id(ModelTier::Balanced),
+            p.model_id(ModelTier::Powerful),
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

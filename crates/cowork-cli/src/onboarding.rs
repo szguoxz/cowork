@@ -7,7 +7,7 @@ use console::style;
 use dialoguer::{theme::ColorfulTheme, Confirm, Password, Select};
 
 use cowork_core::config::{ConfigManager, ProviderConfig, WebSearchConfig};
-use cowork_core::provider::{model_catalog, GenAIProvider, ProviderType};
+use cowork_core::provider::{catalog, GenAIProvider, ProviderType};
 use cowork_core::tools::web::supports_native_search;
 
 /// Provider information for display
@@ -17,9 +17,9 @@ pub struct ProviderInfo {
     pub description: &'static str,
     pub signup_url: &'static str,
     pub env_var: &'static str,
-    /// Default model ID (balanced tier from model_catalog)
+    /// Default model ID (balanced tier from catalog)
     pub default_model: &'static str,
-    /// Default base URL (from model_catalog, can be overridden in config)
+    /// Default base URL (from catalog, can be overridden in config)
     pub base_url: &'static str,
 }
 
@@ -32,8 +32,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Best for code, writing, and reasoning",
             signup_url: "https://console.anthropic.com/",
             env_var: "ANTHROPIC_API_KEY",
-            default_model: model_catalog::ANTHROPIC_BALANCED.0,
-            base_url: model_catalog::ANTHROPIC_BASE_URL,
+            default_model: catalog::default_model("anthropic").unwrap_or(""),
+            base_url: catalog::base_url("anthropic").unwrap_or(""),
         },
         ProviderType::OpenAI => ProviderInfo {
             name: "openai",
@@ -41,8 +41,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Versatile and widely supported",
             signup_url: "https://platform.openai.com/",
             env_var: "OPENAI_API_KEY",
-            default_model: model_catalog::OPENAI_BALANCED.0,
-            base_url: model_catalog::OPENAI_BASE_URL,
+            default_model: catalog::default_model("openai").unwrap_or(""),
+            base_url: catalog::base_url("openai").unwrap_or(""),
         },
         ProviderType::Gemini => ProviderInfo {
             name: "gemini",
@@ -50,8 +50,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Large context window (1M tokens)",
             signup_url: "https://aistudio.google.com/",
             env_var: "GEMINI_API_KEY",
-            default_model: model_catalog::GEMINI_BALANCED.0,
-            base_url: model_catalog::GEMINI_BASE_URL,
+            default_model: catalog::default_model("gemini").unwrap_or(""),
+            base_url: catalog::base_url("gemini").unwrap_or(""),
         },
         ProviderType::Groq => ProviderInfo {
             name: "groq",
@@ -59,8 +59,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Ultra-fast inference",
             signup_url: "https://console.groq.com/",
             env_var: "GROQ_API_KEY",
-            default_model: model_catalog::GROQ_BALANCED.0,
-            base_url: model_catalog::GROQ_BASE_URL,
+            default_model: catalog::default_model("groq").unwrap_or(""),
+            base_url: catalog::base_url("groq").unwrap_or(""),
         },
         ProviderType::DeepSeek => ProviderInfo {
             name: "deepseek",
@@ -68,8 +68,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Cost-effective reasoning",
             signup_url: "https://platform.deepseek.com/",
             env_var: "DEEPSEEK_API_KEY",
-            default_model: model_catalog::DEEPSEEK_BALANCED.0,
-            base_url: model_catalog::DEEPSEEK_BASE_URL,
+            default_model: catalog::default_model("deepseek").unwrap_or(""),
+            base_url: catalog::base_url("deepseek").unwrap_or(""),
         },
         ProviderType::XAI => ProviderInfo {
             name: "xai",
@@ -77,8 +77,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Latest Grok models",
             signup_url: "https://x.ai/api",
             env_var: "XAI_API_KEY",
-            default_model: model_catalog::XAI_BALANCED.0,
-            base_url: model_catalog::XAI_BASE_URL,
+            default_model: catalog::default_model("xai").unwrap_or(""),
+            base_url: catalog::base_url("xai").unwrap_or(""),
         },
         ProviderType::Together => ProviderInfo {
             name: "together",
@@ -86,8 +86,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "200+ open source models",
             signup_url: "https://api.together.xyz/",
             env_var: "TOGETHER_API_KEY",
-            default_model: model_catalog::TOGETHER_BALANCED.0,
-            base_url: model_catalog::TOGETHER_BASE_URL,
+            default_model: catalog::default_model("together").unwrap_or(""),
+            base_url: catalog::base_url("together").unwrap_or(""),
         },
         ProviderType::Fireworks => ProviderInfo {
             name: "fireworks",
@@ -95,8 +95,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Fast open source model inference",
             signup_url: "https://fireworks.ai/",
             env_var: "FIREWORKS_API_KEY",
-            default_model: model_catalog::FIREWORKS_BALANCED.0,
-            base_url: model_catalog::FIREWORKS_BASE_URL,
+            default_model: catalog::default_model("fireworks").unwrap_or(""),
+            base_url: catalog::base_url("fireworks").unwrap_or(""),
         },
         ProviderType::Zai => ProviderInfo {
             name: "zai",
@@ -104,8 +104,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "GLM-4 models from China",
             signup_url: "https://z.ai/",
             env_var: "ZAI_API_KEY",
-            default_model: model_catalog::ZAI_BALANCED.0,
-            base_url: model_catalog::ZAI_BASE_URL,
+            default_model: catalog::default_model("zai").unwrap_or(""),
+            base_url: catalog::base_url("zai").unwrap_or(""),
         },
         ProviderType::Nebius => ProviderInfo {
             name: "nebius",
@@ -113,8 +113,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "30+ open source models",
             signup_url: "https://studio.nebius.ai/",
             env_var: "NEBIUS_API_KEY",
-            default_model: model_catalog::NEBIUS_BALANCED.0,
-            base_url: model_catalog::NEBIUS_BASE_URL,
+            default_model: catalog::default_model("nebius").unwrap_or(""),
+            base_url: catalog::base_url("nebius").unwrap_or(""),
         },
         ProviderType::MIMO => ProviderInfo {
             name: "mimo",
@@ -122,8 +122,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Xiaomi's MIMO models",
             signup_url: "https://xiaomimimo.com/",
             env_var: "MIMO_API_KEY",
-            default_model: model_catalog::MIMO_BALANCED.0,
-            base_url: model_catalog::MIMO_BASE_URL,
+            default_model: catalog::default_model("mimo").unwrap_or(""),
+            base_url: catalog::base_url("mimo").unwrap_or(""),
         },
         ProviderType::BigModel => ProviderInfo {
             name: "bigmodel",
@@ -131,8 +131,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Zhipu AI China platform",
             signup_url: "https://open.bigmodel.cn/",
             env_var: "BIGMODEL_API_KEY",
-            default_model: model_catalog::BIGMODEL_BALANCED.0,
-            base_url: model_catalog::BIGMODEL_BASE_URL,
+            default_model: catalog::default_model("bigmodel").unwrap_or(""),
+            base_url: catalog::base_url("bigmodel").unwrap_or(""),
         },
         ProviderType::Ollama => ProviderInfo {
             name: "ollama",
@@ -140,8 +140,8 @@ pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
             description: "Run models locally, no API key needed",
             signup_url: "https://ollama.ai/",
             env_var: "",
-            default_model: model_catalog::OLLAMA_BALANCED.0,
-            base_url: model_catalog::OLLAMA_BASE_URL,
+            default_model: catalog::default_model("ollama").unwrap_or(""),
+            base_url: catalog::base_url("ollama").unwrap_or(""),
         },
         _ => ProviderInfo {
             name: "unknown",

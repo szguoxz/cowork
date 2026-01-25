@@ -1,10 +1,10 @@
 //! Model listing from catalog constants
 //!
-//! Returns known models for each provider from the centralized model catalog.
+//! Returns known models for each provider from the centralized catalog.
 
 use serde::{Deserialize, Serialize};
 
-use super::model_catalog;
+use super::catalog;
 use super::ProviderType;
 
 /// Information about an available model
@@ -60,7 +60,7 @@ fn get_openai_context_window(model_id: &str) -> Option<u32> {
 
     // GPT-5 series
     if id.starts_with("gpt-5") {
-        return Some(model_catalog::OPENAI_BALANCED.2 as u32);
+        return Some(400_000);
     }
 
     // GPT-4.1 series (1M context window)
@@ -226,108 +226,56 @@ impl ModelInfo {
     }
 }
 
-/// Helper to build a ModelInfo from a catalog entry and mark as recommended
-fn from_entry(entry: model_catalog::ModelEntry, recommended: bool) -> ModelInfo {
-    let mut info = ModelInfo::new(entry.0)
-        .with_name(entry.1)
-        .with_context_window(entry.2 as u32);
-    if recommended {
-        info = info.recommended();
-    }
-    info
-}
-
 /// Get known models for a provider from the catalog.
 ///
 /// Returns deduplicated entries (fast/balanced/powerful tiers) as `Vec<ModelInfo>`.
 /// The balanced tier is marked as recommended.
 pub fn get_known_models(provider: ProviderType) -> Vec<ModelInfo> {
-    let (fast, balanced, powerful) = match provider {
-        ProviderType::Anthropic => (
-            model_catalog::ANTHROPIC_FAST,
-            model_catalog::ANTHROPIC_BALANCED,
-            model_catalog::ANTHROPIC_POWERFUL,
-        ),
-        ProviderType::OpenAI => (
-            model_catalog::OPENAI_FAST,
-            model_catalog::OPENAI_BALANCED,
-            model_catalog::OPENAI_POWERFUL,
-        ),
-        ProviderType::Gemini => (
-            model_catalog::GEMINI_FAST,
-            model_catalog::GEMINI_BALANCED,
-            model_catalog::GEMINI_POWERFUL,
-        ),
-        ProviderType::DeepSeek => (
-            model_catalog::DEEPSEEK_FAST,
-            model_catalog::DEEPSEEK_BALANCED,
-            model_catalog::DEEPSEEK_POWERFUL,
-        ),
-        ProviderType::Groq => (
-            model_catalog::GROQ_FAST,
-            model_catalog::GROQ_BALANCED,
-            model_catalog::GROQ_POWERFUL,
-        ),
-        ProviderType::XAI => (
-            model_catalog::XAI_FAST,
-            model_catalog::XAI_BALANCED,
-            model_catalog::XAI_POWERFUL,
-        ),
-        ProviderType::Cohere => (
-            model_catalog::COHERE_FAST,
-            model_catalog::COHERE_BALANCED,
-            model_catalog::COHERE_POWERFUL,
-        ),
-        ProviderType::Perplexity => (
-            model_catalog::PERPLEXITY_FAST,
-            model_catalog::PERPLEXITY_BALANCED,
-            model_catalog::PERPLEXITY_POWERFUL,
-        ),
-        ProviderType::Together => (
-            model_catalog::TOGETHER_FAST,
-            model_catalog::TOGETHER_BALANCED,
-            model_catalog::TOGETHER_POWERFUL,
-        ),
-        ProviderType::Fireworks => (
-            model_catalog::FIREWORKS_FAST,
-            model_catalog::FIREWORKS_BALANCED,
-            model_catalog::FIREWORKS_POWERFUL,
-        ),
-        ProviderType::Zai => (
-            model_catalog::ZAI_FAST,
-            model_catalog::ZAI_BALANCED,
-            model_catalog::ZAI_POWERFUL,
-        ),
-        ProviderType::Nebius => (
-            model_catalog::NEBIUS_FAST,
-            model_catalog::NEBIUS_BALANCED,
-            model_catalog::NEBIUS_POWERFUL,
-        ),
-        ProviderType::MIMO => (
-            model_catalog::MIMO_FAST,
-            model_catalog::MIMO_BALANCED,
-            model_catalog::MIMO_POWERFUL,
-        ),
-        ProviderType::BigModel => (
-            model_catalog::BIGMODEL_FAST,
-            model_catalog::BIGMODEL_BALANCED,
-            model_catalog::BIGMODEL_POWERFUL,
-        ),
-        ProviderType::Ollama => (
-            model_catalog::OLLAMA_FAST,
-            model_catalog::OLLAMA_BALANCED,
-            model_catalog::OLLAMA_POWERFUL,
-        ),
+    let provider_id = provider.to_string();
+
+    // Get provider from catalog, return empty if not found
+    let Some(cat_provider) = catalog::get(&provider_id) else {
+        return Vec::new();
     };
 
-    // Deduplicate: balanced is always included (recommended), then add fast/powerful if distinct
-    let mut models = vec![from_entry(balanced, true)];
+    // Get the three tier models
+    let fast = cat_provider.model(catalog::ModelTier::Fast);
+    let balanced = cat_provider.model(catalog::ModelTier::Balanced);
+    let powerful = cat_provider.model(catalog::ModelTier::Powerful);
 
-    if fast.0 != balanced.0 {
-        models.insert(0, from_entry(fast, false));
+    // Build model info list - balanced is always included (recommended)
+    let mut models = Vec::new();
+
+    // Add fast if distinct from balanced
+    if let (Some(f), Some(b)) = (fast, balanced) {
+        if f.id != b.id {
+            models.push(
+                ModelInfo::new(&f.id)
+                    .with_name(&f.name)
+                    .with_context_window(f.context as u32)
+            );
+        }
     }
-    if powerful.0 != balanced.0 {
-        models.push(from_entry(powerful, false));
+
+    // Add balanced (always, marked as recommended)
+    if let Some(b) = balanced {
+        models.push(
+            ModelInfo::new(&b.id)
+                .with_name(&b.name)
+                .with_context_window(b.context as u32)
+                .recommended()
+        );
+    }
+
+    // Add powerful if distinct from balanced
+    if let (Some(p), Some(b)) = (powerful, balanced) {
+        if p.id != b.id {
+            models.push(
+                ModelInfo::new(&p.id)
+                    .with_name(&p.name)
+                    .with_context_window(p.context as u32)
+            );
+        }
     }
 
     models
@@ -355,7 +303,8 @@ mod tests {
         // Anthropic has 3 distinct models
         assert_eq!(models.len(), 3);
         // Balanced should be recommended
-        assert!(models.iter().any(|m| m.id == model_catalog::ANTHROPIC_BALANCED.0 && m.recommended));
+        let balanced_id = catalog::default_model("anthropic").unwrap();
+        assert!(models.iter().any(|m| m.id == balanced_id && m.recommended));
     }
 
     #[test]

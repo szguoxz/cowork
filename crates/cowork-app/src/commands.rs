@@ -9,7 +9,7 @@ use cowork_core::prompt::{
     AgentInfo, CommandInfo, ComponentRegistry, PluginInfo, RegistrySummary, SkillInfo,
 };
 use cowork_core::provider::{
-    create_provider_with_settings, model_catalog, LlmProvider, LlmRequest, ProviderType,
+    catalog, create_provider_with_settings, LlmProvider, LlmRequest, ProviderType,
 };
 use cowork_core::ApprovalLevel;
 
@@ -156,45 +156,45 @@ pub struct ModelInfo {
 #[tauri::command]
 pub async fn fetch_provider_models(provider_type: String) -> Result<Vec<ModelInfo>, String> {
     let ptype: ProviderType = provider_type.parse().map_err(|e: String| e)?;
+    let provider_id = ptype.to_string();
 
-    // Return known models from catalog
-    let models = match ptype {
-        ProviderType::Anthropic => vec![
-            ModelInfo {
-                id: model_catalog::ANTHROPIC_BALANCED.0.to_string(),
-                name: model_catalog::ANTHROPIC_BALANCED.1.to_string(),
-                description: "Best balance of speed and capability".to_string(),
-            },
-            ModelInfo {
-                id: model_catalog::ANTHROPIC_POWERFUL.0.to_string(),
-                name: model_catalog::ANTHROPIC_POWERFUL.1.to_string(),
-                description: "Most capable model".to_string(),
-            },
-            ModelInfo {
-                id: model_catalog::ANTHROPIC_FAST.0.to_string(),
-                name: model_catalog::ANTHROPIC_FAST.1.to_string(),
-                description: "Fast and efficient".to_string(),
-            },
-        ],
-        ProviderType::OpenAI => vec![
-            ModelInfo {
-                id: model_catalog::OPENAI_BALANCED.0.to_string(),
-                name: model_catalog::OPENAI_BALANCED.1.to_string(),
-                description: "Latest GPT model".to_string(),
-            },
-            ModelInfo {
-                id: model_catalog::OPENAI_FAST.0.to_string(),
-                name: model_catalog::OPENAI_FAST.1.to_string(),
-                description: "Fast and efficient".to_string(),
-            },
-            ModelInfo {
-                id: model_catalog::OPENAI_POWERFUL.0.to_string(),
-                name: model_catalog::OPENAI_POWERFUL.1.to_string(),
-                description: "Advanced reasoning model".to_string(),
-            },
-        ],
-        _ => vec![],
+    // Get provider from catalog
+    let Some(provider) = catalog::get(&provider_id) else {
+        return Ok(vec![]);
     };
+
+    // Build model list from the three tiers
+    let mut models = Vec::new();
+
+    if let Some(balanced) = provider.model(catalog::ModelTier::Balanced) {
+        models.push(ModelInfo {
+            id: balanced.id.clone(),
+            name: balanced.name.clone(),
+            description: "Best balance of speed and capability".to_string(),
+        });
+    }
+
+    if let Some(powerful) = provider.model(catalog::ModelTier::Powerful) {
+        // Only add if different from balanced
+        if models.iter().all(|m| m.id != powerful.id) {
+            models.push(ModelInfo {
+                id: powerful.id.clone(),
+                name: powerful.name.clone(),
+                description: "Most capable model".to_string(),
+            });
+        }
+    }
+
+    if let Some(fast) = provider.model(catalog::ModelTier::Fast) {
+        // Only add if different from balanced
+        if models.iter().all(|m| m.id != fast.id) {
+            models.push(ModelInfo {
+                id: fast.id.clone(),
+                name: fast.name.clone(),
+                description: "Fast and efficient".to_string(),
+            });
+        }
+    }
 
     Ok(models)
 }

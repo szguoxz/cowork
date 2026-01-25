@@ -22,7 +22,7 @@ use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
 use crate::tools::ToolDefinition;
-use super::model_catalog;
+use super::catalog;
 
 /// Log LLM request/response to file if LLM_LOG_FILE is set
 fn log_llm_interaction(
@@ -179,23 +179,7 @@ impl std::str::FromStr for ProviderType {
 impl ProviderType {
     /// Get the default model for this provider
     pub fn default_model(&self) -> &'static str {
-        match self {
-            ProviderType::OpenAI => model_catalog::OPENAI_BALANCED.0,
-            ProviderType::Anthropic => model_catalog::ANTHROPIC_BALANCED.0,
-            ProviderType::Gemini => model_catalog::GEMINI_FAST.0,
-            ProviderType::Cohere => model_catalog::COHERE_BALANCED.0,
-            ProviderType::Perplexity => model_catalog::PERPLEXITY_BALANCED.0,
-            ProviderType::Groq => model_catalog::GROQ_BALANCED.0,
-            ProviderType::XAI => model_catalog::XAI_BALANCED.0,
-            ProviderType::DeepSeek => model_catalog::DEEPSEEK_BALANCED.0,
-            ProviderType::Together => model_catalog::TOGETHER_BALANCED.0,
-            ProviderType::Fireworks => model_catalog::FIREWORKS_BALANCED.0,
-            ProviderType::Zai => model_catalog::ZAI_BALANCED.0,
-            ProviderType::Nebius => model_catalog::NEBIUS_BALANCED.0,
-            ProviderType::MIMO => model_catalog::MIMO_BALANCED.0,
-            ProviderType::BigModel => model_catalog::BIGMODEL_BALANCED.0,
-            ProviderType::Ollama => model_catalog::OLLAMA_BALANCED.0,
-        }
+        catalog::default_model(self.as_str()).unwrap_or("unknown")
     }
 
     /// Get the environment variable name for API key

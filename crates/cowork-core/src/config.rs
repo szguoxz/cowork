@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::prompt::ComponentPaths;
-use crate::provider::model_catalog;
+use crate::provider::catalog;
 
 use crate::error::{Error, Result};
 
@@ -239,161 +239,100 @@ pub struct ModelTiers {
 }
 
 impl ModelTiers {
+    /// Create model tiers from catalog for a provider
+    fn from_catalog(provider_id: &str) -> Option<Self> {
+        catalog::model_tiers(provider_id).map(|(fast, balanced, powerful)| Self {
+            fast: fast.to_string(),
+            balanced: balanced.to_string(),
+            powerful: powerful.to_string(),
+        })
+    }
+
     /// Default tiers for Anthropic
     pub fn anthropic() -> Self {
-        Self {
-            fast: model_catalog::ANTHROPIC_FAST.0.to_string(),
-            balanced: model_catalog::ANTHROPIC_BALANCED.0.to_string(),
-            powerful: model_catalog::ANTHROPIC_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("anthropic").unwrap()
     }
 
     /// Default tiers for OpenAI
     pub fn openai() -> Self {
-        Self {
-            fast: model_catalog::OPENAI_FAST.0.to_string(),
-            balanced: model_catalog::OPENAI_BALANCED.0.to_string(),
-            powerful: model_catalog::OPENAI_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("openai").unwrap()
     }
 
     /// Default tiers for Gemini
     pub fn gemini() -> Self {
-        Self {
-            fast: model_catalog::GEMINI_FAST.0.to_string(),
-            balanced: model_catalog::GEMINI_BALANCED.0.to_string(),
-            powerful: model_catalog::GEMINI_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("gemini").unwrap()
     }
 
     /// Default tiers for DeepSeek
     pub fn deepseek() -> Self {
-        Self {
-            fast: model_catalog::DEEPSEEK_FAST.0.to_string(),
-            balanced: model_catalog::DEEPSEEK_BALANCED.0.to_string(),
-            powerful: model_catalog::DEEPSEEK_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("deepseek").unwrap()
     }
 
-    /// Default tiers for Groq (fast inference)
+    /// Default tiers for Groq
     pub fn groq() -> Self {
-        Self {
-            fast: model_catalog::GROQ_FAST.0.to_string(),
-            balanced: model_catalog::GROQ_BALANCED.0.to_string(),
-            powerful: model_catalog::GROQ_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("groq").unwrap()
     }
 
-    /// Default tiers for xAI (Grok)
+    /// Default tiers for xAI
     pub fn xai() -> Self {
-        Self {
-            fast: model_catalog::XAI_FAST.0.to_string(),
-            balanced: model_catalog::XAI_BALANCED.0.to_string(),
-            powerful: model_catalog::XAI_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("xai").unwrap()
     }
 
     /// Default tiers for Cohere
     pub fn cohere() -> Self {
-        Self {
-            fast: model_catalog::COHERE_FAST.0.to_string(),
-            balanced: model_catalog::COHERE_BALANCED.0.to_string(),
-            powerful: model_catalog::COHERE_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("cohere").unwrap()
     }
 
     /// Default tiers for Perplexity
     pub fn perplexity() -> Self {
-        Self {
-            fast: model_catalog::PERPLEXITY_FAST.0.to_string(),
-            balanced: model_catalog::PERPLEXITY_BALANCED.0.to_string(),
-            powerful: model_catalog::PERPLEXITY_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("perplexity").unwrap()
     }
 
-    /// Default tiers for Ollama (placeholder - users should configure)
+    /// Default tiers for Ollama
     pub fn ollama() -> Self {
-        Self {
-            fast: model_catalog::OLLAMA_FAST.0.to_string(),
-            balanced: model_catalog::OLLAMA_BALANCED.0.to_string(),
-            powerful: model_catalog::OLLAMA_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("ollama").unwrap()
     }
 
     /// Default tiers for Together AI
     pub fn together() -> Self {
-        Self {
-            fast: model_catalog::TOGETHER_FAST.0.to_string(),
-            balanced: model_catalog::TOGETHER_BALANCED.0.to_string(),
-            powerful: model_catalog::TOGETHER_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("together").unwrap()
     }
 
     /// Default tiers for Fireworks AI
     pub fn fireworks() -> Self {
-        Self {
-            fast: model_catalog::FIREWORKS_FAST.0.to_string(),
-            balanced: model_catalog::FIREWORKS_BALANCED.0.to_string(),
-            powerful: model_catalog::FIREWORKS_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("fireworks").unwrap()
     }
 
     /// Default tiers for Zai (Zhipu AI)
     pub fn zai() -> Self {
-        Self {
-            fast: model_catalog::ZAI_FAST.0.to_string(),
-            balanced: model_catalog::ZAI_BALANCED.0.to_string(),
-            powerful: model_catalog::ZAI_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("zai").unwrap()
     }
 
     /// Default tiers for Nebius
     pub fn nebius() -> Self {
-        Self {
-            fast: model_catalog::NEBIUS_FAST.0.to_string(),
-            balanced: model_catalog::NEBIUS_BALANCED.0.to_string(),
-            powerful: model_catalog::NEBIUS_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("nebius").unwrap()
     }
 
     /// Default tiers for MIMO
     pub fn mimo() -> Self {
-        Self {
-            fast: model_catalog::MIMO_FAST.0.to_string(),
-            balanced: model_catalog::MIMO_BALANCED.0.to_string(),
-            powerful: model_catalog::MIMO_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("mimo").unwrap()
     }
 
     /// Default tiers for BigModel.cn
     pub fn bigmodel() -> Self {
-        Self {
-            fast: model_catalog::BIGMODEL_FAST.0.to_string(),
-            balanced: model_catalog::BIGMODEL_BALANCED.0.to_string(),
-            powerful: model_catalog::BIGMODEL_POWERFUL.0.to_string(),
-        }
+        Self::from_catalog("bigmodel").unwrap()
     }
 
     /// Get default tiers for a provider type
     pub fn for_provider(provider_type: &str) -> Self {
-        match provider_type.to_lowercase().as_str() {
-            "anthropic" => Self::anthropic(),
-            "openai" => Self::openai(),
-            "gemini" | "google" => Self::gemini(),
-            "deepseek" => Self::deepseek(),
-            "groq" => Self::groq(),
-            "xai" | "grok" => Self::xai(),
-            "cohere" => Self::cohere(),
-            "perplexity" => Self::perplexity(),
-            "together" => Self::together(),
-            "fireworks" => Self::fireworks(),
-            "zai" | "zhipu" => Self::zai(),
-            "nebius" => Self::nebius(),
-            "mimo" => Self::mimo(),
-            "bigmodel" => Self::bigmodel(),
-            "ollama" => Self::ollama(),
-            _ => Self::anthropic(), // Fallback
-        }
+        let lower = provider_type.to_lowercase();
+        let provider_id = match lower.as_str() {
+            "gemini" | "google" => "gemini",
+            "xai" | "grok" => "xai",
+            "zai" | "zhipu" => "zai",
+            other => other,
+        };
+        Self::from_catalog(provider_id).unwrap_or_else(Self::anthropic)
     }
 
     /// Get the model name for a given tier
@@ -439,173 +378,56 @@ impl Default for ProviderConfig {
 }
 
 impl ProviderConfig {
-    /// Create Anthropic provider config
-    pub fn anthropic() -> Self {
+    /// Create provider config from catalog
+    fn from_catalog(provider_id: &str) -> Self {
+        let provider = catalog::get(provider_id);
         Self {
-            provider_type: "anthropic".to_string(),
+            provider_type: provider_id.to_string(),
             api_key: None,
-            api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
-            model: model_catalog::ANTHROPIC_BALANCED.0.to_string(),
-            model_tiers: None, // Uses ModelTiers::anthropic() as default
+            api_key_env: provider.and_then(|p| p.api_key_env.clone()),
+            model: catalog::default_model(provider_id).unwrap_or("").to_string(),
+            model_tiers: None,
             base_url: None,
             default_max_tokens: 4096,
             default_temperature: 0.7,
         }
     }
+
+    /// Create Anthropic provider config
+    pub fn anthropic() -> Self { Self::from_catalog("anthropic") }
 
     /// Create OpenAI provider config
-    pub fn openai() -> Self {
-        Self {
-            provider_type: "openai".to_string(),
-            api_key: None,
-            api_key_env: Some("OPENAI_API_KEY".to_string()),
-            model: model_catalog::OPENAI_BALANCED.0.to_string(),
-            model_tiers: None, // Uses ModelTiers::openai() as default
-            base_url: None,
-            default_max_tokens: 4096,
-            default_temperature: 0.7,
-        }
-    }
+    pub fn openai() -> Self { Self::from_catalog("openai") }
 
     /// Create Gemini provider config
-    pub fn gemini() -> Self {
-        Self {
-            provider_type: "gemini".to_string(),
-            api_key: None,
-            api_key_env: Some("GEMINI_API_KEY".to_string()),
-            model: model_catalog::GEMINI_BALANCED.0.to_string(),
-            model_tiers: None, // Uses ModelTiers::gemini() as default
-            base_url: None,
-            default_max_tokens: 4096,
-            default_temperature: 0.7,
-        }
-    }
+    pub fn gemini() -> Self { Self::from_catalog("gemini") }
 
     /// Create Groq provider config
-    pub fn groq() -> Self {
-        Self {
-            provider_type: "groq".to_string(),
-            api_key: None,
-            api_key_env: Some("GROQ_API_KEY".to_string()),
-            model: model_catalog::GROQ_BALANCED.0.to_string(),
-            model_tiers: None, // Uses ModelTiers::groq() as default
-            base_url: None,
-            default_max_tokens: 4096,
-            default_temperature: 0.7,
-        }
-    }
+    pub fn groq() -> Self { Self::from_catalog("groq") }
 
     /// Create DeepSeek provider config
-    pub fn deepseek() -> Self {
-        Self {
-            provider_type: "deepseek".to_string(),
-            api_key: None,
-            api_key_env: Some("DEEPSEEK_API_KEY".to_string()),
-            model: model_catalog::DEEPSEEK_BALANCED.0.to_string(),
-            model_tiers: None, // Uses ModelTiers::deepseek() as default
-            base_url: None,
-            default_max_tokens: 4096,
-            default_temperature: 0.7,
-        }
-    }
+    pub fn deepseek() -> Self { Self::from_catalog("deepseek") }
 
     /// Create Cohere provider config
-    pub fn cohere() -> Self {
-        Self {
-            provider_type: "cohere".to_string(),
-            api_key: None,
-            api_key_env: Some("COHERE_API_KEY".to_string()),
-            model: model_catalog::COHERE_BALANCED.0.to_string(),
-            model_tiers: None, // Uses ModelTiers::cohere() as default
-            base_url: None,
-            default_max_tokens: 4096,
-            default_temperature: 0.7,
-        }
-    }
+    pub fn cohere() -> Self { Self::from_catalog("cohere") }
 
     /// Create Together AI provider config
-    pub fn together() -> Self {
-        Self {
-            provider_type: "together".to_string(),
-            api_key: None,
-            api_key_env: Some("TOGETHER_API_KEY".to_string()),
-            model: model_catalog::TOGETHER_BALANCED.0.to_string(),
-            model_tiers: None,
-            base_url: None,
-            default_max_tokens: 4096,
-            default_temperature: 0.7,
-        }
-    }
+    pub fn together() -> Self { Self::from_catalog("together") }
 
     /// Create Fireworks AI provider config
-    pub fn fireworks() -> Self {
-        Self {
-            provider_type: "fireworks".to_string(),
-            api_key: None,
-            api_key_env: Some("FIREWORKS_API_KEY".to_string()),
-            model: model_catalog::FIREWORKS_BALANCED.0.to_string(),
-            model_tiers: None,
-            base_url: None,
-            default_max_tokens: 4096,
-            default_temperature: 0.7,
-        }
-    }
+    pub fn fireworks() -> Self { Self::from_catalog("fireworks") }
 
     /// Create Zai (Zhipu AI) provider config
-    pub fn zai() -> Self {
-        Self {
-            provider_type: "zai".to_string(),
-            api_key: None,
-            api_key_env: Some("ZAI_API_KEY".to_string()),
-            model: model_catalog::ZAI_BALANCED.0.to_string(),
-            model_tiers: None,
-            base_url: None,
-            default_max_tokens: 4096,
-            default_temperature: 0.7,
-        }
-    }
+    pub fn zai() -> Self { Self::from_catalog("zai") }
 
     /// Create Nebius provider config
-    pub fn nebius() -> Self {
-        Self {
-            provider_type: "nebius".to_string(),
-            api_key: None,
-            api_key_env: Some("NEBIUS_API_KEY".to_string()),
-            model: model_catalog::NEBIUS_BALANCED.0.to_string(),
-            model_tiers: None,
-            base_url: None,
-            default_max_tokens: 4096,
-            default_temperature: 0.7,
-        }
-    }
+    pub fn nebius() -> Self { Self::from_catalog("nebius") }
 
     /// Create MIMO provider config
-    pub fn mimo() -> Self {
-        Self {
-            provider_type: "mimo".to_string(),
-            api_key: None,
-            api_key_env: Some("MIMO_API_KEY".to_string()),
-            model: model_catalog::MIMO_BALANCED.0.to_string(),
-            model_tiers: None,
-            base_url: None,
-            default_max_tokens: 4096,
-            default_temperature: 0.7,
-        }
-    }
+    pub fn mimo() -> Self { Self::from_catalog("mimo") }
 
     /// Create BigModel.cn provider config
-    pub fn bigmodel() -> Self {
-        Self {
-            provider_type: "bigmodel".to_string(),
-            api_key: None,
-            api_key_env: Some("BIGMODEL_API_KEY".to_string()),
-            model: model_catalog::BIGMODEL_BALANCED.0.to_string(),
-            model_tiers: None,
-            base_url: None,
-            default_max_tokens: 4096,
-            default_temperature: 0.7,
-        }
-    }
+    pub fn bigmodel() -> Self { Self::from_catalog("bigmodel") }
 
     /// Get model tiers, falling back to provider defaults
     pub fn get_model_tiers(&self) -> ModelTiers {
@@ -1042,7 +864,7 @@ mod tests {
         // Check default provider settings
         let anthropic = config.get_default_provider().unwrap();
         assert_eq!(anthropic.provider_type, "anthropic");
-        assert_eq!(anthropic.model, model_catalog::ANTHROPIC_BALANCED.0);
+        assert_eq!(anthropic.model, catalog::default_model("anthropic").unwrap());
     }
 
     #[test]
@@ -1051,13 +873,13 @@ mod tests {
 
         // Check each provider
         let anthropic = config.get_provider("anthropic").unwrap();
-        assert_eq!(anthropic.model, model_catalog::ANTHROPIC_BALANCED.0);
+        assert_eq!(anthropic.model, catalog::default_model("anthropic").unwrap());
 
         let openai = config.get_provider("openai").unwrap();
-        assert_eq!(openai.model, model_catalog::OPENAI_BALANCED.0);
+        assert_eq!(openai.model, catalog::default_model("openai").unwrap());
 
         let gemini = config.get_provider("gemini").unwrap();
-        assert_eq!(gemini.model, model_catalog::GEMINI_BALANCED.0);
+        assert_eq!(gemini.model, catalog::default_model("gemini").unwrap());
     }
 
     #[test]

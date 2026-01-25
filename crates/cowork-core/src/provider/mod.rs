@@ -328,7 +328,7 @@ impl Default for ProviderConfig {
             provider_type: ProviderType::Anthropic,
             api_key: None,
             base_url: None,
-            model: model_catalog::ANTHROPIC_BALANCED.0.to_string(),
+            model: catalog::default_model("anthropic").unwrap_or("claude-sonnet-4-5-20250929").to_string(),
             default_max_tokens: 4096,
         }
     }

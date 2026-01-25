@@ -520,43 +520,43 @@ mod tests {
 
     #[test]
     fn test_get_model_for_tier() {
-        use crate::provider::model_catalog;
+        use crate::provider::catalog;
 
         // Test with Anthropic tiers
         let anthropic_tiers = ModelTiers::anthropic();
         assert_eq!(
             get_model_for_tier(&ModelTier::Balanced, &anthropic_tiers),
-            model_catalog::ANTHROPIC_BALANCED.0
+            catalog::default_model("anthropic").unwrap()
         );
         assert_eq!(
             get_model_for_tier(&ModelTier::Powerful, &anthropic_tiers),
-            model_catalog::ANTHROPIC_POWERFUL.0
+            catalog::model_id("anthropic", catalog::ModelTier::Powerful).unwrap()
         );
         assert_eq!(
             get_model_for_tier(&ModelTier::Fast, &anthropic_tiers),
-            model_catalog::ANTHROPIC_FAST.0
+            catalog::model_id("anthropic", catalog::ModelTier::Fast).unwrap()
         );
 
         // Test with OpenAI tiers
         let openai_tiers = ModelTiers::openai();
         assert_eq!(
             get_model_for_tier(&ModelTier::Balanced, &openai_tiers),
-            model_catalog::OPENAI_BALANCED.0
+            catalog::default_model("openai").unwrap()
         );
         assert_eq!(
             get_model_for_tier(&ModelTier::Fast, &openai_tiers),
-            model_catalog::OPENAI_FAST.0
+            catalog::model_id("openai", catalog::ModelTier::Fast).unwrap()
         );
 
         // Test with DeepSeek tiers
         let deepseek_tiers = ModelTiers::deepseek();
         assert_eq!(
             get_model_for_tier(&ModelTier::Fast, &deepseek_tiers),
-            model_catalog::DEEPSEEK_FAST.0
+            catalog::model_id("deepseek", catalog::ModelTier::Fast).unwrap()
         );
         assert_eq!(
             get_model_for_tier(&ModelTier::Powerful, &deepseek_tiers),
-            model_catalog::DEEPSEEK_POWERFUL.0
+            catalog::model_id("deepseek", catalog::ModelTier::Powerful).unwrap()
         );
     }
 
