@@ -17,9 +17,9 @@
       "api_key_env": "OPENAI_API_KEY",
       "native_web_search": true,
       "models": {
-        "fast": { "id": "gpt-4.1-mini", "name": "GPT-4.1 Mini", "context": 1000000 },
-        "balanced": { "id": "gpt-4.1", "name": "GPT-4.1", "context": 1000000 },
-        "powerful": { "id": "o3", "name": "o3", "context": 200000 }
+        "fast": { "id": "gpt-5-mini", "name": "GPT-5 Mini", "context": 1000000 },
+        "balanced": { "id": "gpt-5", "name": "GPT-5", "context": 1000000 },
+        "powerful": { "id": "gpt-5.2", "name": "GPT-5.2", "context": 200000 }
       }
     },
     "gemini": {
@@ -28,8 +28,8 @@
       "api_key_env": "GEMINI_API_KEY",
       "native_web_search": true,
       "models": {
-        "fast": { "id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash", "context": 1000000 },
-        "balanced": { "id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "context": 1000000 },
+        "fast": { "id": "gemini-3-flash-preview", "name": "Gemini-3-flash-preview", "context": 1000000 },
+        "balanced": { "id": "gemini-3-flash-preview", "name": "Gemini-3-flash-preview", "context": 1000000 },
         "powerful": { "id": "gemini-3-pro-preview", "name": "Gemini 3 Pro", "context": 1000000 }
       }
     },
@@ -138,9 +138,9 @@
       "api_key_env": "ZAI_API_KEY",
       "native_web_search": false,
       "models": {
-        "fast": { "id": "glm-4-flash", "name": "GLM-4 Flash", "context": 128000 },
-        "balanced": { "id": "glm-4-plus", "name": "GLM-4 Plus", "context": 128000 },
-        "powerful": { "id": "glm-4-plus", "name": "GLM-4 Plus", "context": 128000 }
+        "fast": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000 },
+        "balanced": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000 },
+        "powerful": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000 }
       }
     },
     "bigmodel": {
@@ -149,9 +149,9 @@
       "api_key_env": "BIGMODEL_API_KEY",
       "native_web_search": false,
       "models": {
-        "fast": { "id": "glm-4-flash", "name": "GLM-4 Flash", "context": 128000 },
-        "balanced": { "id": "glm-4-plus", "name": "GLM-4 Plus", "context": 128000 },
-        "powerful": { "id": "glm-4-plus", "name": "GLM-4 Plus", "context": 128000 }
+         "fast": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000 },
+        "balanced": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000 },
+        "powerful": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000 }
       }
     },
     "mimo": {
