@@ -10,6 +10,7 @@ use ratatui::{
 };
 
 use cowork_core::formatting::format_approval_args;
+use cowork_core::DiffLine;
 
 use super::{App, Message, MessageType, Modal, PendingApproval, PendingQuestion};
 
@@ -95,7 +96,18 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
 /// Convert a message to styled lines
 fn message_to_lines(msg: &Message, max_width: usize) -> Vec<ListItem<'static>> {
     match &msg.message_type {
-        MessageType::Assistant => markdown_to_lines(&msg.content, max_width),
+        MessageType::Assistant => {
+            // Assistant messages get ● prefix for each paragraph
+            assistant_to_lines(&msg.content, max_width)
+        }
+        MessageType::ToolCall { formatted, .. } => {
+            // Tool calls: ● ToolName(args...) in cyan
+            tool_call_to_lines(formatted, max_width)
+        }
+        MessageType::ToolResult { summary, success, diff, expanded, .. } => {
+            // Tool results: ⎿ summary, with optional diff (red for errors)
+            tool_result_to_lines(summary, *success, diff.as_ref(), *expanded, max_width)
+        }
         _ => {
             let (prefix, style) = match &msg.message_type {
                 MessageType::User => (
@@ -110,7 +122,7 @@ fn message_to_lines(msg: &Message, max_width: usize) -> Vec<ListItem<'static>> {
                     "Error: ",
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
-                MessageType::Assistant => unreachable!(),
+                _ => unreachable!(),
             };
 
             let content_width = max_width.saturating_sub(prefix.len());
@@ -138,21 +150,23 @@ fn message_to_lines(msg: &Message, max_width: usize) -> Vec<ListItem<'static>> {
     }
 }
 
-/// Render assistant message content with markdown-aware styling
-fn markdown_to_lines(content: &str, max_width: usize) -> Vec<ListItem<'static>> {
-    let prefix = "  ";
-    let content_width = max_width.saturating_sub(prefix.len());
+/// Render assistant message with ● prefix for each paragraph
+fn assistant_to_lines(content: &str, max_width: usize) -> Vec<ListItem<'static>> {
+    let prefix = "● ";
+    let continuation = "  ";
+    let content_width = max_width.saturating_sub(2);
     let mut items: Vec<ListItem> = Vec::new();
     let mut in_code_block = false;
     let code_style = Style::default().fg(Color::Green);
     let code_fence_style = Style::default().fg(Color::DarkGray);
+    let prefix_style = Style::default().fg(Color::White);
 
-    for raw_line in content.split('\n') {
+    for (para_idx, raw_line) in content.split('\n').enumerate() {
         // Detect fenced code block boundaries
         if raw_line.trim_start().starts_with("```") {
             in_code_block = !in_code_block;
             let line = Line::from(vec![
-                Span::raw(prefix.to_string()),
+                Span::styled(if para_idx == 0 { prefix } else { continuation }.to_string(), prefix_style),
                 Span::styled(raw_line.to_string(), code_fence_style),
             ]);
             items.push(ListItem::new(line));
@@ -160,11 +174,10 @@ fn markdown_to_lines(content: &str, max_width: usize) -> Vec<ListItem<'static>> 
         }
 
         if in_code_block {
-            // Code block content: render verbatim with code style, wrapping if needed
             let wrapped = wrap_text(raw_line, content_width);
             for w in wrapped {
                 let line = Line::from(vec![
-                    Span::raw(prefix.to_string()),
+                    Span::styled(continuation.to_string(), prefix_style),
                     Span::styled(w, code_style),
                 ]);
                 items.push(ListItem::new(line));
@@ -178,9 +191,10 @@ fn markdown_to_lines(content: &str, max_width: usize) -> Vec<ListItem<'static>> 
             let header_style = Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD);
-            for w in wrapped {
+            for (i, w) in wrapped.into_iter().enumerate() {
+                let p = if para_idx == 0 && i == 0 { prefix } else { continuation };
                 let line = Line::from(vec![
-                    Span::raw(prefix.to_string()),
+                    Span::styled(p.to_string(), prefix_style),
                     Span::styled(w, header_style),
                 ]);
                 items.push(ListItem::new(line));
@@ -188,7 +202,7 @@ fn markdown_to_lines(content: &str, max_width: usize) -> Vec<ListItem<'static>> 
             continue;
         }
 
-        // Empty line
+        // Empty line - still show prefix for first paragraph
         if raw_line.is_empty() {
             items.push(ListItem::new(Line::from("")));
             continue;
@@ -196,11 +210,99 @@ fn markdown_to_lines(content: &str, max_width: usize) -> Vec<ListItem<'static>> 
 
         // Normal text with inline formatting, wrapped
         let wrapped = wrap_text(raw_line, content_width);
-        for w in wrapped {
+        for (i, w) in wrapped.into_iter().enumerate() {
+            let p = if para_idx == 0 && i == 0 { prefix } else { continuation };
             let spans = parse_inline_markdown(&w);
-            let mut line_spans = vec![Span::raw(prefix.to_string())];
+            let mut line_spans = vec![Span::styled(p.to_string(), prefix_style)];
             line_spans.extend(spans);
             items.push(ListItem::new(Line::from(line_spans)));
+        }
+    }
+
+    items
+}
+
+/// Render tool call: ● ToolName(args...) in cyan
+fn tool_call_to_lines(formatted: &str, max_width: usize) -> Vec<ListItem<'static>> {
+    let prefix = "● ";
+    let continuation = "  ";
+    let content_width = max_width.saturating_sub(2);
+    let prefix_style = Style::default().fg(Color::White);
+    let tool_style = Style::default().fg(Color::Cyan);
+
+    let wrapped = wrap_text(formatted, content_width);
+    wrapped
+        .into_iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let p = if i == 0 { prefix } else { continuation };
+            ListItem::new(Line::from(vec![
+                Span::styled(p.to_string(), prefix_style),
+                Span::styled(line, tool_style),
+            ]))
+        })
+        .collect()
+}
+
+/// Render tool result: ⎿ summary, with optional diff
+fn tool_result_to_lines(
+    summary: &str,
+    success: bool,
+    diff: Option<&Vec<DiffLine>>,
+    _expanded: bool,
+    max_width: usize,
+) -> Vec<ListItem<'static>> {
+    let prefix = "  ⎿  ";
+    let continuation = "     ";
+    let content_width = max_width.saturating_sub(5);
+    // Use red for errors, gray for success
+    let summary_style = if success {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default().fg(Color::Red)
+    };
+    let added_style = Style::default().fg(Color::Green);
+    let removed_style = Style::default().fg(Color::Red);
+    let context_style = Style::default().fg(Color::DarkGray);
+
+    let mut items = Vec::new();
+
+    // Summary line
+    let wrapped = wrap_text(summary, content_width);
+    for (i, line) in wrapped.into_iter().enumerate() {
+        let p = if i == 0 { prefix } else { continuation };
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(p.to_string(), summary_style),
+            Span::styled(line, summary_style),
+        ])));
+    }
+
+    // Diff lines (if present)
+    if let Some(diff_lines) = diff {
+        for diff_line in diff_lines.iter().take(10) {
+            let (marker, style) = match diff_line.line_type.as_str() {
+                "added" => ("+", added_style),
+                "removed" => ("-", removed_style),
+                _ => (" ", context_style),
+            };
+
+            // Format: "     513 +   content"
+            let line_num = diff_line
+                .line_number
+                .map(|n| format!("{:>4} ", n))
+                .unwrap_or_else(|| "     ".to_string());
+
+            let content = wrap_text(&diff_line.content, content_width.saturating_sub(7))
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+
+            items.push(ListItem::new(Line::from(vec![
+                Span::styled(continuation.to_string(), context_style),
+                Span::styled(line_num, context_style),
+                Span::styled(format!("{} ", marker), style),
+                Span::styled(content, style),
+            ])));
         }
     }
 

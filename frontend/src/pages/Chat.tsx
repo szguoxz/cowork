@@ -4,6 +4,8 @@ import { Button } from '../components/ui/button'
 import SessionTabs from '../components/SessionTabs'
 import ApprovalModal from '../components/ApprovalModal'
 import QuestionModal from '../components/QuestionModal'
+import ToolCallMessage from '../components/ToolCallMessage'
+import ToolResultMessage from '../components/ToolResultMessage'
 import { useSession } from '../context/SessionContext'
 
 export default function Chat() {
@@ -174,7 +176,32 @@ export default function Chat() {
             {msg.type === 'assistant' && (
               <div className="flex justify-start">
                 <div className="max-w-[80%] rounded-xl px-4 py-3 bg-card border border-border">
-                  <pre className="whitespace-pre-wrap font-sans text-sm">{msg.content}</pre>
+                  {/* Add ● prefix for assistant messages */}
+                  <div className="flex items-start gap-2">
+                    <span className="text-foreground font-medium select-none">●</span>
+                    <pre className="whitespace-pre-wrap font-sans text-sm flex-1">{msg.content}</pre>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {msg.type === 'tool_call' && msg.formatted && (
+              <div className="flex justify-start">
+                <div className="max-w-[80%]">
+                  <ToolCallMessage formatted={msg.formatted} />
+                </div>
+              </div>
+            )}
+
+            {msg.type === 'tool_result' && msg.summary && (
+              <div className="flex justify-start">
+                <div className="max-w-[80%]">
+                  <ToolResultMessage
+                    summary={msg.summary}
+                    diffPreview={msg.diffPreview}
+                    output={msg.content}
+                    success={msg.success ?? true}
+                  />
                 </div>
               </div>
             )}

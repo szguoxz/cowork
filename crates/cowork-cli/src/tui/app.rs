@@ -1,6 +1,7 @@
 //! Application state and types for the TUI
 
 use cowork_core::formatting::{format_ephemeral, truncate_str};
+pub use cowork_core::DiffLine;
 use cowork_core::session::SessionOutput;
 use cowork_core::QuestionInfo;
 use std::collections::{HashMap, HashSet};
@@ -13,6 +14,19 @@ pub enum MessageType {
     Assistant,
     System,
     Error,
+    /// Tool call message (Claude Code style: ● ToolName(args...))
+    ToolCall {
+        name: String,
+        formatted: String,
+    },
+    /// Tool result message (Claude Code style: ⎿ summary)
+    ToolResult {
+        name: String,
+        summary: String,
+        success: bool,
+        diff: Option<Vec<DiffLine>>,
+        expanded: bool,
+    },
 }
 
 /// A message displayed in the output area
@@ -44,6 +58,34 @@ impl Message {
 
     pub fn error(content: impl Into<String>) -> Self {
         Self::new(MessageType::Error, content)
+    }
+
+    pub fn tool_call(name: impl Into<String>, formatted: impl Into<String>) -> Self {
+        Self {
+            message_type: MessageType::ToolCall {
+                name: name.into(),
+                formatted: formatted.into(),
+            },
+            content: String::new(),
+        }
+    }
+
+    pub fn tool_result(
+        name: impl Into<String>,
+        summary: impl Into<String>,
+        success: bool,
+        diff: Option<Vec<DiffLine>>,
+    ) -> Self {
+        Self {
+            message_type: MessageType::ToolResult {
+                name: name.into(),
+                summary: summary.into(),
+                success,
+                diff,
+                expanded: false,
+            },
+            content: String::new(),
+        }
     }
 }
 
@@ -329,6 +371,16 @@ impl App {
                     let err = truncate_str(&output, 80);
                     self.ephemeral = Some(format!("{}: {}", name, err));
                 }
+            }
+            SessionOutput::ToolCall { name, formatted, .. } => {
+                // Add tool call as a persistent message
+                self.add_message(Message::tool_call(&name, &formatted));
+            }
+            SessionOutput::ToolResult { name, summary, success, diff_preview, .. } => {
+                // Add tool result as a persistent message
+                self.add_message(Message::tool_result(&name, &summary, success, diff_preview));
+                // Clear ephemeral since we have the result
+                self.ephemeral = None;
             }
             SessionOutput::Question { request_id, questions } => {
                 self.modal = Some(Modal::Question(PendingQuestion::new(request_id, questions)));

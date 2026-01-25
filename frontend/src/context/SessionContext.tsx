@@ -224,6 +224,40 @@ export function SessionProvider({ children }: SessionProviderProps) {
         }))
         break
 
+      case 'tool_call':
+        // Add tool call as a persistent message
+        updateSession(sessionId, s => ({
+          ...s,
+          messages: [...s.messages, {
+            id: output.id,
+            type: 'tool_call' as const,
+            content: '',
+            toolName: output.name,
+            formatted: output.formatted,
+          }],
+          updatedAt: new Date(),
+        }))
+        break
+
+      case 'tool_result':
+        // Add tool result as a persistent message
+        updateSession(sessionId, s => ({
+          ...s,
+          ephemeral: null,  // Clear ephemeral since we have the result
+          messages: [...s.messages, {
+            id: `${output.id}-result`,
+            type: 'tool_result' as const,
+            content: output.output,
+            toolName: output.name,
+            summary: output.summary,
+            success: output.success,
+            diffPreview: output.diff_preview || undefined,
+            expanded: false,
+          }],
+          updatedAt: new Date(),
+        }))
+        break
+
       case 'question':
         updateSession(sessionId, s => ({
           ...s,

@@ -56,5 +56,6 @@ pub use session::{
 
 // Formatting exports (shared between CLI and Tauri)
 pub use formatting::{
-    format_approval_args, format_ephemeral, format_tool_summary, truncate_str,
+    format_approval_args, format_ephemeral, format_tool_call, format_tool_result_summary,
+    format_tool_summary, truncate_str, DiffLine,
 };

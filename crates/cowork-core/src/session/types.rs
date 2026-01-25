@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::config::PromptSystemConfig;
+use crate::formatting::DiffLine;
 use crate::orchestration::ToolScope;
 use crate::prompt::ComponentRegistry;
 
@@ -106,6 +107,32 @@ pub enum SessionOutput {
         success: bool,
         output: String,
     },
+    /// Tool call message (persistent, Claude Code style)
+    ///
+    /// Emitted when a tool is about to be executed, formatted for display.
+    /// Unlike ToolStart (ephemeral), this is meant to be stored as a message.
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+        /// Formatted display string, e.g. "Read(/path/to/file.rs)"
+        formatted: String,
+    },
+    /// Tool result message (persistent, Claude Code style)
+    ///
+    /// Emitted after tool execution, with a summary and optional diff.
+    /// Unlike ToolDone (ephemeral), this is meant to be stored as a message.
+    ToolResult {
+        id: String,
+        name: String,
+        success: bool,
+        /// The full tool output
+        output: String,
+        /// Short summary like "Read 20 lines" or "Added 5 lines"
+        summary: String,
+        /// For Edit tool: diff preview with +/- lines
+        diff_preview: Option<Vec<DiffLine>>,
+    },
     /// Question for the user (from ask_user_question tool)
     Question {
         request_id: String,
@@ -196,6 +223,40 @@ impl SessionOutput {
     pub fn error(message: impl Into<String>) -> Self {
         Self::Error {
             message: message.into(),
+        }
+    }
+
+    /// Create a tool call output (persistent message)
+    pub fn tool_call(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+        formatted: impl Into<String>,
+    ) -> Self {
+        Self::ToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments,
+            formatted: formatted.into(),
+        }
+    }
+
+    /// Create a tool result output (persistent message)
+    pub fn tool_result(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        success: bool,
+        output: impl Into<String>,
+        summary: impl Into<String>,
+        diff_preview: Option<Vec<DiffLine>>,
+    ) -> Self {
+        Self::ToolResult {
+            id: id.into(),
+            name: name.into(),
+            success,
+            output: output.into(),
+            summary: summary.into(),
+            diff_preview,
         }
     }
 }

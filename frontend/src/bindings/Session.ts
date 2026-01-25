@@ -3,6 +3,8 @@
  * Simplified: tools are ephemeral, questions/approvals are modals
  */
 
+import type { DiffLine } from './LoopOutput'
+
 export interface SessionProvider {
   type: string  // 'anthropic', 'openai', 'deepseek', etc.
   model: string
@@ -10,8 +12,16 @@ export interface SessionProvider {
 
 export interface Message {
   id: string
-  type: 'user' | 'assistant'
+  type: 'user' | 'assistant' | 'tool_call' | 'tool_result'
   content: string
+  // Tool call specific
+  toolName?: string
+  formatted?: string
+  // Tool result specific
+  summary?: string
+  success?: boolean
+  diffPreview?: DiffLine[]
+  expanded?: boolean
 }
 
 export interface QuestionData {
