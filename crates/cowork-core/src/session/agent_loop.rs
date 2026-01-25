@@ -473,30 +473,30 @@ impl AgentLoop {
                             questions,
                         }).await;
 
-                        match self.wait_for_answer().await {
-                            Some(answers) => {
-                                let result = serde_json::json!({ "answered": true, "answers": answers });
-                                self.session.add_tool_result(&tool_call.id, result.to_string());
-                                self.emit(SessionOutput::tool_done(&tool_call.id, ASK_QUESTION_TOOL_NAME, true, result.to_string())).await;
-                            }
-                            None => return Ok(()), // Channel closed
+                        // Wait for answer
+                        if let Some(SessionInput::AnswerQuestion { answers, .. }) = self.answer_rx.recv().await {
+                            let result = serde_json::json!({ "answered": true, "answers": answers });
+                            self.session.add_tool_result(&tool_call.id, result.to_string());
+                            self.emit(SessionOutput::tool_done(&tool_call.id, ASK_QUESTION_TOOL_NAME, true, result.to_string())).await;
+                        } else {
+                            return Ok(()); // Channel closed or unexpected input
                         }
                     }
                 } else {
                     // Needs approval
                     self.emit(SessionOutput::tool_pending(&tool_call.id, &tool_call.name, tool_call.arguments.clone(), None)).await;
 
-                    match self.wait_for_approval().await {
-                        Some(None) => {
-                            // Approved
+                    // Wait for approval/rejection
+                    match self.answer_rx.recv().await {
+                        Some(SessionInput::ApproveTool { .. }) => {
                             self.execute_tool(tool_call).await;
                         }
-                        Some(Some(reason)) => {
-                            // Rejected
+                        Some(SessionInput::RejectTool { reason, .. }) => {
+                            let reason = reason.unwrap_or_else(|| "Rejected by user".to_string());
                             self.session.add_tool_result_with_error(&tool_call.id, &reason, true);
                             self.emit(SessionOutput::tool_done(&tool_call.id, &tool_call.name, false, reason)).await;
                         }
-                        None => return Ok(()), // Channel closed
+                        _ => return Ok(()), // Channel closed or unexpected input
                     }
                 }
             }
@@ -768,45 +768,6 @@ impl AgentLoop {
         }
 
         Some(result)
-    }
-
-    /// Wait for a question answer from the user.
-    /// Returns Some(answers) on answer, None on channel close.
-    /// Logs and ignores unexpected input types.
-    async fn wait_for_answer(&mut self) -> Option<std::collections::HashMap<String, String>> {
-        loop {
-            match self.answer_rx.recv().await {
-                Some(SessionInput::AnswerQuestion { answers, .. }) => {
-                    return Some(answers);
-                }
-                Some(other) => {
-                    warn!("Unexpected input while waiting for question answer: {:?}", other);
-                    // Continue waiting
-                }
-                None => return None, // Channel closed
-            }
-        }
-    }
-
-    /// Wait for tool approval from the user.
-    /// Returns Some(None) on approve, Some(reason) on reject, None on channel close.
-    /// Logs and ignores unexpected input types.
-    async fn wait_for_approval(&mut self) -> Option<Option<String>> {
-        loop {
-            match self.answer_rx.recv().await {
-                Some(SessionInput::ApproveTool { .. }) => {
-                    return Some(None); // Approved
-                }
-                Some(SessionInput::RejectTool { reason, .. }) => {
-                    return Some(Some(reason.unwrap_or_else(|| "Rejected by user".to_string())));
-                }
-                Some(other) => {
-                    warn!("Unexpected input while waiting for approval: {:?}", other);
-                    // Continue waiting
-                }
-                None => return None, // Channel closed
-            }
-        }
     }
 
     // ========================================================================
