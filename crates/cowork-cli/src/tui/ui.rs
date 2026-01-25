@@ -10,6 +10,7 @@ use ratatui::{
 };
 
 use super::{App, Message, MessageType, Modal, PendingApproval, PendingQuestion};
+use super::app::format_approval_args;
 
 /// Draw the entire UI
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -54,13 +55,16 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
         .flat_map(|msg| message_to_lines(msg, max_width))
         .collect();
 
-    // Append ephemeral activity line (dim) if present
+    // Append ephemeral activity lines (dim) if present - up to 3 lines
     if let Some(ref ephemeral) = app.ephemeral {
-        let line = Line::from(Span::styled(
-            format!(" \u{2591} {}", ephemeral),
-            Style::default().fg(Color::DarkGray),
-        ));
-        items.push(ListItem::new(line));
+        for (i, line_text) in ephemeral.lines().take(3).enumerate() {
+            let prefix = if i == 0 { " \u{2591} " } else { "   " };
+            let line = Line::from(Span::styled(
+                format!("{}{}", prefix, line_text),
+                Style::default().fg(Color::DarkGray),
+            ));
+            items.push(ListItem::new(line));
+        }
     }
 
     let total_lines = items.len();
@@ -484,7 +488,7 @@ fn draw_modal(frame: &mut Frame, modal: &Modal) {
 
 /// Draw the tool approval modal
 fn draw_approval_modal(frame: &mut Frame, approval: &PendingApproval) {
-    let area = centered_rect(60, 50, frame.area());
+    let area = centered_rect(70, 60, frame.area());
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -499,7 +503,7 @@ fn draw_approval_modal(frame: &mut Frame, approval: &PendingApproval) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2), // Tool name
-            Constraint::Min(5),    // Arguments
+            Constraint::Min(8),    // Arguments (more space)
             Constraint::Length(6), // Options
         ])
         .split(inner);
@@ -508,12 +512,12 @@ fn draw_approval_modal(frame: &mut Frame, approval: &PendingApproval) {
         .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
     frame.render_widget(tool_text, chunks[0]);
 
-    let args_str = serde_json::to_string_pretty(&approval.arguments)
-        .unwrap_or_else(|_| approval.arguments.to_string());
-    let args_text = Paragraph::new(args_str)
+    // Format arguments nicely instead of raw JSON dump
+    let args_lines = format_approval_args(&approval.name, &approval.arguments);
+    let args_text = Paragraph::new(args_lines.join("\n"))
         .style(Style::default().fg(Color::Gray))
-        .wrap(Wrap { trim: true })
-        .block(Block::default().borders(Borders::TOP).title(" Arguments "));
+        .wrap(Wrap { trim: false })
+        .block(Block::default().borders(Borders::TOP).title(" Details "));
     frame.render_widget(args_text, chunks[1]);
 
     let options: Vec<ListItem> = approval

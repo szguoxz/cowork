@@ -316,8 +316,7 @@ impl App {
             }
             SessionOutput::ToolStart { name, arguments, .. } => {
                 self.status = "Processing...".to_string();
-                let summary = format_tool_args(&name, &arguments);
-                self.ephemeral = Some(format!("{}: {}", name, truncate_str(&summary, 80)));
+                self.ephemeral = Some(format_ephemeral(&name, &arguments));
             }
             SessionOutput::ToolPending { id, name, arguments, .. } => {
                 self.modal = Some(Modal::Approval(PendingApproval::new(id, name, arguments)));
@@ -342,7 +341,7 @@ impl App {
     }
 }
 
-/// Format tool arguments into a concise summary
+/// Format tool arguments into a concise summary (single line)
 fn format_tool_args(tool_name: &str, args: &serde_json::Value) -> String {
     match tool_name {
         "Read" => args["file_path"].as_str().unwrap_or("?").to_string(),
@@ -376,10 +375,153 @@ fn format_tool_args(tool_name: &str, args: &serde_json::Value) -> String {
     }
 }
 
+/// Format ephemeral display for tool execution (up to 3 lines)
+fn format_ephemeral(tool_name: &str, args: &serde_json::Value) -> String {
+    let mut lines = Vec::new();
+
+    match tool_name {
+        "Read" | "Glob" => {
+            let path = args["file_path"].as_str()
+                .or_else(|| args["pattern"].as_str())
+                .unwrap_or("?");
+            lines.push(format!("{}: {}", tool_name, truncate_str(path, 60)));
+        }
+        "Write" => {
+            if let Some(path) = args["file_path"].as_str() {
+                lines.push(format!("Write: {}", truncate_str(path, 60)));
+            }
+            if let Some(content) = args["content"].as_str() {
+                let line_count = content.lines().count();
+                lines.push(format!("  {} lines", line_count));
+            }
+        }
+        "Edit" => {
+            if let Some(path) = args["file_path"].as_str() {
+                lines.push(format!("Edit: {}", truncate_str(path, 60)));
+            }
+            if let Some(old) = args["old_string"].as_str() {
+                let preview = old.lines().next().unwrap_or("");
+                lines.push(format!("  - {}", truncate_str(preview, 50)));
+            }
+            if let Some(new) = args["new_string"].as_str() {
+                let preview = new.lines().next().unwrap_or("");
+                lines.push(format!("  + {}", truncate_str(preview, 50)));
+            }
+        }
+        "Grep" => {
+            let pattern = args["pattern"].as_str().unwrap_or("?");
+            let path = args["path"].as_str().unwrap_or(".");
+            lines.push(format!("Grep: {} in {}", truncate_str(pattern, 30), truncate_str(path, 30)));
+        }
+        "Bash" => {
+            if let Some(cmd) = args["command"].as_str() {
+                lines.push(format!("Bash: {}", truncate_str(cmd.lines().next().unwrap_or(cmd), 60)));
+                if cmd.lines().count() > 1 {
+                    lines.push(format!("  ({} lines)", cmd.lines().count()));
+                }
+            }
+        }
+        "Task" => {
+            let desc = args["description"].as_str().unwrap_or("?");
+            let agent = args["subagent_type"].as_str().unwrap_or("?");
+            lines.push(format!("Task [{}]: {}", agent, truncate_str(desc, 50)));
+        }
+        _ => {
+            let summary = format_tool_args(tool_name, args);
+            lines.push(format!("{}: {}", tool_name, truncate_str(&summary, 60)));
+        }
+    }
+
+    // Limit to 3 lines
+    lines.truncate(3);
+    lines.join("\n")
+}
+
 fn truncate_str(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
         format!("{}...", &s[..max.saturating_sub(3)])
     }
+}
+
+/// Format tool arguments for the approval modal (multi-line, readable)
+pub fn format_approval_args(tool_name: &str, args: &serde_json::Value) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    match tool_name {
+        "Write" => {
+            if let Some(path) = args["file_path"].as_str() {
+                lines.push(format!("File: {}", path));
+            }
+            if let Some(content) = args["content"].as_str() {
+                let preview = content.lines().take(5).collect::<Vec<_>>().join("\n");
+                let total_lines = content.lines().count();
+                lines.push(format!("Content ({} lines):", total_lines));
+                for line in preview.lines().take(5) {
+                    lines.push(format!("  {}", truncate_str(line, 60)));
+                }
+                if total_lines > 5 {
+                    lines.push(format!("  ... ({} more lines)", total_lines - 5));
+                }
+            }
+        }
+        "Edit" => {
+            if let Some(path) = args["file_path"].as_str() {
+                lines.push(format!("File: {}", path));
+            }
+            if let Some(old) = args["old_string"].as_str() {
+                lines.push("Old:".to_string());
+                for line in old.lines().take(3) {
+                    lines.push(format!("  - {}", truncate_str(line, 50)));
+                }
+                if old.lines().count() > 3 {
+                    lines.push(format!("  ... ({} more lines)", old.lines().count() - 3));
+                }
+            }
+            if let Some(new) = args["new_string"].as_str() {
+                lines.push("New:".to_string());
+                for line in new.lines().take(3) {
+                    lines.push(format!("  + {}", truncate_str(line, 50)));
+                }
+                if new.lines().count() > 3 {
+                    lines.push(format!("  ... ({} more lines)", new.lines().count() - 3));
+                }
+            }
+        }
+        "Bash" => {
+            if let Some(cmd) = args["command"].as_str() {
+                lines.push("Command:".to_string());
+                for line in cmd.lines().take(5) {
+                    lines.push(format!("  {}", truncate_str(line, 60)));
+                }
+                if cmd.lines().count() > 5 {
+                    lines.push(format!("  ... ({} more lines)", cmd.lines().count() - 5));
+                }
+            }
+            if let Some(desc) = args["description"].as_str() {
+                lines.push(format!("Description: {}", truncate_str(desc, 60)));
+            }
+        }
+        _ => {
+            // Generic: show each key-value, truncated
+            if let Some(obj) = args.as_object() {
+                for (key, value) in obj.iter().take(6) {
+                    let val_str = match value {
+                        serde_json::Value::String(s) => truncate_str(s, 50),
+                        serde_json::Value::Null => "null".to_string(),
+                        serde_json::Value::Bool(b) => b.to_string(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        _ => truncate_str(&value.to_string(), 50),
+                    };
+                    lines.push(format!("{}: {}", key, val_str));
+                }
+                if obj.len() > 6 {
+                    lines.push(format!("... ({} more fields)", obj.len() - 6));
+                }
+            }
+        }
+    }
+
+    lines
 }
