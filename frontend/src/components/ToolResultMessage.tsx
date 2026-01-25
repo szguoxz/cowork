@@ -8,6 +8,15 @@ interface ToolResultMessageProps {
   diffPreview?: DiffLine[]
   output?: string
   success?: boolean
+  elapsedSecs?: number
+}
+
+function formatElapsed(secs: number): string {
+  if (secs < 0.1) return ''
+  if (secs < 60) return ` [${secs.toFixed(1)}s]`
+  const mins = Math.floor(secs / 60)
+  const remainingSecs = secs % 60
+  return ` [${mins}m${remainingSecs.toFixed(0)}s]`
 }
 
 /**
@@ -19,9 +28,11 @@ export default function ToolResultMessage({
   diffPreview,
   output,
   success = true,
+  elapsedSecs,
 }: ToolResultMessageProps) {
   const [expanded, setExpanded] = useState(false)
   const hasExpandableContent = (diffPreview && diffPreview.length > 0) || (output && output.length > 100)
+  const elapsed = elapsedSecs ? formatElapsed(elapsedSecs) : ''
 
   const summaryColor = success
     ? 'text-muted-foreground'
@@ -43,6 +54,9 @@ export default function ToolResultMessage({
           <span className="text-muted-foreground select-none">⎿</span>
         )}
         <span className={`text-sm ${summaryColor}`}>{summary}</span>
+        {elapsed && (
+          <span className="font-mono text-xs text-muted-foreground">{elapsed}</span>
+        )}
       </div>
 
       {expanded && diffPreview && diffPreview.length > 0 && (

@@ -2,6 +2,7 @@
 
 use cowork_core::formatting::{format_ephemeral, truncate_str};
 pub use cowork_core::DiffLine;
+use std::time::Instant;
 use cowork_core::session::SessionOutput;
 use cowork_core::QuestionInfo;
 use std::collections::{HashMap, HashSet};
@@ -18,12 +19,14 @@ pub enum MessageType {
     ToolCall {
         name: String,
         formatted: String,
+        elapsed_secs: f32,
     },
     /// Tool result message (Claude Code style: ⎿ summary)
     ToolResult {
         name: String,
         summary: String,
         success: bool,
+        elapsed_secs: f32,
         diff: Option<Vec<DiffLine>>,
         expanded: bool,
     },
@@ -60,11 +63,12 @@ impl Message {
         Self::new(MessageType::Error, content)
     }
 
-    pub fn tool_call(name: impl Into<String>, formatted: impl Into<String>) -> Self {
+    pub fn tool_call(name: impl Into<String>, formatted: impl Into<String>, elapsed_secs: f32) -> Self {
         Self {
             message_type: MessageType::ToolCall {
                 name: name.into(),
                 formatted: formatted.into(),
+                elapsed_secs,
             },
             content: String::new(),
         }
@@ -74,6 +78,7 @@ impl Message {
         name: impl Into<String>,
         summary: impl Into<String>,
         success: bool,
+        elapsed_secs: f32,
         diff: Option<Vec<DiffLine>>,
     ) -> Self {
         Self {
@@ -81,6 +86,7 @@ impl Message {
                 name: name.into(),
                 summary: summary.into(),
                 success,
+                elapsed_secs,
                 diff,
                 expanded: false,
             },
@@ -229,6 +235,8 @@ pub struct App {
     pub session_approved_tools: HashSet<String>,
     /// Approve all tools for session
     pub approve_all_session: bool,
+    /// When the current turn started (user submitted message)
+    pub turn_start: Option<Instant>,
 }
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -253,7 +261,20 @@ impl App {
             history_draft: String::new(),
             session_approved_tools: HashSet::new(),
             approve_all_session: false,
+            turn_start: None,
         }
+    }
+
+    /// Start a new turn (when user submits a message)
+    pub fn start_turn(&mut self) {
+        self.turn_start = Some(Instant::now());
+    }
+
+    /// Get elapsed seconds since turn started
+    pub fn elapsed_secs(&self) -> f32 {
+        self.turn_start
+            .map(|t| t.elapsed().as_secs_f32())
+            .unwrap_or(0.0)
     }
 
     /// Advance spinner
@@ -373,12 +394,14 @@ impl App {
                 }
             }
             SessionOutput::ToolCall { name, formatted, .. } => {
-                // Add tool call as a persistent message
-                self.add_message(Message::tool_call(&name, &formatted));
+                // Add tool call as a persistent message with elapsed time
+                let elapsed = self.elapsed_secs();
+                self.add_message(Message::tool_call(&name, &formatted, elapsed));
             }
             SessionOutput::ToolResult { name, summary, success, diff_preview, .. } => {
-                // Add tool result as a persistent message
-                self.add_message(Message::tool_result(&name, &summary, success, diff_preview));
+                // Add tool result as a persistent message with elapsed time
+                let elapsed = self.elapsed_secs();
+                self.add_message(Message::tool_result(&name, &summary, success, elapsed, diff_preview));
                 // Clear ephemeral since we have the result
                 self.ephemeral = None;
             }

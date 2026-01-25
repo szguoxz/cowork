@@ -557,6 +557,7 @@ async fn run_event_loop(
                             break;
                         }
                         KeyAction::Submit(input) => {
+                            app.start_turn();
                             app.push_history(input.clone());
                             handle_user_input(app, session_manager, session_id, workspace, &input).await?;
                         }

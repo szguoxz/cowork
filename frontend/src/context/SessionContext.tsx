@@ -225,37 +225,45 @@ export function SessionProvider({ children }: SessionProviderProps) {
         break
 
       case 'tool_call':
-        // Add tool call as a persistent message
-        updateSession(sessionId, s => ({
-          ...s,
-          messages: [...s.messages, {
-            id: output.id,
-            type: 'tool_call' as const,
-            content: '',
-            toolName: output.name,
-            formatted: output.formatted,
-          }],
-          updatedAt: new Date(),
-        }))
+        // Add tool call as a persistent message with elapsed time
+        updateSession(sessionId, s => {
+          const elapsedSecs = s.turnStart ? (Date.now() - s.turnStart) / 1000 : 0
+          return {
+            ...s,
+            messages: [...s.messages, {
+              id: output.id,
+              type: 'tool_call' as const,
+              content: '',
+              toolName: output.name,
+              formatted: output.formatted,
+              elapsedSecs,
+            }],
+            updatedAt: new Date(),
+          }
+        })
         break
 
       case 'tool_result':
-        // Add tool result as a persistent message
-        updateSession(sessionId, s => ({
-          ...s,
-          ephemeral: null,  // Clear ephemeral since we have the result
-          messages: [...s.messages, {
-            id: `${output.id}-result`,
-            type: 'tool_result' as const,
-            content: output.output,
-            toolName: output.name,
-            summary: output.summary,
-            success: output.success,
-            diffPreview: output.diff_preview || undefined,
-            expanded: false,
-          }],
-          updatedAt: new Date(),
-        }))
+        // Add tool result as a persistent message with elapsed time
+        updateSession(sessionId, s => {
+          const elapsedSecs = s.turnStart ? (Date.now() - s.turnStart) / 1000 : 0
+          return {
+            ...s,
+            ephemeral: null,  // Clear ephemeral since we have the result
+            messages: [...s.messages, {
+              id: `${output.id}-result`,
+              type: 'tool_result' as const,
+              content: output.output,
+              toolName: output.name,
+              summary: output.summary,
+              success: output.success,
+              diffPreview: output.diff_preview || undefined,
+              expanded: false,
+              elapsedSecs,
+            }],
+            updatedAt: new Date(),
+          }
+        })
         break
 
       case 'question':
@@ -383,7 +391,8 @@ export function SessionProvider({ children }: SessionProviderProps) {
     const targetId = sessionId || activeSessionId
     if (!targetId) throw new Error('No active session')
 
-    updateSession(targetId, s => ({ ...s, error: null }))
+    // Set turnStart for elapsed time tracking
+    updateSession(targetId, s => ({ ...s, error: null, turnStart: Date.now() }))
     await invoke('send_message', { content, sessionId: targetId })
   }, [activeSessionId, updateSession])
 

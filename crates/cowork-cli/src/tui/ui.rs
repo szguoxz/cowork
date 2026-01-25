@@ -100,13 +100,13 @@ fn message_to_lines(msg: &Message, max_width: usize) -> Vec<ListItem<'static>> {
             // Assistant messages get ● prefix for each paragraph
             assistant_to_lines(&msg.content, max_width)
         }
-        MessageType::ToolCall { formatted, .. } => {
-            // Tool calls: ● ToolName(args...) in cyan
-            tool_call_to_lines(formatted, max_width)
+        MessageType::ToolCall { formatted, elapsed_secs, .. } => {
+            // Tool calls: ● ToolName(args...) [Xs] in cyan
+            tool_call_to_lines(formatted, *elapsed_secs, max_width)
         }
-        MessageType::ToolResult { summary, success, diff, expanded, .. } => {
-            // Tool results: ⎿ summary, with optional diff (red for errors)
-            tool_result_to_lines(summary, *success, diff.as_ref(), *expanded, max_width)
+        MessageType::ToolResult { summary, success, elapsed_secs, diff, expanded, .. } => {
+            // Tool results: ⎿ summary [Xs], with optional diff (red for errors)
+            tool_result_to_lines(summary, *success, *elapsed_secs, diff.as_ref(), *expanded, max_width)
         }
         _ => {
             let (prefix, style) = match &msg.message_type {
@@ -222,13 +222,28 @@ fn assistant_to_lines(content: &str, max_width: usize) -> Vec<ListItem<'static>>
     items
 }
 
-/// Render tool call: ● ToolName(args...) in cyan
-fn tool_call_to_lines(formatted: &str, max_width: usize) -> Vec<ListItem<'static>> {
+/// Format elapsed time as a compact string
+fn format_elapsed(secs: f32) -> String {
+    if secs < 0.1 {
+        String::new()
+    } else if secs < 60.0 {
+        format!(" [{:.1}s]", secs)
+    } else {
+        let mins = (secs / 60.0).floor() as u32;
+        let remaining_secs = secs % 60.0;
+        format!(" [{}m{:.0}s]", mins, remaining_secs)
+    }
+}
+
+/// Render tool call: ● ToolName(args...) [Xs] in cyan
+fn tool_call_to_lines(formatted: &str, elapsed_secs: f32, max_width: usize) -> Vec<ListItem<'static>> {
     let prefix = "● ";
     let continuation = "  ";
-    let content_width = max_width.saturating_sub(2);
+    let elapsed = format_elapsed(elapsed_secs);
+    let content_width = max_width.saturating_sub(2 + elapsed.len());
     let prefix_style = Style::default().fg(Color::White);
     let tool_style = Style::default().fg(Color::Cyan);
+    let time_style = Style::default().fg(Color::DarkGray);
 
     let wrapped = wrap_text(formatted, content_width);
     wrapped
@@ -236,45 +251,64 @@ fn tool_call_to_lines(formatted: &str, max_width: usize) -> Vec<ListItem<'static
         .enumerate()
         .map(|(i, line)| {
             let p = if i == 0 { prefix } else { continuation };
-            ListItem::new(Line::from(vec![
-                Span::styled(p.to_string(), prefix_style),
-                Span::styled(line, tool_style),
-            ]))
+            if i == 0 && !elapsed.is_empty() {
+                ListItem::new(Line::from(vec![
+                    Span::styled(p.to_string(), prefix_style),
+                    Span::styled(line, tool_style),
+                    Span::styled(elapsed.clone(), time_style),
+                ]))
+            } else {
+                ListItem::new(Line::from(vec![
+                    Span::styled(p.to_string(), prefix_style),
+                    Span::styled(line, tool_style),
+                ]))
+            }
         })
         .collect()
 }
 
-/// Render tool result: ⎿ summary, with optional diff
+/// Render tool result: ⎿ summary [Xs], with optional diff
 fn tool_result_to_lines(
     summary: &str,
     success: bool,
+    elapsed_secs: f32,
     diff: Option<&Vec<DiffLine>>,
     _expanded: bool,
     max_width: usize,
 ) -> Vec<ListItem<'static>> {
     let prefix = "  ⎿  ";
     let continuation = "     ";
-    let content_width = max_width.saturating_sub(5);
+    let elapsed = format_elapsed(elapsed_secs);
+    let content_width = max_width.saturating_sub(5 + elapsed.len());
     // Use red for errors, gray for success
     let summary_style = if success {
         Style::default().fg(Color::DarkGray)
     } else {
         Style::default().fg(Color::Red)
     };
+    let time_style = Style::default().fg(Color::DarkGray);
     let added_style = Style::default().fg(Color::Green);
     let removed_style = Style::default().fg(Color::Red);
     let context_style = Style::default().fg(Color::DarkGray);
 
     let mut items = Vec::new();
 
-    // Summary line
+    // Summary line with elapsed time
     let wrapped = wrap_text(summary, content_width);
     for (i, line) in wrapped.into_iter().enumerate() {
         let p = if i == 0 { prefix } else { continuation };
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled(p.to_string(), summary_style),
-            Span::styled(line, summary_style),
-        ])));
+        if i == 0 && !elapsed.is_empty() {
+            items.push(ListItem::new(Line::from(vec![
+                Span::styled(p.to_string(), summary_style),
+                Span::styled(line, summary_style),
+                Span::styled(elapsed.clone(), time_style),
+            ])));
+        } else {
+            items.push(ListItem::new(Line::from(vec![
+                Span::styled(p.to_string(), summary_style),
+                Span::styled(line, summary_style),
+            ])));
+        }
     }
 
     // Diff lines (if present)

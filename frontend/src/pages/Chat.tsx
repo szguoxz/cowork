@@ -188,7 +188,7 @@ export default function Chat() {
             {msg.type === 'tool_call' && msg.formatted && (
               <div className="flex justify-start">
                 <div className="max-w-[80%]">
-                  <ToolCallMessage formatted={msg.formatted} />
+                  <ToolCallMessage formatted={msg.formatted} elapsedSecs={msg.elapsedSecs} />
                 </div>
               </div>
             )}
@@ -201,6 +201,7 @@ export default function Chat() {
                     diffPreview={msg.diffPreview}
                     output={msg.content}
                     success={msg.success ?? true}
+                    elapsedSecs={msg.elapsedSecs}
                   />
                 </div>
               </div>

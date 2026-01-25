@@ -22,6 +22,8 @@ export interface Message {
   success?: boolean
   diffPreview?: DiffLine[]
   expanded?: boolean
+  // Timing
+  elapsedSecs?: number
 }
 
 export interface QuestionData {
@@ -47,6 +49,7 @@ export interface Session {
   provider?: SessionProvider
   createdAt: Date
   updatedAt: Date
+  turnStart?: number          // Timestamp when user submitted message (ms since epoch)
 }
 
 export function createSession(id: string, name?: string, provider?: SessionProvider): Session {
