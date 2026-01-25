@@ -31,18 +31,23 @@ export default function Layout() {
         bg-card/50 backdrop-blur-sm border-r border-border flex flex-col
         transition-all duration-300 ease-in-out
       `}>
-        {/* Logo */}
-        <div className={`
-          h-14 border-b border-border flex items-center
-          ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}
-        `}>
+        {/* Logo - clickable to go back to chat */}
+        <Link
+          to="/"
+          className={`
+            h-14 border-b border-border flex items-center
+            hover:bg-black/5 dark:hover:bg-white/5 transition-colors
+            ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}
+          `}
+          title="Back to Chat"
+        >
           <div className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shrink-0 shadow-glow-sm">
             <Sparkles className="w-5 h-5 text-white" />
           </div>
           {!collapsed && (
             <span className="font-semibold text-foreground tracking-tight">Cowork</span>
           )}
-        </div>
+        </Link>
 
         {/* Navigation */}
         <nav className="flex-1 p-2 space-y-1">
