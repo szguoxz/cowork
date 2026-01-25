@@ -6,7 +6,7 @@ description = "Cowork CLI - Multi-agent assistant command line tool"
 license = "Apache-2.0"
 
 [[bin]]
-name = "cowork"
+name = "cowork-cli"
 path = "src/main.rs"
 
 [dependencies]
