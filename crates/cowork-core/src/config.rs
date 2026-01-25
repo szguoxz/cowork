@@ -610,6 +610,9 @@ impl ConfigManager {
     }
 
     /// Save the current configuration to disk
+    ///
+    /// If the config file doesn't exist yet, includes sample configuration
+    /// for MCP servers, skills, and other advanced features as comments.
     pub fn save(&self) -> Result<()> {
         // Ensure parent directory exists
         if let Some(parent) = self.config_path.parent() {
@@ -617,13 +620,77 @@ impl ConfigManager {
                 .map_err(|e| Error::Config(format!("Failed to create config dir: {}", e)))?;
         }
 
-        let content = toml::to_string_pretty(&self.config)
+        let config_toml = toml::to_string_pretty(&self.config)
             .map_err(|e| Error::Config(format!("Failed to serialize config: {}", e)))?;
+
+        // Check if this is a new config file (doesn't exist yet)
+        let is_new_config = !self.config_path.exists();
+
+        let content = if is_new_config {
+            // Include sample configuration as comments for new config files
+            format!("{}\n{}", config_toml, Self::sample_config_comments())
+        } else {
+            config_toml
+        };
 
         std::fs::write(&self.config_path, content)
             .map_err(|e| Error::Config(format!("Failed to write config: {}", e)))?;
 
         Ok(())
+    }
+
+    /// Sample configuration comments for MCP servers, skills, etc.
+    fn sample_config_comments() -> &'static str {
+        r#"
+# ─────────────────────────────────────────────────────────────────────────────
+# MCP (Model Context Protocol) Servers
+# ─────────────────────────────────────────────────────────────────────────────
+# MCP servers provide additional tools to the AI. Uncomment and configure:
+#
+# [mcp_servers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+#
+# [mcp_servers.github]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-github"]
+# [mcp_servers.github.env]
+# GITHUB_PERSONAL_ACCESS_TOKEN = "your-token-here"
+#
+# [mcp_servers.postgres]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-postgres", "postgresql://user:pass@localhost/db"]
+#
+# [mcp_servers.remote-server]
+# transport = "http"
+# url = "https://your-mcp-server.example.com"
+# [mcp_servers.remote-server.headers]
+# Authorization = "Bearer your-token"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Skills and Agents
+# ─────────────────────────────────────────────────────────────────────────────
+# Custom skills and agents are loaded from these directories:
+#   - Project: .claude/skills/, .claude/agents/
+#   - Global:  ~/.claude/skills/, ~/.claude/agents/
+#
+# To create a skill, add a SKILL.md file:
+#   ~/.claude/skills/my-skill/SKILL.md
+#
+# Example skill format (SKILL.md):
+#   ---
+#   name: my-skill
+#   description: Does something useful
+#   user_invocable: true
+#   ---
+#
+#   Your prompt template here...
+
+# [prompt]
+# enable_hooks = true
+# enable_plugins = true
+# enable_skill_auto_invoke = true
+"#
     }
 
     /// Update provider settings for a specific provider
