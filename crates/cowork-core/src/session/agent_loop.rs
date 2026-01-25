@@ -473,30 +473,44 @@ impl AgentLoop {
                             questions,
                         }).await;
 
-                        // Wait for answer
-                        if let Some(SessionInput::AnswerQuestion { answers, .. }) = self.answer_rx.recv().await {
-                            let result = serde_json::json!({ "answered": true, "answers": answers });
-                            self.session.add_tool_result(&tool_call.id, result.to_string());
-                            self.emit(SessionOutput::tool_done(&tool_call.id, ASK_QUESTION_TOOL_NAME, true, result.to_string())).await;
-                        } else {
-                            return Ok(()); // Channel closed or unexpected input
+                        // Wait for answer (loop to handle unexpected messages)
+                        loop {
+                            match self.answer_rx.recv().await {
+                                Some(SessionInput::AnswerQuestion { answers, .. }) => {
+                                    let result = serde_json::json!({ "answered": true, "answers": answers });
+                                    self.session.add_tool_result(&tool_call.id, result.to_string());
+                                    self.emit(SessionOutput::tool_done(&tool_call.id, ASK_QUESTION_TOOL_NAME, true, result.to_string())).await;
+                                    break;
+                                }
+                                Some(other) => {
+                                    warn!("Unexpected input while waiting for answer: {:?}", other);
+                                }
+                                None => return Ok(()), // Channel closed
+                            }
                         }
                     }
                 } else {
                     // Needs approval
                     self.emit(SessionOutput::tool_pending(&tool_call.id, &tool_call.name, tool_call.arguments.clone(), None)).await;
 
-                    // Wait for approval/rejection
-                    match self.answer_rx.recv().await {
-                        Some(SessionInput::ApproveTool { .. }) => {
-                            self.execute_tool(tool_call).await;
+                    // Wait for approval/rejection (loop to handle unexpected messages)
+                    loop {
+                        match self.answer_rx.recv().await {
+                            Some(SessionInput::ApproveTool { .. }) => {
+                                self.execute_tool(tool_call).await;
+                                break;
+                            }
+                            Some(SessionInput::RejectTool { reason, .. }) => {
+                                let reason = reason.unwrap_or_else(|| "Rejected by user".to_string());
+                                self.session.add_tool_result_with_error(&tool_call.id, &reason, true);
+                                self.emit(SessionOutput::tool_done(&tool_call.id, &tool_call.name, false, reason)).await;
+                                break;
+                            }
+                            Some(other) => {
+                                warn!("Unexpected input while waiting for approval: {:?}", other);
+                            }
+                            None => return Ok(()), // Channel closed
                         }
-                        Some(SessionInput::RejectTool { reason, .. }) => {
-                            let reason = reason.unwrap_or_else(|| "Rejected by user".to_string());
-                            self.session.add_tool_result_with_error(&tool_call.id, &reason, true);
-                            self.emit(SessionOutput::tool_done(&tool_call.id, &tool_call.name, false, reason)).await;
-                        }
-                        _ => return Ok(()), // Channel closed or unexpected input
                     }
                 }
             }
