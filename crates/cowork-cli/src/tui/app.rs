@@ -17,13 +17,11 @@ pub enum MessageType {
     Error,
     /// Tool call message (Claude Code style: ● ToolName(args...))
     ToolCall {
-        name: String,
         formatted: String,
         elapsed_secs: f32,
     },
     /// Tool result message (Claude Code style: ⎿ summary)
     ToolResult {
-        name: String,
         summary: String,
         success: bool,
         elapsed_secs: f32,
@@ -63,10 +61,9 @@ impl Message {
         Self::new(MessageType::Error, content)
     }
 
-    pub fn tool_call(name: impl Into<String>, formatted: impl Into<String>, elapsed_secs: f32) -> Self {
+    pub fn tool_call(formatted: impl Into<String>, elapsed_secs: f32) -> Self {
         Self {
             message_type: MessageType::ToolCall {
-                name: name.into(),
                 formatted: formatted.into(),
                 elapsed_secs,
             },
@@ -75,7 +72,6 @@ impl Message {
     }
 
     pub fn tool_result(
-        name: impl Into<String>,
         summary: impl Into<String>,
         success: bool,
         elapsed_secs: f32,
@@ -83,7 +79,6 @@ impl Message {
     ) -> Self {
         Self {
             message_type: MessageType::ToolResult {
-                name: name.into(),
                 summary: summary.into(),
                 success,
                 elapsed_secs,
@@ -393,15 +388,15 @@ impl App {
                     self.ephemeral = Some(format!("{}: {}", name, err));
                 }
             }
-            SessionOutput::ToolCall { name, formatted, .. } => {
+            SessionOutput::ToolCall { formatted, .. } => {
                 // Add tool call as a persistent message with elapsed time
                 let elapsed = self.elapsed_secs();
-                self.add_message(Message::tool_call(&name, &formatted, elapsed));
+                self.add_message(Message::tool_call(&formatted, elapsed));
             }
-            SessionOutput::ToolResult { name, summary, success, diff_preview, .. } => {
+            SessionOutput::ToolResult { summary, success, diff_preview, .. } => {
                 // Add tool result as a persistent message with elapsed time
                 let elapsed = self.elapsed_secs();
-                self.add_message(Message::tool_result(&name, &summary, success, elapsed, diff_preview));
+                self.add_message(Message::tool_result(&summary, success, elapsed, diff_preview));
                 // Clear ephemeral since we have the result
                 self.ephemeral = None;
             }
