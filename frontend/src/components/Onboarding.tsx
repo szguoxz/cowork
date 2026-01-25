@@ -143,6 +143,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
 
         await invoke('update_settings', { settings })
         await invoke('save_settings')
+        await invoke('reload_session_config')
       }
     } catch (err) {
       setTestResult({ success: false, message: String(err) })

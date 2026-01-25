@@ -82,6 +82,47 @@ pub async fn save_settings(state: State<'_, AppState>) -> Result<(), String> {
     cm.save().map_err(|e| e.to_string())
 }
 
+/// Reload session config from current settings
+///
+/// Call this after saving settings to apply them to new sessions without restart.
+#[tauri::command]
+pub async fn reload_session_config(state: State<'_, AppState>) -> Result<(), String> {
+    let cm = state.config_manager.read().await;
+    let config = cm.config();
+
+    // Build new session config from current settings
+    let default_provider = config.get_default_provider().cloned();
+    let approval_level: cowork_core::ApprovalLevel = config
+        .approval
+        .auto_approve_level
+        .parse()
+        .unwrap_or(cowork_core::ApprovalLevel::Low);
+
+    let mut tool_approval_config = cowork_core::ToolApprovalConfig::default();
+    tool_approval_config.set_level(approval_level);
+
+    let mut session_config = cowork_core::session::SessionConfig::new(state.workspace_path.clone())
+        .with_approval_config(tool_approval_config);
+
+    if let Some(ref provider_config) = default_provider {
+        let provider_type: ProviderType = provider_config
+            .provider_type
+            .parse()
+            .unwrap_or(ProviderType::Anthropic);
+
+        session_config = session_config.with_provider(provider_type);
+        session_config = session_config.with_model(&provider_config.model);
+        if let Some(api_key) = provider_config.get_api_key() {
+            session_config = session_config.with_api_key(api_key);
+        }
+    }
+
+    // Update the session manager
+    state.session_manager.update_config(session_config);
+
+    Ok(())
+}
+
 /// Check if API key is configured
 #[tauri::command]
 pub async fn check_api_key(state: State<'_, AppState>) -> Result<bool, String> {

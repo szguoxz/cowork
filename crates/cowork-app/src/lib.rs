@@ -282,6 +282,7 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::save_settings,
+            commands::reload_session_config,
             commands::check_api_key,
             commands::test_api_connection,
             commands::is_setup_complete,

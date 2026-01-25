@@ -21,8 +21,8 @@ pub struct SessionManager {
     sessions: super::types::SessionRegistry,
     /// Channel for all session outputs (session_id, output)
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
-    /// Base config used for new sessions
-    base_config: SessionConfig,
+    /// Base config used for new sessions (RwLock for updates after onboarding)
+    base_config: RwLock<SessionConfig>,
 }
 
 impl SessionManager {
@@ -40,10 +40,20 @@ impl SessionManager {
         let manager = Self {
             sessions,
             output_tx,
-            base_config: config,
+            base_config: RwLock::new(config),
         };
 
         (manager, output_rx)
+    }
+
+    /// Update the base config for new sessions
+    ///
+    /// Existing sessions are not affected. New sessions will use the updated config.
+    pub fn update_config(&self, mut config: SessionConfig) {
+        // Preserve the session registry
+        config.session_registry = Some(self.sessions.clone());
+        *self.base_config.write() = config;
+        info!("Session manager config updated");
     }
 
     /// Push a message to a session
@@ -73,12 +83,13 @@ impl SessionManager {
         // Create input channel for this session
         let (input_tx, input_rx) = mpsc::channel(256);
 
-        // Create the agent loop
+        // Create the agent loop with current config
+        let config = self.base_config.read().clone();
         let agent_loop = AgentLoop::new(
             session_id.to_string(),
             input_rx,
             self.output_tx.clone(),
-            self.base_config.clone(),
+            config,
         )
         .await?;
 
