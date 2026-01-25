@@ -13,7 +13,7 @@ interface OnboardingProps {
   onComplete: () => void
 }
 
-type Step = 'provider' | 'apikey' | 'serpapi' | 'model' | 'testing'
+type Step = 'provider' | 'apikey' | 'serpapi' | 'testing'
 
 interface ProviderOption {
   id: string
@@ -45,20 +45,11 @@ interface ApiTestResult {
   message: string
 }
 
-interface ModelInfo {
-  id: string
-  name: string | null
-  description: string | null
-  recommended: boolean
-}
-
 export default function Onboarding({ onComplete }: OnboardingProps) {
   const [step, setStep] = useState<Step>('provider')
   const [selectedProvider, setSelectedProvider] = useState<string>('')
   const [apiKey, setApiKey] = useState('')
   const [serpApiKey, setSerpApiKey] = useState('')
-  const [models, setModels] = useState<ModelInfo[]>([])
-  const [selectedModel, setSelectedModel] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [testResult, setTestResult] = useState<ApiTestResult | null>(null)
@@ -89,33 +80,15 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
       return
     }
     if (selectedProvider === 'ollama') {
+      // Ollama doesn't need API key, go straight to testing
       setApiKey('')
-      setStep('model')
-      fetchModelsForProvider(selectedProvider, '')
+      runTest('')
     } else {
       setStep('apikey')
     }
   }
 
-  const fetchModelsForProvider = async (provider: string, key: string) => {
-    setIsLoading(true)
-    try {
-      const fetchedModels = await invoke<ModelInfo[]>('fetch_provider_models', {
-        providerType: provider,
-        apiKey: key,
-      })
-      setModels(fetchedModels)
-      const recommended = fetchedModels.find((m) => m.recommended)
-      setSelectedModel(recommended?.id || fetchedModels[0]?.id || '')
-    } catch {
-      setModels([])
-      setSelectedModel('')
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleApiKeySubmit = async () => {
+  const handleApiKeySubmit = () => {
     if (!apiKey.trim()) {
       setError('Please enter an API key')
       return
@@ -124,24 +97,17 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
     if (needsSerpApi) {
       setStep('serpapi')
     } else {
-      setStep('model')
-      await fetchModelsForProvider(selectedProvider, apiKey)
+      runTest(apiKey)
     }
   }
 
-  const handleSerpApiSubmit = async () => {
-    // SerpAPI is optional, so we can proceed without it
+  const handleSerpApiSubmit = () => {
+    // SerpAPI is optional, proceed to test
     setError(null)
-    setStep('model')
-    await fetchModelsForProvider(selectedProvider, apiKey)
+    runTest(apiKey)
   }
 
-  const handleModelSubmit = async () => {
-    if (!selectedModel && models.length > 0) {
-      setError('Please select a model')
-      return
-    }
-    setError(null)
+  const runTest = async (key: string) => {
     setStep('testing')
     setIsLoading(true)
     setTestResult(null)
@@ -149,8 +115,8 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
     try {
       const result = await invoke<ApiTestResult>('test_api_connection', {
         providerType: selectedProvider,
-        apiKey: apiKey || null,
-        model: selectedModel || null,
+        apiKey: key || null,
+        model: null, // Use provider default
       })
       setTestResult(result)
 
@@ -159,8 +125,8 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
         const settings: Record<string, unknown> = {
           provider: {
             provider_type: selectedProvider,
-            api_key: apiKey || null,
-            model: selectedModel || null,
+            api_key: key || null,
+            model: null, // Use provider default
             base_url: null,
           },
           approval: { auto_approve_level: 'low', show_confirmation_dialogs: true },
@@ -190,23 +156,21 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
     setTestResult(null)
     if (step === 'apikey') setStep('provider')
     else if (step === 'serpapi') setStep('apikey')
-    else if (step === 'model') {
+    else if (step === 'testing') {
       if (selectedProvider === 'ollama') setStep('provider')
       else if (needsSerpApi) setStep('serpapi')
       else setStep('apikey')
     }
-    else if (step === 'testing') setStep('model')
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !isLoading) {
       if (step === 'apikey') handleApiKeySubmit()
       else if (step === 'serpapi') handleSerpApiSubmit()
-      else if (step === 'model') handleModelSubmit()
     }
   }
 
-  const progress = step === 'provider' ? 20 : step === 'apikey' ? 40 : step === 'serpapi' ? 55 : step === 'model' ? 75 : 100
+  const progress = step === 'provider' ? 25 : step === 'apikey' ? 50 : step === 'serpapi' ? 70 : 100
 
   return (
     <div className="fixed inset-0 bg-gray-900/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -334,66 +298,6 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
               >
                 {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : (serpApiKey.trim() ? 'Continue' : 'Skip')}
                 {!isLoading && <ArrowRight className="w-4 h-4" />}
-              </button>
-            </div>
-          )}
-
-          {/* Model Selection */}
-          {step === 'model' && (
-            <div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Select model:</p>
-              {isLoading ? (
-                <div className="py-6 flex flex-col items-center">
-                  <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-                  <p className="mt-2 text-xs text-gray-500">Loading...</p>
-                </div>
-              ) : models.length > 0 ? (
-                <div className="space-y-1 max-h-[200px] overflow-y-auto">
-                  {models.map((model) => (
-                    <button
-                      key={model.id}
-                      onClick={() => setSelectedModel(model.id)}
-                      className={`w-full px-2.5 py-1.5 rounded border text-left text-xs transition-all flex items-center justify-between ${
-                        selectedModel === model.id
-                          ? 'border-blue-500 bg-blue-500 text-white'
-                          : 'border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-blue-400'
-                      }`}
-                    >
-                      <span className="truncate">{model.name || model.id}</span>
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {model.recommended && (
-                          <span className={`text-[10px] px-1 py-0.5 rounded ${
-                            selectedModel === model.id
-                              ? 'bg-white/20 text-white'
-                              : 'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-400'
-                          }`}>
-                            rec
-                          </span>
-                        )}
-                        {selectedModel === model.id && (
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="py-2">
-                  <p className="text-xs text-gray-400">Using provider default model</p>
-                </div>
-              )}
-              {error && (
-                <p className="mt-1.5 text-xs text-red-500 flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" /> {error}
-                </p>
-              )}
-              <button
-                onClick={handleModelSubmit}
-                disabled={isLoading || (models.length > 0 && !selectedModel)}
-                className="w-full mt-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
-              >
-                Test Connection
-                <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           )}
