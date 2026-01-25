@@ -3,6 +3,8 @@
 //! - **Background check**: downloads eligible updates to a staging directory.
 //! - **Startup apply**: replaces the current binary with a staged update on next launch.
 //! - **Manual update**: `cowork update` bypasses the `[auto-update]` marker.
+//!
+//! Self-update is only enabled for official builds from GitHub CI.
 
 use std::fs;
 use std::path::PathBuf;
@@ -19,6 +21,9 @@ use cowork_core::update::{
 const REPO_OWNER: &str = "szguoxz";
 const REPO_NAME: &str = "cowork";
 
+/// True if built by GitHub CI, false for local builds.
+const IS_CI_BUILD: bool = option_env!("GITHUB_ACTIONS").is_some();
+
 // ─── Startup Apply ───────────────────────────────────────────────────────────
 
 /// Apply a previously staged update by replacing the current binary.
@@ -26,6 +31,10 @@ const REPO_NAME: &str = "cowork";
 /// Called early in `main()`. Returns `Ok(true)` if the binary was replaced
 /// (the user should be informed to restart).
 pub fn apply_staged_update() -> anyhow::Result<bool> {
+    if !IS_CI_BUILD {
+        return Ok(false);
+    }
+
     let staged = match read_staged_update() {
         Some(s) if s.complete => s,
         _ => return Ok(false),
@@ -84,8 +93,12 @@ pub fn apply_staged_update() -> anyhow::Result<bool> {
 ///
 /// The update will be applied on the next startup via `apply_staged_update()`.
 /// Times out after 30 seconds and silently ignores errors.
+/// Only runs for CI builds.
 pub fn spawn_startup_check() -> tokio::task::JoinHandle<()> {
     tokio::spawn(async {
+        if !IS_CI_BUILD {
+            return;
+        }
         let result = tokio::time::timeout(
             Duration::from_secs(30),
             tokio::task::spawn_blocking(background_download_inner),
@@ -203,7 +216,17 @@ fn background_download_inner() -> Option<String> {
 ///
 /// If `check_only` is true, only check for a newer version without installing.
 /// Manual update bypasses the `[auto-update]` marker and works on any release.
+/// Only available for CI builds.
 pub async fn run_update(check_only: bool) -> anyhow::Result<()> {
+    if !IS_CI_BUILD {
+        println!(
+            "{} Self-update is only available for official releases.",
+            style("[update]").yellow()
+        );
+        println!("This binary was built locally. Please update via your package manager or rebuild from source.");
+        return Ok(());
+    }
+
     // Clear any staged update to avoid conflicts
     let _ = clear_staged_update();
 

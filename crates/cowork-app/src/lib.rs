@@ -19,9 +19,17 @@ use state::AppState;
 const REPO_OWNER: &str = "szguoxz";
 const REPO_NAME: &str = "cowork";
 
+/// True if built by GitHub CI, false for local builds.
+const IS_CI_BUILD: bool = option_env!("GITHUB_ACTIONS").is_some();
+
 /// Check for updates in the background (same approach as CLI).
 /// Returns Some(version) if an update is available, None otherwise.
+/// Only runs for CI builds.
 fn check_for_update_background() -> Option<String> {
+    if !IS_CI_BUILD {
+        return None;
+    }
+
     let current = env!("CARGO_PKG_VERSION");
 
     let releases = self_update::backends::github::ReleaseList::configure()
