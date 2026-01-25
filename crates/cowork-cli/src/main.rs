@@ -26,7 +26,6 @@ use cowork_core::tools::Tool;
 
 // TUI imports
 use crossterm::{
-    event::DisableMouseCapture,
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -492,10 +491,11 @@ async fn run_chat_tui(
         workspace,
     ).await;
 
-    // Restore terminal
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
-    terminal.show_cursor()?;
+    // Restore terminal - ignore errors to ensure we always clean up
+    // and don't mask the actual result from the event loop
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let _ = terminal.show_cursor();
 
     // Stop session
     let _ = session_manager.stop_all();
