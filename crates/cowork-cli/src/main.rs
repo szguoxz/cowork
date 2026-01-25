@@ -339,6 +339,30 @@ async fn run_one_shot(
                         .await?;
                 }
             }
+            SessionOutput::Question { request_id, questions } => {
+                // In one-shot mode, auto-answer questions with first option
+                println!("{}: {} question(s) (auto-answered in one-shot mode)",
+                    style("Question").yellow(),
+                    questions.len()
+                );
+                for (i, q) in questions.iter().enumerate() {
+                    println!("  Q{}: {}", i + 1, q.question);
+                    if let Some(first_opt) = q.options.first() {
+                        println!("    → Auto-selected: {}", first_opt.label);
+                    }
+                }
+                // Build answers map - select first option for each question
+                let answers: std::collections::HashMap<String, String> = questions
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, q)| {
+                        q.options.first().map(|opt| (i.to_string(), opt.label.clone()))
+                    })
+                    .collect();
+                session_manager
+                    .push_message(session_id, SessionInput::answer_question(&request_id, answers))
+                    .await?;
+            }
             SessionOutput::Error { message } => {
                 println!("{}", style(format!("Error: {}", message)).red());
             }

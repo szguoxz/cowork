@@ -4,10 +4,11 @@
 //! and initial setup.
 
 use console::style;
-use dialoguer::{theme::ColorfulTheme, Password, Select};
+use dialoguer::{theme::ColorfulTheme, Confirm, Password, Select};
 
-use cowork_core::config::{ConfigManager, ProviderConfig};
+use cowork_core::config::{ConfigManager, ProviderConfig, WebSearchConfig};
 use cowork_core::provider::{model_catalog, GenAIProvider, ProviderType};
+use cowork_core::tools::web::supports_native_search;
 
 /// Provider information for display
 pub struct ProviderInfo {
@@ -228,10 +229,79 @@ impl OnboardingWizard {
             // Save configuration
             self.save_config(provider_type, &provider_info, api_key.as_deref())?;
 
+            // Optional: SerpAPI key for providers without native web search
+            if !supports_native_search(provider_info.name) {
+                self.offer_serpapi_setup()?;
+            }
+
             // Show completion
             self.show_completion(&provider_info);
 
             break;
+        }
+
+        Ok(())
+    }
+
+    /// Offer to set up SerpAPI for web search (for providers without native search)
+    fn offer_serpapi_setup(&mut self) -> anyhow::Result<()> {
+        println!();
+        println!(
+            "{} {}",
+            style("Optional:").bold().yellow(),
+            style("Web Search Setup").bold()
+        );
+        println!();
+        println!(
+            "  {}",
+            style("Your chosen provider doesn't have built-in web search.").dim()
+        );
+        println!(
+            "  {}",
+            style("You can add SerpAPI for web search capabilities.").dim()
+        );
+        println!();
+
+        let setup = Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("Would you like to set up SerpAPI for web search?")
+            .default(false)
+            .interact()?;
+
+        if !setup {
+            println!();
+            println!(
+                "  {}",
+                style("Skipped. You can add it later in the config file.").dim()
+            );
+            return Ok(());
+        }
+
+        println!();
+        println!(
+            "  Get your API key at: {}",
+            style("https://serpapi.com/").cyan().underlined()
+        );
+        println!();
+
+        let api_key: String = Password::with_theme(&ColorfulTheme::default())
+            .with_prompt("SERPAPI_API_KEY")
+            .interact()?;
+
+        if !api_key.is_empty() {
+            // Update web search config
+            let mut web_search_config = WebSearchConfig::default();
+            web_search_config.fallback_provider = "serpapi".to_string();
+            web_search_config.fallback_api_key = Some(api_key);
+
+            self.config_manager.config_mut().web_search = web_search_config;
+            self.config_manager.save()?;
+
+            println!();
+            println!(
+                "  {} {}",
+                style("✓").green().bold(),
+                style("SerpAPI configured!").green()
+            );
         }
 
         Ok(())

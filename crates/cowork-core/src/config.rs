@@ -772,7 +772,7 @@ impl PromptSystemConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSearchConfig {
     /// Fallback search provider when native search is not available
-    /// Options: "brave", "searxng", "serper", "tavily"
+    /// Options: "brave", "serpapi", "serper", "tavily", "searxng"
     #[serde(default = "default_fallback_provider")]
     pub fallback_provider: String,
     /// API endpoint for fallback search (e.g., SearXNG instance URL)
@@ -831,6 +831,7 @@ impl WebSearchConfig {
         match self.fallback_provider.as_str() {
             "brave" => std::env::var("BRAVE_API_KEY").ok().filter(|k| !k.is_empty()),
             "serper" => std::env::var("SERPER_API_KEY").ok().filter(|k| !k.is_empty()),
+            "serpapi" => std::env::var("SERPAPI_API_KEY").ok().filter(|k| !k.is_empty()),
             "tavily" => std::env::var("TAVILY_API_KEY").ok().filter(|k| !k.is_empty()),
             "searxng" => None, // SearXNG typically doesn't need an API key
             _ => None,
@@ -847,6 +848,7 @@ impl WebSearchConfig {
         match self.fallback_provider.as_str() {
             "brave" => Some("https://api.search.brave.com/res/v1/web/search".to_string()),
             "serper" => Some("https://google.serper.dev/search".to_string()),
+            "serpapi" => Some("https://serpapi.com/search".to_string()),
             "tavily" => Some("https://api.tavily.com/search".to_string()),
             _ => None,
         }

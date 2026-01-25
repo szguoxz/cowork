@@ -118,6 +118,7 @@ impl WebSearch {
         let response = match self.config.fallback_provider.as_str() {
             "brave" => self.search_brave(&client, &endpoint, &search_query, api_key.as_deref()).await?,
             "serper" => self.search_serper(&client, &endpoint, &search_query, api_key.as_deref()).await?,
+            "serpapi" => self.search_serpapi(&client, &endpoint, &search_query, api_key.as_deref()).await?,
             "tavily" => self.search_tavily(&client, &endpoint, &search_query, api_key.as_deref()).await?,
             "searxng" => self.search_searxng(&client, &endpoint, &search_query).await?,
             _ => return Err(format!("Unknown search provider: {}", self.config.fallback_provider)),
@@ -197,6 +198,48 @@ impl WebSearch {
 
         let mut results = Vec::new();
         if let Some(organic) = body.get("organic").and_then(|o| o.as_array()) {
+            for item in organic.iter().take(self.config.max_results) {
+                results.push(SearchResult {
+                    title: item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                    url: item.get("link").and_then(|l| l.as_str()).unwrap_or("").to_string(),
+                    snippet: item.get("snippet").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn search_serpapi(
+        &self,
+        client: &reqwest::Client,
+        endpoint: &str,
+        query: &str,
+        api_key: Option<&str>,
+    ) -> Result<Vec<SearchResult>, String> {
+        let api_key = api_key.ok_or("SerpAPI API key required")?;
+
+        let response = client
+            .get(endpoint)
+            .query(&[
+                ("q", query),
+                ("api_key", api_key),
+                ("engine", "google"),
+                ("num", &self.config.max_results.to_string()),
+            ])
+            .send()
+            .await
+            .map_err(|e| format!("SerpAPI search failed: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("SerpAPI error: {}", response.status()));
+        }
+
+        let body: Value = response.json().await
+            .map_err(|e| format!("Failed to parse SerpAPI response: {}", e))?;
+
+        let mut results = Vec::new();
+        if let Some(organic) = body.get("organic_results").and_then(|o| o.as_array()) {
             for item in organic.iter().take(self.config.max_results) {
                 results.push(SearchResult {
                     title: item.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
