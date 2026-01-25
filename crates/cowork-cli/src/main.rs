@@ -513,6 +513,11 @@ async fn run_event_loop(
     workspace: &Path,
 ) -> anyhow::Result<()> {
     loop {
+        // Check quit flag at start of loop to exit immediately after /exit
+        if app.should_quit {
+            break;
+        }
+
         // Draw UI
         terminal.draw(|frame| tui::draw(frame, app))?;
 
