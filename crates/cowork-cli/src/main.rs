@@ -298,7 +298,7 @@ async fn run_one_shot(
     }
 
     // Create session manager
-    let (session_manager, mut output_rx) = SessionManager::new(session_config);
+    let (session_manager, mut output_rx) = SessionManager::with_config(session_config);
 
     let session_id = "cli-oneshot";
 
@@ -440,7 +440,7 @@ async fn run_chat(
     }
 
     // Create session manager
-    let (session_manager, output_rx) = SessionManager::new(session_config);
+    let (session_manager, output_rx) = SessionManager::with_config(session_config);
 
     // Run the TUI
     run_chat_tui(

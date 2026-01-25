@@ -70,6 +70,9 @@ pub struct Settings {
     pub approval: ApprovalSettings,
     /// UI preferences
     pub ui: UiSettings,
+    /// Web search configuration (optional)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<WebSearchSettings>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -93,6 +96,12 @@ pub struct UiSettings {
     pub show_tool_calls: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WebSearchSettings {
+    pub fallback_provider: Option<String>,
+    pub fallback_api_key: Option<String>,
+}
+
 impl From<&Config> for Settings {
     fn from(config: &Config) -> Self {
         // Get the default provider settings
@@ -114,6 +123,18 @@ impl From<&Config> for Settings {
                 )
             };
 
+        // Convert web_search config if it has meaningful values
+        let web_search = if config.web_search.fallback_provider != "brave"
+            || config.web_search.fallback_api_key.is_some()
+        {
+            Some(WebSearchSettings {
+                fallback_provider: Some(config.web_search.fallback_provider.clone()),
+                fallback_api_key: config.web_search.fallback_api_key.clone(),
+            })
+        } else {
+            None
+        };
+
         Self {
             provider: ProviderSettings {
                 provider_type,
@@ -130,6 +151,7 @@ impl From<&Config> for Settings {
                 font_size: 14,
                 show_tool_calls: true,
             },
+            web_search,
         }
     }
 }
@@ -152,6 +174,7 @@ impl Default for Settings {
                 font_size: 14,
                 show_tool_calls: true,
             },
+            web_search: None,
         }
     }
 }

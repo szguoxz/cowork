@@ -36,26 +36,26 @@ mod session_manager_tests {
 
     #[tokio::test]
     async fn test_manager_new() {
-        let (manager, _output_rx) = SessionManager::new(test_config());
+        let (manager, _output_rx) = SessionManager::with_config(test_config());
         assert_eq!(manager.session_count(), 0);
     }
 
     #[tokio::test]
     async fn test_manager_list_sessions_empty() {
-        let (manager, _output_rx) = SessionManager::new(test_config());
+        let (manager, _output_rx) = SessionManager::with_config(test_config());
         let sessions = manager.list_sessions();
         assert!(sessions.is_empty());
     }
 
     #[tokio::test]
     async fn test_has_session_false() {
-        let (manager, _output_rx) = SessionManager::new(test_config());
+        let (manager, _output_rx) = SessionManager::with_config(test_config());
         assert!(!manager.has_session("nonexistent"));
     }
 
     #[tokio::test]
     async fn test_stop_nonexistent_session() {
-        let (manager, _output_rx) = SessionManager::new(test_config());
+        let (manager, _output_rx) = SessionManager::with_config(test_config());
         // Should not error when stopping a session that doesn't exist
         let result = manager.stop_session("nonexistent");
         assert!(result.is_ok());
@@ -63,14 +63,14 @@ mod session_manager_tests {
 
     #[tokio::test]
     async fn test_stop_all_empty() {
-        let (manager, _output_rx) = SessionManager::new(test_config());
+        let (manager, _output_rx) = SessionManager::with_config(test_config());
         let result = manager.stop_all();
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_output_sender_clone() {
-        let (manager, _output_rx) = SessionManager::new(test_config());
+        let (manager, _output_rx) = SessionManager::with_config(test_config());
         let sender = manager.output_sender();
 
         // Can use the sender to inject outputs
@@ -877,7 +877,7 @@ mod session_integration_tests {
 
     #[tokio::test]
     async fn test_output_receiver_receives_injected_output() {
-        let (manager, mut rx) = SessionManager::new(test_config());
+        let (manager, mut rx) = SessionManager::with_config(test_config());
         let sender = manager.output_sender();
 
         // Send a test output
@@ -897,7 +897,7 @@ mod session_integration_tests {
 
     #[tokio::test]
     async fn test_multiple_outputs_received_in_order() {
-        let (manager, mut rx) = SessionManager::new(test_config());
+        let (manager, mut rx) = SessionManager::with_config(test_config());
         let sender = manager.output_sender();
 
         // Send multiple outputs
@@ -922,7 +922,7 @@ mod session_integration_tests {
 
     #[tokio::test]
     async fn test_different_session_outputs() {
-        let (manager, mut rx) = SessionManager::new(test_config());
+        let (manager, mut rx) = SessionManager::with_config(test_config());
         let sender = manager.output_sender();
 
         // Send outputs for different sessions

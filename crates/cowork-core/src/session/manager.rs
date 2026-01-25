@@ -3,6 +3,7 @@
 //! Manages multiple concurrent agent sessions, routing inputs and collecting outputs.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
@@ -11,12 +12,18 @@ use tracing::info;
 use super::agent_loop::AgentLoop;
 use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
 use crate::error::Result;
+use crate::ConfigManager;
 
 /// Type alias for the output receiver
 pub type OutputReceiver = mpsc::Receiver<(SessionId, SessionOutput)>;
 
-/// Provider for session configuration - called when creating new sessions
-pub type ConfigProvider = Box<dyn Fn() -> SessionConfig + Send + Sync>;
+/// Config source for session creation
+enum ConfigSource {
+    /// Read from disk each time (for Tauri)
+    FromDisk,
+    /// Use fixed config (for CLI)
+    Fixed(SessionConfig),
+}
 
 /// Manages multiple concurrent agent sessions
 pub struct SessionManager {
@@ -24,33 +31,47 @@ pub struct SessionManager {
     sessions: super::types::SessionRegistry,
     /// Channel for all session outputs (session_id, output)
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
-    /// Config provider called when creating new sessions (reads fresh config each time)
-    config_provider: ConfigProvider,
+    /// Workspace path for building session config
+    workspace_path: PathBuf,
+    /// Config source - from disk or fixed
+    config_source: ConfigSource,
 }
 
 impl SessionManager {
-    /// Create a new session manager with a config provider
+    /// Create a new session manager for a workspace
     ///
-    /// The config provider is called each time a new session is created,
-    /// allowing config changes (e.g., from settings) to take effect immediately.
-    pub fn with_config_provider(config_provider: ConfigProvider) -> (Self, OutputReceiver) {
+    /// Config is read fresh from disk when each session is created.
+    /// Use this for Tauri where settings can change between sessions.
+    pub fn new(workspace_path: PathBuf) -> (Self, OutputReceiver) {
         let (output_tx, output_rx) = mpsc::channel(256);
         let sessions = Arc::new(RwLock::new(HashMap::new()));
 
         let manager = Self {
             sessions,
             output_tx,
-            config_provider,
+            workspace_path,
+            config_source: ConfigSource::FromDisk,
         };
 
         (manager, output_rx)
     }
 
-    /// Create a new session manager with a fixed config (for CLI or tests)
+    /// Create a session manager with a fixed config
     ///
-    /// Returns the manager and an output receiver for consuming session outputs.
-    pub fn new(config: SessionConfig) -> (Self, OutputReceiver) {
-        Self::with_config_provider(Box::new(move || config.clone()))
+    /// Use this for CLI where config is set at startup and doesn't change.
+    pub fn with_config(config: SessionConfig) -> (Self, OutputReceiver) {
+        let (output_tx, output_rx) = mpsc::channel(256);
+        let sessions = Arc::new(RwLock::new(HashMap::new()));
+        let workspace_path = config.workspace_path.clone();
+
+        let manager = Self {
+            sessions,
+            output_tx,
+            workspace_path,
+            config_source: ConfigSource::Fixed(config),
+        };
+
+        (manager, output_rx)
     }
 
     /// Push a message to a session
@@ -64,7 +85,7 @@ impl SessionManager {
             .map_err(|e| crate::error::Error::Agent(format!("Failed to send input: {}", e)))
     }
 
-    /// Create a new session with the given ID, fetching fresh config
+    /// Create a new session with the given ID
     async fn get_or_create_session(
         &self,
         session_id: &str
@@ -79,8 +100,11 @@ impl SessionManager {
         // Create input channel for this session
         let (input_tx, input_rx) = mpsc::channel(256);
 
-        // Get fresh config from provider and set session registry
-        let mut config = (self.config_provider)();
+        // Get config based on source
+        let mut config = match &self.config_source {
+            ConfigSource::FromDisk => self.build_session_config(),
+            ConfigSource::Fixed(c) => c.clone(),
+        };
         config.session_registry = Some(self.sessions.clone());
 
         let agent_loop = AgentLoop::new(
@@ -147,41 +171,62 @@ impl SessionManager {
         let sessions = self.sessions.read();
         sessions.len()
     }
+
+    /// Build session config by reading fresh settings from disk
+    fn build_session_config(&self) -> SessionConfig {
+        let config_manager = ConfigManager::new().unwrap_or_default();
+        let config = config_manager.config();
+
+        // Get provider settings
+        let default_provider = config.get_default_provider();
+        let approval_level: crate::ApprovalLevel = config
+            .approval
+            .auto_approve_level
+            .parse()
+            .unwrap_or(crate::ApprovalLevel::Low);
+
+        let mut tool_approval_config = crate::ToolApprovalConfig::default();
+        tool_approval_config.set_level(approval_level);
+
+        let mut session_config = SessionConfig::new(self.workspace_path.clone())
+            .with_approval_config(tool_approval_config)
+            .with_web_search_config(config.web_search.clone());
+
+        if let Some(provider_config) = default_provider {
+            let provider_type: crate::provider::ProviderType = provider_config
+                .provider_type
+                .parse()
+                .unwrap_or(crate::provider::ProviderType::Anthropic);
+
+            session_config = session_config.with_provider(provider_type);
+            session_config = session_config.with_model(&provider_config.model);
+            if let Some(api_key) = provider_config.get_api_key() {
+                session_config = session_config.with_api_key(api_key);
+            }
+        }
+
+        session_config
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::types::SessionConfig;
 
-    fn test_config() -> SessionConfig {
-        SessionConfig {
-            workspace_path: std::env::current_dir().unwrap(),
-            approval_config: crate::approval::ToolApprovalConfig::trust_all(),
-            system_prompt: Some("You are a test assistant.".to_string()),
-            provider_type: crate::provider::ProviderType::Anthropic,
-            model: None,
-            api_key: None,
-            web_search_config: None,
-            prompt_config: Default::default(),
-            component_registry: None,
-            tool_scope: None,
-            enable_hooks: None,
-            save_session: true,
-            session_registry: None,
-        }
+    fn test_workspace() -> PathBuf {
+        std::env::current_dir().unwrap()
     }
 
     #[tokio::test]
     async fn test_session_manager_creation() {
-        let (manager, _output_rx) = SessionManager::new(test_config());
+        let (manager, _output_rx) = SessionManager::new(test_workspace());
         assert_eq!(manager.session_count(), 0);
         assert!(manager.list_sessions().is_empty());
     }
 
     #[tokio::test]
     async fn test_has_session() {
-        let (manager, _output_rx) = SessionManager::new(test_config());
+        let (manager, _output_rx) = SessionManager::new(test_workspace());
 
         // Session shouldn't exist yet
         assert!(!manager.has_session("test-session"));
@@ -189,7 +234,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_nonexistent_session() {
-        let (manager, _output_rx) = SessionManager::new(test_config());
+        let (manager, _output_rx) = SessionManager::new(test_workspace());
 
         // Stopping a non-existent session should be a no-op
         let result = manager.stop_session("nonexistent");
@@ -198,7 +243,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_all_empty() {
-        let (manager, _output_rx) = SessionManager::new(test_config());
+        let (manager, _output_rx) = SessionManager::new(test_workspace());
 
         // Stopping all when empty should be fine
         let result = manager.stop_all();
@@ -207,7 +252,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_output_sender_clone() {
-        let (manager, _output_rx) = SessionManager::new(test_config());
+        let (manager, _output_rx) = SessionManager::new(test_workspace());
         let _sender = manager.output_sender();
         // Just verify we can get a clone of the sender
     }

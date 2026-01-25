@@ -12,10 +12,8 @@ use std::time::Duration;
 use tauri::Manager;
 use parking_lot::RwLock;
 
-use cowork_core::orchestration::SystemPrompt;
-use cowork_core::prompt::TemplateVars;
-use cowork_core::session::{OutputReceiver, SessionConfig, SessionManager, SessionOutput};
-use cowork_core::{ApprovalLevel, ConfigManager, Context, Workspace};
+use cowork_core::session::{OutputReceiver, SessionManager, SessionOutput};
+use cowork_core::{ConfigManager, Context, Workspace};
 use state::AppState;
 
 const REPO_OWNER: &str = "szguoxz";
@@ -44,95 +42,6 @@ fn check_for_update_background() -> Option<String> {
     }
 }
 
-/// Build the system prompt with all template variables properly substituted
-fn build_system_prompt(workspace: &std::path::Path, model_info: Option<&str>) -> String {
-    let mut vars = TemplateVars::default();
-    vars.working_directory = workspace.display().to_string();
-    vars.is_git_repo = workspace.join(".git").exists();
-
-    // Get git status if in a repo
-    if vars.is_git_repo {
-        if let Ok(output) = std::process::Command::new("git")
-            .args(["status", "--short", "--branch"])
-            .current_dir(workspace)
-            .output()
-        {
-            vars.git_status = String::from_utf8_lossy(&output.stdout).to_string();
-        }
-
-        // Get current branch
-        if let Ok(output) = std::process::Command::new("git")
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .current_dir(workspace)
-            .output()
-        {
-            vars.current_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        }
-
-        // Get recent commits for style reference
-        if let Ok(output) = std::process::Command::new("git")
-            .args(["log", "--oneline", "-5"])
-            .current_dir(workspace)
-            .output()
-        {
-            vars.recent_commits = String::from_utf8_lossy(&output.stdout).to_string();
-        }
-    }
-
-    if let Some(info) = model_info {
-        vars.model_info = info.to_string();
-    }
-
-    SystemPrompt::new()
-        .with_template_vars(vars)
-        .build()
-}
-
-/// Build a SessionConfig from current ConfigManager settings
-fn build_session_config(
-    workspace_path: &std::path::Path,
-    config_manager: &Arc<RwLock<ConfigManager>>,
-) -> SessionConfig {
-    let cm = config_manager.read();
-    let config = cm.config();
-
-    // Get provider config
-    let default_provider = config.get_default_provider().cloned();
-    let approval_level: ApprovalLevel = config
-        .approval
-        .auto_approve_level
-        .parse()
-        .unwrap_or(ApprovalLevel::Low);
-
-    // Build system prompt with template variables
-    let model_info = default_provider.as_ref().map(|p| p.model.as_str());
-    let system_prompt = build_system_prompt(workspace_path, model_info);
-
-    // Create session config
-    let mut tool_approval_config = cowork_core::ToolApprovalConfig::default();
-    tool_approval_config.set_level(approval_level);
-
-    let mut session_config = SessionConfig::new(workspace_path.to_path_buf())
-        .with_approval_config(tool_approval_config)
-        .with_system_prompt(system_prompt);
-
-    // Use configured provider if available
-    if let Some(ref provider_config) = default_provider {
-        let provider_type: cowork_core::provider::ProviderType = provider_config
-            .provider_type
-            .parse()
-            .unwrap_or(cowork_core::provider::ProviderType::Anthropic);
-
-        session_config = session_config.with_provider(provider_type);
-        session_config = session_config.with_model(&provider_config.model);
-        if let Some(api_key) = provider_config.get_api_key() {
-            session_config = session_config.with_api_key(api_key);
-        }
-    }
-
-    session_config
-}
-
 /// Initialize the application state
 ///
 /// Returns the state and the output receiver (to be consumed by the output handler).
@@ -146,13 +55,8 @@ pub fn init_state(
     // Wrap config manager in Arc<RwLock> for shared access
     let config_manager = Arc::new(RwLock::new(config_manager));
 
-    // Create config provider that reads fresh config for each new session
-    let cm_clone = config_manager.clone();
-    let ws_clone = workspace_path.clone();
-    let config_provider = Box::new(move || build_session_config(&ws_clone, &cm_clone));
-
-    // Create session manager with config provider
-    let (session_manager, output_rx) = SessionManager::with_config_provider(config_provider);
+    // Create session manager - reads config from disk for each new session
+    let (session_manager, output_rx) = SessionManager::new(workspace_path.clone());
 
     let state = AppState {
         context: Arc::new(RwLock::new(context)),
