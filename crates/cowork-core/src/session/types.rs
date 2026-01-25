@@ -39,6 +39,8 @@ pub enum SessionInput {
         request_id: String,
         answers: HashMap<String, String>,
     },
+    /// User cancels the current turn
+    Cancel,
 }
 
 impl SessionInput {
@@ -70,6 +72,11 @@ impl SessionInput {
             request_id: request_id.into(),
             answers,
         }
+    }
+
+    /// Create a cancel input
+    pub fn cancel() -> Self {
+        Self::Cancel
     }
 }
 
@@ -140,6 +147,8 @@ pub enum SessionOutput {
     },
     /// Error occurred
     Error { message: String },
+    /// Turn was cancelled by user
+    Cancelled,
 }
 
 impl SessionOutput {
@@ -224,6 +233,11 @@ impl SessionOutput {
         Self::Error {
             message: message.into(),
         }
+    }
+
+    /// Create a cancelled output
+    pub fn cancelled() -> Self {
+        Self::Cancelled
     }
 
     /// Create a tool call output (persistent message)

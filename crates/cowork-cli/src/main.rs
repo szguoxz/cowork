@@ -536,13 +536,14 @@ async fn run_event_loop(
                             Modal::Question(question) => handle_key_question(key, question),
                         }
                     } else if !app.status.is_empty() {
-                        // Processing — allow typing but don't submit
+                        // Processing — allow typing but don't submit, ESC to cancel
                         match key.code {
                             crossterm::event::KeyCode::Char('c')
                                 if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) =>
                             {
                                 KeyAction::Quit
                             }
+                            crossterm::event::KeyCode::Esc => KeyAction::Cancel,
                             crossterm::event::KeyCode::Enter => KeyAction::None,
                             _ => handle_key_normal(key, &mut app.input),
                         }
@@ -555,6 +556,12 @@ async fn run_event_loop(
                         KeyAction::Quit => {
                             app.should_quit = true;
                             break;
+                        }
+                        KeyAction::Cancel => {
+                            app.add_message(Message::system("Cancelling..."));
+                            session_manager
+                                .push_message(session_id, SessionInput::cancel())
+                                .await?;
                         }
                         KeyAction::Submit(input) => {
                             app.start_turn();

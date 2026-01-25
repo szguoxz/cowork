@@ -358,6 +358,12 @@ impl AgentLoop {
                 ));
             }
 
+            // Check for cancellation before each iteration
+            if self.check_cancelled() {
+                self.emit(SessionOutput::cancelled()).await;
+                return Ok(());
+            }
+
             // Check and compact context if needed before calling LLM
             if let Err(e) = self.check_and_compact_context().await {
                 warn!("Context compaction failed: {}, continuing anyway", e);
@@ -475,8 +481,11 @@ impl AgentLoop {
                 }
             }
 
+            // Track completed tool IDs for cancel cleanup
+            let mut completed_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
             // Process interaction tools (while spawned tasks run in background)
-            for tool_call in needs_interaction {
+            for (tool_idx, tool_call) in needs_interaction.iter().enumerate() {
                 if tool_call.name == ASK_QUESTION_TOOL_NAME {
                     if let Some(questions) = self.parse_questions(&tool_call.arguments) {
                         self.emit(SessionOutput::Question {
@@ -491,7 +500,14 @@ impl AgentLoop {
                                     let result = serde_json::json!({ "answered": true, "answers": answers });
                                     self.session.add_tool_result(&tool_call.id, result.to_string());
                                     self.emit(SessionOutput::tool_done(&tool_call.id, ASK_QUESTION_TOOL_NAME, true, result.to_string())).await;
+                                    completed_tool_ids.insert(tool_call.id.clone());
                                     break;
+                                }
+                                Some(SessionInput::Cancel) => {
+                                    // Cancelled - add results for remaining tools to keep message history valid
+                                    self.handle_cancel_cleanup(&tool_calls, &needs_interaction, tool_idx, &mut completed_tool_ids, &mut join_set).await;
+                                    self.emit(SessionOutput::cancelled()).await;
+                                    return Ok(());
                                 }
                                 Some(other) => {
                                     warn!("Unexpected input while waiting for answer: {:?}", other);
@@ -509,13 +525,21 @@ impl AgentLoop {
                         match self.answer_rx.recv().await {
                             Some(SessionInput::ApproveTool { .. }) => {
                                 self.execute_tool(tool_call).await;
+                                completed_tool_ids.insert(tool_call.id.clone());
                                 break;
                             }
                             Some(SessionInput::RejectTool { reason, .. }) => {
                                 let reason = reason.unwrap_or_else(|| "Rejected by user".to_string());
                                 self.session.add_tool_result_with_error(&tool_call.id, &reason, true);
                                 self.emit(SessionOutput::tool_done(&tool_call.id, &tool_call.name, false, reason)).await;
+                                completed_tool_ids.insert(tool_call.id.clone());
                                 break;
+                            }
+                            Some(SessionInput::Cancel) => {
+                                // Cancelled - add results for remaining tools to keep message history valid
+                                self.handle_cancel_cleanup(&tool_calls, &needs_interaction, tool_idx, &mut completed_tool_ids, &mut join_set).await;
+                                self.emit(SessionOutput::cancelled()).await;
+                                return Ok(());
                             }
                             Some(other) => {
                                 warn!("Unexpected input while waiting for approval: {:?}", other);
@@ -1056,6 +1080,66 @@ impl AgentLoop {
     fn run_user_prompt_hook(&self, prompt: &str) -> std::result::Result<Option<String>, String> {
         let context = HookContext::user_prompt(&self.session_id, prompt);
         self.execute_hooks(HookEvent::UserPromptSubmit, &context)
+    }
+
+    /// Check if the user has requested cancellation
+    ///
+    /// Uses try_recv() to non-blocking check for a Cancel input.
+    fn check_cancelled(&mut self) -> bool {
+        loop {
+            match self.answer_rx.try_recv() {
+                Ok(SessionInput::Cancel) => return true,
+                Ok(other) => {
+                    // Log and discard unexpected inputs during cancel check
+                    debug!("Discarding input during cancel check: {:?}", other);
+                }
+                Err(mpsc::error::TryRecvError::Empty) => return false,
+                Err(mpsc::error::TryRecvError::Disconnected) => return false,
+            }
+        }
+    }
+
+    /// Handle cancellation cleanup - add "Cancelled" results for all pending tools
+    /// to keep the message history valid for Claude's strict sequencing requirements.
+    async fn handle_cancel_cleanup(
+        &mut self,
+        all_tool_calls: &[ToolCallInfo],
+        needs_interaction: &[&ToolCallInfo],
+        current_interaction_idx: usize,
+        completed_tool_ids: &mut std::collections::HashSet<String>,
+        join_set: &mut JoinSet<SpawnedToolResult>,
+    ) {
+        // First, collect any completed results from the JoinSet
+        while let Some(result) = join_set.try_join_next() {
+            if let Ok(res) = result {
+                completed_tool_ids.insert(res.id.clone());
+                self.finalize_spawned_tool(res).await;
+            }
+        }
+
+        // Abort remaining spawned tasks
+        join_set.abort_all();
+
+        // Add "Cancelled" results for all tools that didn't complete
+        for tc in all_tool_calls {
+            if !completed_tool_ids.contains(&tc.id) {
+                let cancel_msg = "Cancelled by user";
+                self.session.add_tool_result_with_error(&tc.id, cancel_msg, true);
+                self.emit(SessionOutput::tool_result(
+                    &tc.id,
+                    &tc.name,
+                    false,
+                    cancel_msg.to_string(),
+                    "Cancelled".to_string(),
+                    None,
+                )).await;
+            }
+        }
+
+        // Clear the modal state for current and remaining interaction tools
+        for tc in needs_interaction.iter().skip(current_interaction_idx) {
+            debug!("Cancelled tool {} before completion", tc.id);
+        }
     }
 
     /// Emit an output

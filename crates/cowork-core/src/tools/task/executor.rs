@@ -363,6 +363,8 @@ pub async fn run_subagent(
             }
             // Forward activity + approval events to parent UI
             SessionOutput::ToolStart { .. }
+            | SessionOutput::ToolCall { .. }
+            | SessionOutput::ToolResult { .. }
             | SessionOutput::Thinking { .. }
             | SessionOutput::ToolPending { .. }
             | SessionOutput::Question { .. } => {

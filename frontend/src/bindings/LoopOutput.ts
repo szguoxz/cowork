@@ -26,4 +26,5 @@ export type LoopOutput =
   | { type: "question"; session_id: string; request_id: string; questions: Array<{ question: string; header: string | null; options: Array<{ label: string; description: string | null }>; multi_select: boolean }> }
   | { type: "idle"; session_id: string }
   | { type: "error"; session_id: string; message: string }
-  | { type: "stopped"; session_id: string };
+  | { type: "stopped"; session_id: string }
+  | { type: "cancelled"; session_id: string };

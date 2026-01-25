@@ -413,6 +413,12 @@ impl App {
                 self.status.clear();
                 self.ephemeral = None;
             }
+            SessionOutput::Cancelled => {
+                self.add_message(Message::system("Cancelled".to_string()));
+                self.status.clear();
+                self.ephemeral = None;
+                self.modal = None;
+            }
         }
     }
 }

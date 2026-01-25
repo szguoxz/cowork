@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
-import { Send, Loader2, X, AlertCircle, Sparkles } from 'lucide-react'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { Send, Loader2, X, AlertCircle, Sparkles, Square } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import SessionTabs from '../components/SessionTabs'
 import ApprovalModal from '../components/ApprovalModal'
@@ -23,6 +23,7 @@ export default function Chat() {
     approveToolForSession,
     approveAllForSession,
     answerQuestion,
+    cancelSession,
     getActiveSession,
   } = useSession()
 
@@ -104,6 +105,25 @@ export default function Chat() {
       setError(String(err))
     }
   }
+
+  const handleCancel = useCallback(async () => {
+    try {
+      await cancelSession()
+    } catch (err) {
+      console.error('Cancel error:', err)
+    }
+  }, [cancelSession])
+
+  // ESC key handler to cancel processing
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && status) {
+        handleCancel()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [status, handleCancel])
 
   // Loading state
   if (!isInitialized) {
@@ -228,6 +248,13 @@ export default function Chat() {
             <div className="flex items-center gap-2">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
               <span>{status}</span>
+              <button
+                onClick={handleCancel}
+                className="ml-2 p-1 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+                title="Cancel (ESC)"
+              >
+                <Square className="w-3 h-3 fill-current" />
+              </button>
             </div>
           ) : (
             <span>Ready</span>

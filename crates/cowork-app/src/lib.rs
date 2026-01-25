@@ -197,6 +197,7 @@ pub fn run() {
             simple_commands::start_loop,
             simple_commands::send_message,
             simple_commands::stop_loop,
+            simple_commands::cancel_session,
             simple_commands::is_loop_running,
             simple_commands::approve_tool,
             simple_commands::reject_tool,

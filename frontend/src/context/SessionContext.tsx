@@ -28,6 +28,9 @@ interface SessionContextType {
   // Question answering
   answerQuestion: (requestId: string, answers: Record<string, string>, sessionId?: string) => Promise<void>
 
+  // Cancel current turn
+  cancelSession: (sessionId?: string) => Promise<void>
+
   // Get active session
   getActiveSession: () => Session | undefined
 }
@@ -291,6 +294,16 @@ export function SessionProvider({ children }: SessionProviderProps) {
           updatedAt: new Date(),
         }))
         break
+
+      case 'cancelled':
+        updateSession(sessionId, s => ({
+          ...s,
+          status: '',
+          ephemeral: null,
+          modal: null,
+          updatedAt: new Date(),
+        }))
+        break
     }
   }, [updateSession])
 
@@ -453,6 +466,15 @@ export function SessionProvider({ children }: SessionProviderProps) {
     updateSession(targetId, s => ({ ...s, modal: null }))
   }, [activeSessionId, updateSession])
 
+  // Cancel current turn
+  const cancelSession = useCallback(async (sessionId?: string) => {
+    const targetId = sessionId || activeSessionId
+    if (!targetId) throw new Error('No active session')
+
+    await invoke('cancel_session', { sessionId: targetId })
+    updateSession(targetId, s => ({ ...s, modal: null, status: '', ephemeral: null }))
+  }, [activeSessionId, updateSession])
+
   const getActiveSession = useCallback(() => {
     return activeSessionId ? sessions.get(activeSessionId) : undefined
   }, [activeSessionId, sessions])
@@ -472,6 +494,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
     approveToolForSession,
     approveAllForSession,
     answerQuestion,
+    cancelSession,
     getActiveSession,
   }
 

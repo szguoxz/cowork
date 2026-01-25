@@ -521,8 +521,74 @@ impl OnboardingWizard {
             .set_provider(provider_name, provider_config);
         self.config_manager.set_default_provider(provider_name);
 
-        // Save to disk
-        self.config_manager.save()?;
+        // Save to disk with sample configuration
+        self.save_config_with_samples()?;
+
+        Ok(())
+    }
+
+    /// Save config with commented sample configuration for MCP and skills
+    fn save_config_with_samples(&self) -> anyhow::Result<()> {
+        let config_path = self.config_manager.config_path();
+
+        // Ensure parent directory exists
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Serialize the actual config
+        let config_toml = toml::to_string_pretty(self.config_manager.config())?;
+
+        // Append sample configuration as comments
+        let full_content = format!(
+            r#"{}
+# ─────────────────────────────────────────────────────────────────────────────
+# MCP (Model Context Protocol) Servers
+# ─────────────────────────────────────────────────────────────────────────────
+# MCP servers provide additional tools to the AI. Uncomment and configure:
+#
+# [mcp_servers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+#
+# [mcp_servers.github]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-github"]
+# [mcp_servers.github.env]
+# GITHUB_PERSONAL_ACCESS_TOKEN = "your-token-here"
+#
+# [mcp_servers.postgres]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-postgres", "postgresql://user:pass@localhost/db"]
+#
+# [mcp_servers.remote-server]
+# transport = "http"
+# url = "https://your-mcp-server.example.com"
+# [mcp_servers.remote-server.headers]
+# Authorization = "Bearer your-token"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Skills and Agents
+# ─────────────────────────────────────────────────────────────────────────────
+# Custom skills and agents are loaded from these directories:
+#   - Project: .claude/skills/, .claude/agents/
+#   - Global:  ~/.claude/skills/, ~/.claude/agents/
+#
+# To install a skill from URL:
+#   Place SKILL.md files in the skills directory
+#
+# Example skill structure:
+#   ~/.claude/skills/my-skill/SKILL.md
+#
+# [prompt]
+# enable_hooks = true
+# enable_plugins = true
+# enable_skill_auto_invoke = true
+"#,
+            config_toml
+        );
+
+        std::fs::write(config_path, full_content)?;
 
         Ok(())
     }
@@ -586,6 +652,16 @@ impl OnboardingWizard {
             style("/commit").cyan()
         );
         println!("  {} - Show available commands", style("/help").cyan());
+        println!();
+
+        println!("{}", style("Advanced Configuration:").bold());
+        println!(
+            "  Edit the config file to add MCP servers, skills, and more."
+        );
+        println!(
+            "  See sample configuration in: {}",
+            style(format!("{}", self.config_manager.config_path().display())).cyan()
+        );
         println!();
 
         println!(

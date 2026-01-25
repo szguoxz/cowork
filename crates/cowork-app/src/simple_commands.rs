@@ -161,6 +161,22 @@ pub async fn answer_question(
         .map_err(|e| e.to_string())
 }
 
+/// Cancel the current turn in a session
+#[tauri::command]
+pub async fn cancel_session(
+    session_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let session_id = session_id.unwrap_or_else(|| "default".to_string());
+    tracing::info!("Cancelling session {}", session_id);
+
+    state
+        .session_manager
+        .push_message(&session_id, SessionInput::cancel())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// List active sessions
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<String>, String> {

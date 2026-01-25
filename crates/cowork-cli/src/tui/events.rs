@@ -77,6 +77,8 @@ pub enum KeyAction {
     Submit(String),
     /// Quit the application
     Quit,
+    /// Cancel the current turn
+    Cancel,
     /// Approve the pending tool
     ApproveTool,
     /// Reject the pending tool
