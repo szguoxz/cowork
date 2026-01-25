@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
 
 use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
@@ -48,6 +49,17 @@ struct LlmToolCall {
     id: String,
     name: String,
     arguments: serde_json::Value,
+}
+
+/// Result from a spawned tool execution
+struct SpawnedToolResult {
+    id: String,
+    name: String,
+    arguments: serde_json::Value,
+    success: bool,
+    output: String,
+    /// For skill injection: (content, skill_name)
+    inject_info: Option<(String, Option<String>)>,
 }
 
 /// Saved message for persistence
@@ -105,8 +117,6 @@ pub struct AgentLoop {
     /// Workspace path
     #[allow(dead_code)]
     workspace_path: std::path::PathBuf,
-    /// Pending tool calls awaiting approval
-    pending_approvals: Vec<ToolCallInfo>,
     /// Context monitor for tracking token usage
     context_monitor: ContextMonitor,
     /// Conversation summarizer for auto-compaction
@@ -257,7 +267,6 @@ impl AgentLoop {
             approval_config: config.approval_config,
             plan_mode_state,
             workspace_path: config.workspace_path.clone(),
-            pending_approvals: Vec::new(),
             context_monitor,
             summarizer,
             hook_executor,
@@ -387,61 +396,117 @@ impl AgentLoop {
             // Add assistant message with tool calls
             self.session.add_assistant_message(&content, tool_calls.clone());
 
-            // Partition tool calls into three groups
-            let (auto_execute, needs_approval, questions) = self.partition_tools(&tool_calls);
+            // Partition: auto-approved vs needs interaction (approval or question)
+            let mut auto_approved = Vec::new();
+            let mut needs_interaction = Vec::new();
 
-            // Execute auto-approved tools
-            if !auto_execute.is_empty() {
-                self.execute_tools_batched(&auto_execute).await;
+            for tc in &tool_calls {
+                if tc.name == ASK_QUESTION_TOOL_NAME {
+                    needs_interaction.push(tc);
+                } else if self.approval_config.should_auto_approve_with_args(&tc.name, &tc.arguments) {
+                    auto_approved.push(tc);
+                } else {
+                    needs_interaction.push(tc);
+                }
             }
 
-            // Queue tools needing approval and questions for sequential processing
-            for tc in needs_approval {
-                self.pending_approvals.push(tc.clone());
-            }
-            for tc in questions {
-                self.pending_approvals.push(tc.clone());
-            }
+            // Spawn auto-approved tools in parallel
+            let mut join_set: JoinSet<SpawnedToolResult> = JoinSet::new();
+            for tool_call in &auto_approved {
+                // Emit tool_start before spawning
+                self.emit(SessionOutput::tool_start(
+                    &tool_call.id,
+                    &tool_call.name,
+                    tool_call.arguments.clone(),
+                ))
+                .await;
 
-            // Process pending items one at a time
-            // Emit only the FIRST pending item, wait for resolution, then emit the next
-            if !self.pending_approvals.is_empty() {
-                // Emit the first pending item
-                self.emit_next_pending().await;
+                if let Some(tool) = self.tool_registry.get(&tool_call.name) {
+                    let id = tool_call.id.clone();
+                    let name = tool_call.name.clone();
+                    let arguments = tool_call.arguments.clone();
 
-                while !self.pending_approvals.is_empty() {
-                    // Wait for an answer
-                    if let Some(input) = self.answer_rx.recv().await {
-                        match input {
-                            SessionInput::ApproveTool { tool_call_id } => {
-                                if let Err(e) = self.handle_approve_tool(&tool_call_id).await {
-                                    self.emit(SessionOutput::error(e.to_string())).await;
+                    join_set.spawn(async move {
+                        match tool.execute(arguments.clone()).await {
+                            Ok(output) => {
+                                let inject = output.metadata.get(crate::tools::skill::INJECT_AS_MESSAGE)
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                let skill_name = output.metadata.get(crate::tools::skill::SKILL_NAME_KEY)
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let output_str = output.content.to_string();
+                                let inject_info = if inject { Some((output_str.clone(), skill_name)) } else { None };
+                                SpawnedToolResult {
+                                    id,
+                                    name,
+                                    arguments,
+                                    success: true,
+                                    output: output_str,
+                                    inject_info,
                                 }
                             }
-                            SessionInput::RejectTool { tool_call_id, reason } => {
-                                self.handle_reject_tool(&tool_call_id, reason).await;
-                            }
-                            SessionInput::AnswerQuestion { request_id, answers } => {
-                                if let Err(e) = self.handle_answer_question(&request_id, answers).await {
-                                    self.emit(SessionOutput::error(e.to_string())).await;
-                                }
-                            }
-                            _ => {
-                                warn!("Unexpected input type in waiting loop: {:?}", input);
+                            Err(e) => SpawnedToolResult {
+                                id,
+                                name,
+                                arguments,
+                                success: false,
+                                output: format!("Error: {}", e),
+                                inject_info: None,
                             }
                         }
-                        // After resolving one item, emit the next pending item (if any)
-                        if !self.pending_approvals.is_empty() {
-                            self.emit_next_pending().await;
+                    });
+                } else {
+                    // Tool not found - handle immediately
+                    let error_msg = format!("Unknown tool: {}", tool_call.name);
+                    self.session.add_tool_result_with_error(&tool_call.id, &error_msg, true);
+                    self.emit(SessionOutput::tool_done(&tool_call.id, &tool_call.name, false, error_msg)).await;
+                }
+            }
+
+            // Process interaction tools (while spawned tasks run in background)
+            for tool_call in needs_interaction {
+                if tool_call.name == ASK_QUESTION_TOOL_NAME {
+                    if let Some(questions) = self.parse_questions(&tool_call.arguments) {
+                        self.emit(SessionOutput::Question {
+                            request_id: tool_call.id.clone(),
+                            questions,
+                        }).await;
+
+                        match self.wait_for_answer().await {
+                            Some(answers) => {
+                                let result = serde_json::json!({ "answered": true, "answers": answers });
+                                self.session.add_tool_result(&tool_call.id, result.to_string());
+                                self.emit(SessionOutput::tool_done(&tool_call.id, ASK_QUESTION_TOOL_NAME, true, result.to_string())).await;
+                            }
+                            None => return Ok(()), // Channel closed
                         }
-                    } else {
-                        // Channel closed
-                        return Ok(());
+                    }
+                } else {
+                    // Needs approval
+                    self.emit(SessionOutput::tool_pending(&tool_call.id, &tool_call.name, tool_call.arguments.clone(), None)).await;
+
+                    match self.wait_for_approval().await {
+                        Some(None) => {
+                            // Approved
+                            self.execute_tool(tool_call).await;
+                        }
+                        Some(Some(reason)) => {
+                            // Rejected
+                            self.session.add_tool_result_with_error(&tool_call.id, &reason, true);
+                            self.emit(SessionOutput::tool_done(&tool_call.id, &tool_call.name, false, reason)).await;
+                        }
+                        None => return Ok(()), // Channel closed
                     }
                 }
             }
 
-            // If all tools auto-approved, continue loop
+            // Collect results from spawned auto-approved tools
+            while let Some(result) = join_set.join_next().await {
+                if let Ok(res) = result {
+                    self.finalize_spawned_tool(res).await;
+                }
+            }
         }
 
         Ok(())
@@ -514,158 +579,7 @@ impl AgentLoop {
         }
     }
 
-    /// Partition tool calls into three groups:
-    /// - auto_execute: safe to run without user interaction
-    /// - needs_approval: require user approval before execution
-    /// - questions: AskUserQuestion calls shown as question modals
-    fn partition_tools<'a>(&self, tool_calls: &'a [ToolCallInfo]) -> (Vec<&'a ToolCallInfo>, Vec<&'a ToolCallInfo>, Vec<&'a ToolCallInfo>) {
-        let mut auto_execute = Vec::new();
-        let mut needs_approval = Vec::new();
-        let mut questions = Vec::new();
-
-        for tc in tool_calls {
-            if tc.name == ASK_QUESTION_TOOL_NAME {
-                if self.parse_questions(&tc.arguments).is_some() {
-                    questions.push(tc);
-                }
-            } else if self.approval_config.should_auto_approve_with_args(&tc.name, &tc.arguments) {
-                auto_execute.push(tc);
-            } else {
-                needs_approval.push(tc);
-            }
-        }
-
-        (auto_execute, needs_approval, questions)
-    }
-
-    /// Execute multiple tools and batch results into a single message
-    /// This is more efficient for the LLM as it sees all results together
-    async fn execute_tools_batched(&mut self, tool_calls: &[&ToolCallInfo]) {
-        let mut results: Vec<(String, String, bool)> = Vec::new();
-        let mut skill_injections: Vec<String> = Vec::new();
-
-        for tool_call in tool_calls {
-            // Execute PreToolUse hooks
-            if self.hooks_enabled
-                && let Err(block_reason) = self.run_pre_tool_hook(&tool_call.name, &tool_call.arguments)
-            {
-                // Hook blocked the tool execution
-                warn!("Tool {} blocked by hook: {}", tool_call.name, block_reason);
-                let error_msg = format!("Tool blocked: {}", block_reason);
-                self.emit(SessionOutput::tool_done(
-                    &tool_call.id,
-                    &tool_call.name,
-                    false,
-                    error_msg.clone(),
-                ))
-                .await;
-                results.push((tool_call.id.clone(), error_msg, true));
-                continue;
-            }
-
-            // Emit tool start
-            self.emit(SessionOutput::tool_start(
-                &tool_call.id,
-                &tool_call.name,
-                tool_call.arguments.clone(),
-            ))
-            .await;
-
-            // Find and execute the tool
-            let (success, output, inject_message) = if let Some(tool) = self.tool_registry.get(&tool_call.name) {
-                match tool.execute(tool_call.arguments.clone()).await {
-                    Ok(tool_output) => {
-                        let inject = tool_output.metadata.get(crate::tools::skill::INJECT_AS_MESSAGE)
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        let skill_name = tool_output.metadata.get(crate::tools::skill::SKILL_NAME_KEY)
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                        let output_str = tool_output.content.to_string();
-                        debug!(
-                            "Tool {} completed: {} chars",
-                            tool_call.name,
-                            output_str.len()
-                        );
-                        let inject_info = if inject { Some((output_str.clone(), skill_name)) } else { None };
-                        (true, output_str, inject_info)
-                    }
-                    Err(e) => {
-                        debug!("Tool {} failed: {}", tool_call.name, e);
-                        (false, format!("Error: {}", e), None)
-                    }
-                }
-            } else {
-                (false, format!("Unknown tool: {}", tool_call.name), None)
-            };
-
-            // Handle skill message injection
-            if let Some((content, skill_name)) = inject_message {
-                let name = skill_name.as_deref().unwrap_or("unknown");
-                let brief_result = format!("Skill '{}' loaded. Follow the instructions below.", name);
-
-                self.emit(SessionOutput::tool_done(
-                    &tool_call.id,
-                    &tool_call.name,
-                    true,
-                    brief_result.clone(),
-                ))
-                .await;
-
-                results.push((tool_call.id.clone(), brief_result, false));
-
-                // Defer skill content injection until after tool_results are added
-                let injected = format!("<command-name>/{}</command-name>\n\n{}", name, content);
-                skill_injections.push(injected);
-                continue;
-            }
-
-            // Execute PostToolUse hooks
-            let final_output = if self.hooks_enabled {
-                if let Some(additional_context) = self.run_post_tool_hook(&tool_call.name, &tool_call.arguments, &output) {
-                    format!("{}\n\n<post-tool-hook>\n{}\n</post-tool-hook>", output, additional_context)
-                } else {
-                    output
-                }
-            } else {
-                output
-            };
-
-            // Truncate large results to prevent context overflow
-            let truncated_output = truncate_tool_result(&final_output, MAX_TOOL_RESULT_SIZE);
-            if truncated_output.len() < final_output.len() {
-                info!(
-                    "Truncated {} result from {} to {} chars",
-                    tool_call.name,
-                    final_output.len(),
-                    truncated_output.len()
-                );
-            }
-
-            // Emit tool done (with truncated output for display too)
-            self.emit(SessionOutput::tool_done(
-                &tool_call.id,
-                &tool_call.name,
-                success,
-                truncated_output.clone(),
-            ))
-            .await;
-
-            // Collect result for batching (truncated to prevent context overflow)
-            results.push((tool_call.id.clone(), truncated_output, !success));
-        }
-
-        // Add all tool results as a single batched message
-        self.session.add_tool_results(results);
-
-        // Inject skill content as user messages AFTER tool_results
-        // (API requires tool_result immediately after tool_use)
-        for injected in skill_injections {
-            self.session.add_user_message(&injected);
-        }
-    }
-
-    /// Execute a single tool (used for individual tool approvals)
+    /// Execute a single tool
     async fn execute_tool(&mut self, tool_call: &ToolCallInfo) {
         // Execute PreToolUse hooks
         if self.hooks_enabled {
@@ -782,6 +696,44 @@ impl AgentLoop {
         .await;
     }
 
+    /// Finalize a spawned tool execution result
+    ///
+    /// Handles skill injection, truncation, session update, and emits tool_done.
+    /// Used for tools that were executed in parallel.
+    async fn finalize_spawned_tool(&mut self, res: SpawnedToolResult) {
+        // Handle skill message injection
+        if let Some((content, skill_name)) = res.inject_info {
+            let name = skill_name.as_deref().unwrap_or("unknown");
+            let brief_result = format!("Skill '{}' loaded. Follow the instructions below.", name);
+
+            self.session.add_tool_result_with_error(&res.id, &brief_result, false);
+            self.emit(SessionOutput::tool_done(&res.id, &res.name, true, brief_result)).await;
+
+            // Inject skill content as a user message with command-name tag
+            let injected = format!("<command-name>/{}</command-name>\n\n{}", name, content);
+            self.session.add_user_message(&injected);
+            return;
+        }
+
+        // Run post-tool hooks (if enabled)
+        let mut final_output = res.output;
+        if self.hooks_enabled
+            && let Some(additional_context) = self.run_post_tool_hook(&res.name, &res.arguments, &final_output)
+        {
+            final_output = format!("{}\n\n<post-tool-hook>\n{}\n</post-tool-hook>", final_output, additional_context);
+        }
+
+        // Truncate large results
+        let truncated = truncate_tool_result(&final_output, MAX_TOOL_RESULT_SIZE);
+        if truncated.len() < final_output.len() {
+            info!("Truncated {} result from {} to {} chars", res.name, final_output.len(), truncated.len());
+        }
+
+        // Update session and emit
+        self.session.add_tool_result_with_error(&res.id, &truncated, !res.success);
+        self.emit(SessionOutput::tool_done(&res.id, &res.name, res.success, truncated)).await;
+    }
+
     /// Parse questions from AskUserQuestion tool arguments
     fn parse_questions(
         &self,
@@ -818,104 +770,43 @@ impl AgentLoop {
         Some(result)
     }
 
-    /// Emit the appropriate modal event for the first pending item
-    ///
-    /// Questions emit a Question event; other tools emit ToolPending.
-    async fn emit_next_pending(&mut self) {
-        let Some(next) = self.pending_approvals.first() else {
-            return;
-        };
-
-        if next.name == ASK_QUESTION_TOOL_NAME {
-            if let Some(questions) = self.parse_questions(&next.arguments) {
-                self.emit(SessionOutput::Question {
-                    request_id: next.id.clone(),
-                    questions,
-                })
-                .await;
+    /// Wait for a question answer from the user.
+    /// Returns Some(answers) on answer, None on channel close.
+    /// Logs and ignores unexpected input types.
+    async fn wait_for_answer(&mut self) -> Option<std::collections::HashMap<String, String>> {
+        loop {
+            match self.answer_rx.recv().await {
+                Some(SessionInput::AnswerQuestion { answers, .. }) => {
+                    return Some(answers);
+                }
+                Some(other) => {
+                    warn!("Unexpected input while waiting for question answer: {:?}", other);
+                    // Continue waiting
+                }
+                None => return None, // Channel closed
             }
-        } else {
-            self.emit(SessionOutput::tool_pending(
-                &next.id,
-                &next.name,
-                next.arguments.clone(),
-                None,
-            ))
-            .await;
         }
     }
 
-    /// Handle tool approval
-    async fn handle_approve_tool(&mut self, tool_call_id: &str) -> Result<()> {
-        // Find the pending tool call
-        let tool_call = self
-            .pending_approvals
-            .iter()
-            .find(|tc| tc.id == tool_call_id)
-            .cloned();
-
-        if let Some(tool_call) = tool_call {
-            // Remove from pending
-            self.pending_approvals.retain(|tc| tc.id != tool_call_id);
-
-            // Execute the tool
-            self.execute_tool(&tool_call).await;
-        } else {
-            // Tool not found in pending - this shouldn't happen
-            warn!(
-                "Tool approval received for unknown tool_call_id: {}. Pending: {:?}",
-                tool_call_id,
-                self.pending_approvals.iter().map(|t| &t.id).collect::<Vec<_>>()
-            );
+    /// Wait for tool approval from the user.
+    /// Returns Some(None) on approve, Some(reason) on reject, None on channel close.
+    /// Logs and ignores unexpected input types.
+    async fn wait_for_approval(&mut self) -> Option<Option<String>> {
+        loop {
+            match self.answer_rx.recv().await {
+                Some(SessionInput::ApproveTool { .. }) => {
+                    return Some(None); // Approved
+                }
+                Some(SessionInput::RejectTool { reason, .. }) => {
+                    return Some(Some(reason.unwrap_or_else(|| "Rejected by user".to_string())));
+                }
+                Some(other) => {
+                    warn!("Unexpected input while waiting for approval: {:?}", other);
+                    // Continue waiting
+                }
+                None => return None, // Channel closed
+            }
         }
-
-        Ok(())
-    }
-
-    /// Handle tool rejection
-    async fn handle_reject_tool(&mut self, tool_call_id: &str, reason: Option<String>) {
-        // Remove from pending
-        self.pending_approvals.retain(|tc| tc.id != tool_call_id);
-
-        // Mark as rejected in session
-        self.session.reject_tool(tool_call_id);
-
-        // Add rejection result (with is_error=true since it was rejected)
-        let result = reason.unwrap_or_else(|| "Rejected by user".to_string());
-        self.session.add_tool_result_with_error(tool_call_id, &result, true);
-
-        // Emit done with rejection
-        self.emit(SessionOutput::tool_done(tool_call_id, "", false, result))
-            .await;
-    }
-
-    /// Handle answer to a question (request_id is the tool call ID)
-    async fn handle_answer_question(
-        &mut self,
-        request_id: &str,
-        answers: std::collections::HashMap<String, String>,
-    ) -> Result<()> {
-        let result = serde_json::json!({
-            "answered": true,
-            "request_id": request_id,
-            "answers": answers
-        });
-
-        if let Some(idx) = self.pending_approvals.iter().position(|tc| tc.id == request_id) {
-            let tool_call = self.pending_approvals.remove(idx);
-
-            self.session.add_tool_result(&tool_call.id, result.to_string());
-
-            self.emit(SessionOutput::tool_done(
-                &tool_call.id,
-                ASK_QUESTION_TOOL_NAME,
-                true,
-                result.to_string(),
-            ))
-            .await;
-        }
-
-        Ok(())
     }
 
     // ========================================================================
