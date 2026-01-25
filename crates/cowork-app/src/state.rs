@@ -76,7 +76,7 @@ pub struct Settings {
 pub struct ProviderSettings {
     pub provider_type: String,
     pub api_key: Option<String>,
-    pub model: String,
+    pub model: Option<String>,
     pub base_url: Option<String>,
 }
 
@@ -118,7 +118,7 @@ impl From<&Config> for Settings {
             provider: ProviderSettings {
                 provider_type,
                 api_key,
-                model,
+                model: Some(model),
                 base_url,
             },
             approval: ApprovalSettings {
@@ -140,7 +140,7 @@ impl Default for Settings {
             provider: ProviderSettings {
                 provider_type: "anthropic".to_string(),
                 api_key: None,
-                model: catalog::default_model("anthropic").unwrap_or("").to_string(),
+                model: Some(catalog::default_model("anthropic").unwrap_or("").to_string()),
                 base_url: None,
             },
             approval: ApprovalSettings {

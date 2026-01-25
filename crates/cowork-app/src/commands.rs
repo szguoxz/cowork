@@ -33,8 +33,19 @@ pub async fn update_settings(
 
     // Update provider settings
     let provider_name = &settings.provider.provider_type;
+
+    // Use provided model or fall back to catalog default
+    let model = settings.provider.model
+        .clone()
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| {
+            catalog::default_model(provider_name)
+                .unwrap_or("gpt-4o")
+                .to_string()
+        });
+
     if let Some(provider) = config.providers.get_mut(provider_name) {
-        provider.model = settings.provider.model.clone();
+        provider.model = model.clone();
         if let Some(key) = &settings.provider.api_key {
             provider.api_key = Some(key.clone());
         }
@@ -45,7 +56,7 @@ pub async fn update_settings(
             provider_name.clone(),
             cowork_core::config::ProviderConfig {
                 provider_type: provider_name.clone(),
-                model: settings.provider.model.clone(),
+                model,
                 api_key: settings.provider.api_key.clone(),
                 api_key_env: None,
                 base_url: settings.provider.base_url.clone(),
