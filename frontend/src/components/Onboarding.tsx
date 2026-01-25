@@ -13,7 +13,7 @@ interface OnboardingProps {
   onComplete: () => void
 }
 
-type Step = 'provider' | 'apikey' | 'model' | 'testing'
+type Step = 'provider' | 'apikey' | 'serpapi' | 'model' | 'testing'
 
 interface ProviderOption {
   id: string
@@ -37,6 +37,9 @@ const PROVIDERS: ProviderOption[] = [
   { id: 'mimo', name: 'MIMO (Xiaomi)', envVar: 'MIMO_API_KEY' },
 ]
 
+// Providers with native web search capability
+const NATIVE_SEARCH_PROVIDERS = ['anthropic', 'openai', 'gemini', 'groq', 'xai', 'perplexity', 'cohere']
+
 interface ApiTestResult {
   success: boolean
   message: string
@@ -53,11 +56,14 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
   const [step, setStep] = useState<Step>('provider')
   const [selectedProvider, setSelectedProvider] = useState<string>('')
   const [apiKey, setApiKey] = useState('')
+  const [serpApiKey, setSerpApiKey] = useState('')
   const [models, setModels] = useState<ModelInfo[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [testResult, setTestResult] = useState<ApiTestResult | null>(null)
+
+  const needsSerpApi = !NATIVE_SEARCH_PROVIDERS.includes(selectedProvider)
 
   const selectedProviderInfo = PROVIDERS.find((p) => p.id === selectedProvider)
 
@@ -115,6 +121,17 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
       return
     }
     setError(null)
+    if (needsSerpApi) {
+      setStep('serpapi')
+    } else {
+      setStep('model')
+      await fetchModelsForProvider(selectedProvider, apiKey)
+    }
+  }
+
+  const handleSerpApiSubmit = async () => {
+    // SerpAPI is optional, so we can proceed without it
+    setError(null)
     setStep('model')
     await fetchModelsForProvider(selectedProvider, apiKey)
   }
@@ -138,18 +155,27 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
       setTestResult(result)
 
       if (result.success) {
-        await invoke('update_settings', {
-          settings: {
-            provider: {
-              provider_type: selectedProvider,
-              api_key: apiKey || null,
-              model: selectedModel,
-              base_url: null,
-            },
-            approval: { auto_approve_level: 'low', show_confirmation_dialogs: true },
-            ui: { theme: 'system', font_size: 14, show_tool_calls: true },
+        // Build settings with optional serpapi config
+        const settings: Record<string, unknown> = {
+          provider: {
+            provider_type: selectedProvider,
+            api_key: apiKey || null,
+            model: selectedModel || null,
+            base_url: null,
           },
-        })
+          approval: { auto_approve_level: 'low', show_confirmation_dialogs: true },
+          ui: { theme: 'system', font_size: 14, show_tool_calls: true },
+        }
+
+        // Add web_search config if serpapi key provided
+        if (serpApiKey.trim()) {
+          settings.web_search = {
+            fallback_provider: 'serpapi',
+            fallback_api_key: serpApiKey,
+          }
+        }
+
+        await invoke('update_settings', { settings })
         await invoke('save_settings')
       }
     } catch (err) {
@@ -163,18 +189,24 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
     setError(null)
     setTestResult(null)
     if (step === 'apikey') setStep('provider')
-    else if (step === 'model') setStep(selectedProvider === 'ollama' ? 'provider' : 'apikey')
+    else if (step === 'serpapi') setStep('apikey')
+    else if (step === 'model') {
+      if (selectedProvider === 'ollama') setStep('provider')
+      else if (needsSerpApi) setStep('serpapi')
+      else setStep('apikey')
+    }
     else if (step === 'testing') setStep('model')
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !isLoading) {
       if (step === 'apikey') handleApiKeySubmit()
-      else if (step === 'model' && selectedModel) handleModelSubmit()
+      else if (step === 'serpapi') handleSerpApiSubmit()
+      else if (step === 'model') handleModelSubmit()
     }
   }
 
-  const progress = step === 'provider' ? 25 : step === 'apikey' ? 50 : step === 'model' ? 75 : 100
+  const progress = step === 'provider' ? 20 : step === 'apikey' ? 40 : step === 'serpapi' ? 55 : step === 'model' ? 75 : 100
 
   return (
     <div className="fixed inset-0 bg-gray-900/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -275,6 +307,37 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
             </div>
           )}
 
+          {/* SerpAPI Key (optional, for providers without native search) */}
+          {step === 'serpapi' && (
+            <div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                Web Search API (optional):
+              </p>
+              <p className="text-xs text-gray-400 mb-2">
+                {selectedProviderInfo?.name} doesn't have native web search. Add a SerpAPI key to enable web search.
+              </p>
+              <input
+                type="password"
+                value={serpApiKey}
+                onChange={(e) => setSerpApiKey(e.target.value)}
+                placeholder="SERPAPI_API_KEY"
+                autoFocus
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <p className="mt-1.5 text-xs text-gray-400">
+                Get a key at serpapi.com (or skip)
+              </p>
+              <button
+                onClick={handleSerpApiSubmit}
+                disabled={isLoading}
+                className="w-full mt-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
+              >
+                {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : (serpApiKey.trim() ? 'Continue' : 'Skip')}
+                {!isLoading && <ArrowRight className="w-4 h-4" />}
+              </button>
+            </div>
+          )}
+
           {/* Model Selection */}
           {step === 'model' && (
             <div>
@@ -316,14 +379,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                 </div>
               ) : (
                 <div className="py-2">
-                  <input
-                    type="text"
-                    value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
-                    placeholder="Enter model name"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                  />
-                  <p className="mt-1.5 text-xs text-gray-400">Enter model name manually</p>
+                  <p className="text-xs text-gray-400">Using provider default model</p>
                 </div>
               )}
               {error && (
@@ -333,7 +389,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
               )}
               <button
                 onClick={handleModelSubmit}
-                disabled={isLoading || !selectedModel}
+                disabled={isLoading || (models.length > 0 && !selectedModel)}
                 className="w-full mt-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
               >
                 Test Connection
