@@ -79,19 +79,11 @@ impl WebSearch {
         allowed_domains: &[String],
         blocked_domains: &[String],
     ) -> Result<Vec<SearchResult>, String> {
-        let endpoint = self.config.get_fallback_endpoint()
-            .ok_or_else(|| "No search endpoint configured. Set fallback_endpoint in web_search config.".to_string())?;
-
-        let api_key = self.config.get_fallback_api_key();
-
-        // Check if API key is required but missing
-        if self.config.fallback_provider != "searxng" && api_key.is_none() {
-            return Err(format!(
-                "No API key configured for {} search. Set fallback_api_key or {} environment variable.",
-                self.config.fallback_provider,
-                self.config.fallback_api_key_env.as_deref().unwrap_or("BRAVE_API_KEY")
-            ));
-        }
+        // Use auto-detection to find an available provider
+        let (provider, api_key, endpoint) = self.config.get_effective_provider()
+            .ok_or_else(|| {
+                "No search API key configured. Set one of: BRAVE_API_KEY, SERPAPI_API_KEY, SERPER_API_KEY, or TAVILY_API_KEY environment variable.".to_string()
+            })?;
 
         // Build search query with domain filters
         let mut search_query = query.to_string();
@@ -114,14 +106,14 @@ impl WebSearch {
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-        // Build request based on provider
-        let response = match self.config.fallback_provider.as_str() {
-            "brave" => self.search_brave(&client, &endpoint, &search_query, api_key.as_deref()).await?,
-            "serper" => self.search_serper(&client, &endpoint, &search_query, api_key.as_deref()).await?,
-            "serpapi" => self.search_serpapi(&client, &endpoint, &search_query, api_key.as_deref()).await?,
-            "tavily" => self.search_tavily(&client, &endpoint, &search_query, api_key.as_deref()).await?,
+        // Build request based on detected provider
+        let response = match provider.as_str() {
+            "brave" => self.search_brave(&client, &endpoint, &search_query, Some(&api_key)).await?,
+            "serper" => self.search_serper(&client, &endpoint, &search_query, Some(&api_key)).await?,
+            "serpapi" => self.search_serpapi(&client, &endpoint, &search_query, Some(&api_key)).await?,
+            "tavily" => self.search_tavily(&client, &endpoint, &search_query, Some(&api_key)).await?,
             "searxng" => self.search_searxng(&client, &endpoint, &search_query).await?,
-            _ => return Err(format!("Unknown search provider: {}", self.config.fallback_provider)),
+            _ => return Err(format!("Unknown search provider: {}", provider)),
         };
 
         Ok(response)

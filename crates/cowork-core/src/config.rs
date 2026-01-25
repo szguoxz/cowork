@@ -535,6 +535,33 @@ impl WebSearchConfig {
         }
     }
 
+    /// Auto-detect and return the best available search provider
+    /// Checks for API keys in environment and returns the first configured provider
+    pub fn detect_available_provider(&self) -> Option<(String, String)> {
+        // If explicitly configured with API key, use that
+        if let Some(key) = self.get_fallback_api_key() {
+            return Some((self.fallback_provider.clone(), key));
+        }
+
+        // Otherwise, check all known providers for API keys in env
+        let providers = [
+            ("brave", "BRAVE_API_KEY"),
+            ("serpapi", "SERPAPI_API_KEY"),
+            ("serper", "SERPER_API_KEY"),
+            ("tavily", "TAVILY_API_KEY"),
+        ];
+
+        for (provider, env_var) in providers {
+            if let Ok(key) = std::env::var(env_var) {
+                if !key.is_empty() {
+                    return Some((provider.to_string(), key));
+                }
+            }
+        }
+
+        None
+    }
+
     /// Get the default endpoint for the fallback provider
     pub fn get_fallback_endpoint(&self) -> Option<String> {
         if self.fallback_endpoint.is_some() {
@@ -552,9 +579,33 @@ impl WebSearchConfig {
     }
 
     /// Check if fallback search is configured
+    /// Returns true if any supported search provider has an API key available
     pub fn is_fallback_configured(&self) -> bool {
-        self.get_fallback_endpoint().is_some() &&
-        (self.fallback_provider == "searxng" || self.get_fallback_api_key().is_some())
+        // SearXNG doesn't need API key
+        if self.fallback_provider == "searxng" && self.fallback_endpoint.is_some() {
+            return true;
+        }
+
+        // Check if any provider is available (auto-detection)
+        self.detect_available_provider().is_some()
+    }
+
+    /// Get the effective provider and API key to use
+    /// Auto-detects if the configured provider doesn't have a key
+    pub fn get_effective_provider(&self) -> Option<(String, String, String)> {
+        if let Some((provider, key)) = self.detect_available_provider() {
+            // Get endpoint for the detected provider
+            let endpoint = match provider.as_str() {
+                "brave" => "https://api.search.brave.com/res/v1/web/search",
+                "serper" => "https://google.serper.dev/search",
+                "serpapi" => "https://serpapi.com/search",
+                "tavily" => "https://api.tavily.com/search",
+                _ => return None,
+            };
+            Some((provider, key, endpoint.to_string()))
+        } else {
+            None
+        }
     }
 }
 
