@@ -14,8 +14,9 @@ interface ApprovalModalProps {
 function formatArgs(args: Record<string, unknown>): string {
   return Object.entries(args)
     .map(([key, value]) => {
-      const strValue = typeof value === 'string' ? value : JSON.stringify(value)
-      const truncated = strValue.length > 120 ? strValue.slice(0, 120) + '...' : strValue
+      const strValue = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+      // Show more content - truncate at 500 chars
+      const truncated = strValue.length > 500 ? strValue.slice(0, 500) + '...' : strValue
       return `${key}: ${truncated}`
     })
     .join('\n')
@@ -48,56 +49,50 @@ export default function ApprovalModal({ id, name, arguments: args, onApprove, on
       <div className="absolute inset-0 bg-black/50" />
 
       {/* Modal */}
-      <div className="relative w-[480px] max-w-[90vw] bg-card border border-border rounded-xl shadow-2xl">
+      <div className="relative w-[600px] max-w-[95vw] max-h-[90vh] bg-card border border-border rounded-xl shadow-2xl flex flex-col">
         {/* Header */}
-        <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
-          <Terminal className="w-5 h-5 text-warning" />
-          <h2 className="font-semibold text-foreground">Tool Approval Required</h2>
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
+          <Terminal className="w-4 h-4 text-warning" />
+          <h2 className="font-semibold text-sm text-foreground">Tool Approval</h2>
+          <span className="font-mono text-sm font-medium text-primary ml-auto">{name}</span>
         </div>
 
         {/* Content */}
-        <div className="px-5 py-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Tool:</span>
-            <span className="font-mono text-sm font-medium text-foreground">{name}</span>
-          </div>
+        <div className="px-4 py-3 flex-1 overflow-auto min-h-0">
           {Object.keys(args).length > 0 && (
-            <div>
-              <span className="text-sm text-muted-foreground">Arguments:</span>
-              <pre className="mt-1 text-xs font-mono text-muted-foreground bg-secondary/50 rounded-lg p-3 max-h-48 overflow-auto whitespace-pre-wrap break-all">
-                {formatArgs(args)}
-              </pre>
-            </div>
+            <pre className="text-xs font-mono text-foreground bg-secondary/50 rounded-lg p-3 max-h-[50vh] overflow-auto whitespace-pre-wrap break-words">
+              {formatArgs(args)}
+            </pre>
           )}
         </div>
 
         {/* Actions */}
-        <div className="grid grid-cols-2 gap-2 px-5 py-4 border-t border-border">
+        <div className="grid grid-cols-4 gap-2 px-4 py-3 border-t border-border">
           <button
             onClick={() => onApprove(id)}
-            className="px-4 py-2 text-sm font-medium bg-success text-white rounded-lg hover:bg-success/90 transition-colors"
+            className="px-3 py-1.5 text-xs font-medium bg-success text-white rounded-lg hover:bg-success/90 transition-colors"
           >
-            Allow once (Y)
+            Allow (Y)
           </button>
           <button
             onClick={() => onReject(id)}
-            className="px-4 py-2 text-sm font-medium bg-error text-white rounded-lg hover:bg-error/90 transition-colors"
+            className="px-3 py-1.5 text-xs font-medium bg-error text-white rounded-lg hover:bg-error/90 transition-colors"
           >
             Deny (N)
           </button>
           <button
             onClick={() => onApproveForSession(id, name)}
-            className="px-4 py-2 text-sm font-medium bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-colors truncate"
+            className="px-3 py-1.5 text-xs font-medium bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-colors truncate"
             title={`Auto-approve all future "${name}" calls this session`}
           >
-            Always allow {name} (A)
+            Always (A)
           </button>
           <button
             onClick={() => onApproveAll(id)}
-            className="px-4 py-2 text-sm font-medium bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-colors"
+            className="px-3 py-1.5 text-xs font-medium bg-secondary text-foreground rounded-lg hover:bg-secondary/80 transition-colors"
             title="Auto-approve all tools for the rest of this session"
           >
-            Allow all tools
+            All tools
           </button>
         </div>
       </div>

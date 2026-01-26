@@ -507,6 +507,11 @@ impl GenAIProvider {
                         Ok(ChatStreamEvent::ToolCallChunk(tc)) => {
                             // Each ToolCallChunk contains a complete ToolCall
                             let tool_call = tc.tool_call;
+                            // Skip empty tool calls (defensive check)
+                            if tool_call.fn_name.is_empty() {
+                                warn!("Received tool call chunk with empty name, skipping");
+                                continue;
+                            }
                             tool_calls.push(PendingToolCall {
                                 call_id: tool_call.call_id,
                                 name: tool_call.fn_name,
@@ -622,6 +627,10 @@ impl GenAIProvider {
                 }
                 Ok(ChatStreamEvent::ToolCallChunk(tc)) => {
                     let tool_call = tc.tool_call;
+                    if tool_call.fn_name.is_empty() {
+                        warn!("Received tool call chunk with empty name, skipping");
+                        continue;
+                    }
                     tool_calls.push(PendingToolCall {
                         call_id: tool_call.call_id,
                         name: tool_call.fn_name,
