@@ -11,7 +11,7 @@
 //!
 //! Example: `LLM_LOG_FILE=/tmp/llm.log cowork`
 
-use genai::chat::{ChatMessage, ChatRequest, Tool, ToolCall, ToolResponse};
+use genai::chat::{ChatMessage, ChatOptions, ChatRequest, Tool, ToolCall, ToolResponse};
 use genai::resolver::{AuthData, AuthResolver};
 use genai::WebConfig;
 use genai::Client;
@@ -491,11 +491,16 @@ impl GenAIProvider {
             "Sending LLM request"
         );
 
+        // Configure chat options with max_tokens to avoid default limits
+        // DeepSeek default is 4K tokens, max is 8K - we need to set this explicitly
+        // Other providers have higher defaults but setting this doesn't hurt
+        let chat_options = ChatOptions::default().with_max_tokens(8192);
+
         // Execute the chat (non-streaming to avoid genai streaming parsing issues)
         // See: https://github.com/jeremychone/rust-genai/issues/XXX
         let chat_res = self
             .client
-            .exec_chat(&self.model, chat_req, None)
+            .exec_chat(&self.model, chat_req, Some(&chat_options))
             .await;
 
         match chat_res {
@@ -594,10 +599,13 @@ impl GenAIProvider {
             chat_req = chat_req.append_message(tool_response);
         }
 
+        // Configure chat options with max_tokens
+        let chat_options = ChatOptions::default().with_max_tokens(8192);
+
         // Execute the chat again (non-streaming)
         let response = self
             .client
-            .exec_chat(&self.model, chat_req, None)
+            .exec_chat(&self.model, chat_req, Some(&chat_options))
             .await
             .map_err(|e| {
                 tracing::error!(error = ?e, model = %self.model, "LLM continuation request failed");
