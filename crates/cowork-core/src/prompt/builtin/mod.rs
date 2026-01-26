@@ -56,8 +56,6 @@ pub mod tools {
     pub const WEB_SEARCH: &str = include_str!("tools/web_search.md");
     /// LSP tool - code intelligence
     pub const LSP: &str = include_str!("tools/lsp.md");
-    /// EnterPlanMode tool
-    pub const ENTER_PLAN_MODE: &str = include_str!("tools/enter_plan_mode.md");
     /// ExitPlanMode tool
     pub const EXIT_PLAN_MODE: &str = include_str!("tools/exit_plan_mode.md");
 }

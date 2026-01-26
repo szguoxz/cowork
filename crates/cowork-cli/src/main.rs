@@ -718,9 +718,16 @@ async fn handle_user_input(
             app.should_quit = true;
         }
         "/help" | "/?" => {
-            app.add_message(Message::system("Commands: /exit, /quit, /clear, /tools, /help"));
+            app.add_message(Message::system("Commands: /exit, /quit, /clear, /tools, /plan, /help"));
             app.add_message(Message::system("Use ! prefix for direct shell commands (e.g., ! ls -la)"));
             app.add_message(Message::system("Shortcuts: Ctrl+C to quit, Shift+Up/Down to scroll"));
+        }
+        "/plan" => {
+            // Toggle plan mode
+            let new_mode = !app.plan_mode;
+            session_manager
+                .push_message(session_id, SessionInput::set_plan_mode(new_mode))
+                .await?;
         }
         "/tools" => {
             app.add_message(Message::system("Available tools: read_file, write_file, edit, glob, grep, execute_command, web_fetch, task, and more"));

@@ -232,6 +232,8 @@ pub struct App {
     pub approve_all_session: bool,
     /// When the current turn started (user submitted message)
     pub turn_start: Option<Instant>,
+    /// Whether plan mode is active
+    pub plan_mode: bool,
 }
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -257,6 +259,7 @@ impl App {
             session_approved_tools: HashSet::new(),
             approve_all_session: false,
             turn_start: None,
+            plan_mode: false,
         }
     }
 
@@ -413,6 +416,14 @@ impl App {
                 self.status.clear();
                 self.ephemeral = None;
                 self.modal = None;
+            }
+            SessionOutput::PlanModeChanged { active } => {
+                self.plan_mode = active;
+                if active {
+                    self.add_message(Message::system("Plan mode enabled. Tools restricted to read-only."));
+                } else {
+                    self.add_message(Message::system("Plan mode disabled."));
+                }
             }
         }
     }

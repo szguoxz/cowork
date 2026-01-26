@@ -41,6 +41,8 @@ pub enum SessionInput {
     },
     /// User cancels the current turn
     Cancel,
+    /// User toggles plan mode
+    SetPlanMode { active: bool },
 }
 
 impl SessionInput {
@@ -77,6 +79,11 @@ impl SessionInput {
     /// Create a cancel input
     pub fn cancel() -> Self {
         Self::Cancel
+    }
+
+    /// Create a set plan mode input
+    pub fn set_plan_mode(active: bool) -> Self {
+        Self::SetPlanMode { active }
     }
 }
 
@@ -149,6 +156,8 @@ pub enum SessionOutput {
     Error { message: String },
     /// Turn was cancelled by user
     Cancelled,
+    /// Plan mode state changed
+    PlanModeChanged { active: bool },
 }
 
 impl SessionOutput {
@@ -238,6 +247,11 @@ impl SessionOutput {
     /// Create a cancelled output
     pub fn cancelled() -> Self {
         Self::Cancelled
+    }
+
+    /// Create a plan mode changed output
+    pub fn plan_mode_changed(active: bool) -> Self {
+        Self::PlanModeChanged { active }
     }
 
     /// Create a tool call output (persistent message)

@@ -113,7 +113,7 @@ pub struct AgentLoop {
     tool_definitions: Vec<ToolDefinition>,
     /// Tool approval configuration
     approval_config: ToolApprovalConfig,
-    /// Plan mode state (shared with EnterPlanMode/ExitPlanMode tools)
+    /// Plan mode state (shared with EnterPlanMode/ExitPlanMode tools and /plan command)
     plan_mode_state: Arc<tokio::sync::RwLock<PlanModeState>>,
     /// Workspace path
     #[allow(dead_code)]
@@ -149,6 +149,12 @@ impl AgentLoop {
         let (message_tx, message_rx) = mpsc::unbounded_channel();
         let (answer_tx, answer_rx) = mpsc::unbounded_channel();
 
+        // Create shared plan mode state
+        let plan_mode_state = Arc::new(tokio::sync::RwLock::new(PlanModeState::default()));
+        let plan_mode_for_dispatcher = plan_mode_state.clone();
+        let output_for_dispatcher = output_tx.clone();
+        let sid_for_dispatcher = session_id.clone();
+
         // Spawn Dispatcher Task
         // This task reads from the main input channel and routes messages to the correct internal channel
         let sid = session_id.clone();
@@ -161,6 +167,19 @@ impl AgentLoop {
                             error!("Failed to dispatch user message: {}", e);
                             break;
                         }
+                    }
+                    SessionInput::SetPlanMode { active } => {
+                        // Update plan mode state directly
+                        {
+                            let mut state = plan_mode_for_dispatcher.write().await;
+                            state.active = active;
+                        }
+                        // Emit plan mode changed event
+                        let _ = output_for_dispatcher.send((
+                            sid_for_dispatcher.clone(),
+                            SessionOutput::plan_mode_changed(active),
+                        )).await;
+                        debug!("Plan mode set to {} for session {}", active, sid_for_dispatcher);
                     }
                     // All other inputs are answers/approvals
                     input => {
@@ -199,10 +218,7 @@ impl AgentLoop {
         // Create skill registry
         let skill_registry = Arc::new(SkillRegistry::with_builtins(config.workspace_path.clone()));
 
-        // Create shared plan mode state
-        let plan_mode_state = Arc::new(tokio::sync::RwLock::new(PlanModeState::default()));
-
-        // Create tool registry
+        // Create tool registry (plan_mode_state was created above before dispatcher)
         let mut tool_builder = ToolRegistryBuilder::new(config.workspace_path.clone())
             .with_provider(config.provider_type)
             .with_skill_registry(skill_registry)
