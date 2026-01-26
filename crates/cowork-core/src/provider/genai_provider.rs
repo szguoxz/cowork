@@ -11,8 +11,7 @@
 //!
 //! Example: `LLM_LOG_FILE=/tmp/llm.log cowork`
 
-use futures::StreamExt;
-use genai::chat::{ChatMessage, ChatRequest, ChatStreamEvent, Tool, ToolCall, ToolResponse};
+use genai::chat::{ChatMessage, ChatRequest, Tool, ToolCall, ToolResponse};
 use genai::resolver::{AuthData, AuthResolver};
 use genai::WebConfig;
 use genai::Client;
@@ -480,84 +479,43 @@ impl GenAIProvider {
             chat_req = chat_req.with_tools(genai_tools);
         }
 
-        // Execute the chat with streaming to avoid timeout issues
-        let stream_res = self
+        // Execute the chat (non-streaming to avoid genai streaming parsing issues)
+        // See: https://github.com/jeremychone/rust-genai/issues/XXX
+        let chat_res = self
             .client
-            .exec_chat_stream(&self.model, chat_req, None)
+            .exec_chat(&self.model, chat_req, None)
             .await;
 
-        match stream_res {
-            Ok(stream_response) => {
-                // Accumulate content and tool calls from stream
-                let mut content = String::new();
-                let mut tool_calls: Vec<PendingToolCall> = Vec::new();
+        match chat_res {
+            Ok(response) => {
+                // Extract content
+                let content = response.first_text().map(|s| s.to_string());
 
-                // Use the stream field from ChatStreamResponse
-                let mut stream = stream_response.stream;
-
-                while let Some(event) = stream.next().await {
-                    match event {
-                        Ok(ChatStreamEvent::Chunk(chunk)) => {
-                            content.push_str(&chunk.content);
+                // Extract tool calls
+                let tool_calls: Vec<PendingToolCall> = response
+                    .into_tool_calls()
+                    .into_iter()
+                    .filter_map(|tc| {
+                        if tc.fn_name.is_empty() {
+                            warn!("Received tool call with empty name, skipping");
+                            return None;
                         }
-                        Ok(ChatStreamEvent::ReasoningChunk(chunk)) => {
-                            // Include reasoning in content
-                            content.push_str(&chunk.content);
-                        }
-                        Ok(ChatStreamEvent::ToolCallChunk(tc)) => {
-                            // Each ToolCallChunk contains a complete ToolCall
-                            let tool_call = tc.tool_call;
-                            // Skip empty tool calls (defensive check)
-                            if tool_call.fn_name.is_empty() {
-                                warn!("Received tool call chunk with empty name, skipping");
-                                continue;
-                            }
-                            // Log tool call details for debugging
-                            debug!(
-                                tool_name = %tool_call.fn_name,
-                                call_id = %tool_call.call_id,
-                                arguments = ?tool_call.fn_arguments,
-                                "Received tool call chunk"
-                            );
-                            // Warn if arguments appear to be empty or malformed
-                            if tool_call.fn_arguments.is_null() ||
-                               (tool_call.fn_arguments.is_object() && tool_call.fn_arguments.as_object().map(|o| o.is_empty()).unwrap_or(false)) {
-                                warn!(
-                                    tool_name = %tool_call.fn_name,
-                                    arguments = ?tool_call.fn_arguments,
-                                    "Tool call has empty or null arguments"
-                                );
-                            }
-                            tool_calls.push(PendingToolCall {
-                                call_id: tool_call.call_id,
-                                name: tool_call.fn_name,
-                                arguments: tool_call.fn_arguments,
-                            });
-                        }
-                        Ok(ChatStreamEvent::End(_)) => {
-                            // Stream complete
-                            break;
-                        }
-                        Ok(ChatStreamEvent::Start) | Ok(ChatStreamEvent::ThoughtSignatureChunk(_)) => {
-                            // Ignore start and thought signature events
-                        }
-                        Err(e) => {
-                            let error_msg = format!("GenAI stream error: {:?}", e);
-                            log_llm_interaction(
-                                &self.model,
-                                &messages_for_log,
-                                tools_for_log.as_deref(),
-                                None,
-                                Some(&error_msg),
-                            );
-                            tracing::error!(error = ?e, model = %self.model, "LLM stream error");
-                            return Err(Error::Provider(error_msg));
-                        }
-                    }
-                }
+                        debug!(
+                            tool_name = %tc.fn_name,
+                            call_id = %tc.call_id,
+                            arguments = ?tc.fn_arguments,
+                            "Received tool call"
+                        );
+                        Some(PendingToolCall {
+                            call_id: tc.call_id,
+                            name: tc.fn_name,
+                            arguments: tc.fn_arguments,
+                        })
+                    })
+                    .collect();
 
                 let result = CompletionResult {
-                    content: if content.is_empty() { None } else { Some(content) },
+                    content,
                     tool_calls,
                 };
 
@@ -618,68 +576,44 @@ impl GenAIProvider {
             chat_req = chat_req.append_message(tool_response);
         }
 
-        // Execute the chat again with streaming
-        let stream_res = self
+        // Execute the chat again (non-streaming)
+        let response = self
             .client
-            .exec_chat_stream(&self.model, chat_req, None)
+            .exec_chat(&self.model, chat_req, None)
             .await
             .map_err(|e| {
                 tracing::error!(error = ?e, model = %self.model, "LLM continuation request failed");
                 Error::Provider(format!("GenAI error: {:?}", e))
             })?;
 
-        // Accumulate content and tool calls from stream
-        let mut content = String::new();
-        let mut tool_calls: Vec<PendingToolCall> = Vec::new();
-        let mut stream = stream_res.stream;
+        // Extract content
+        let content = response.first_text().map(|s| s.to_string());
 
-        while let Some(event) = stream.next().await {
-            match event {
-                Ok(ChatStreamEvent::Chunk(chunk)) => {
-                    content.push_str(&chunk.content);
+        // Extract tool calls
+        let tool_calls: Vec<PendingToolCall> = response
+            .into_tool_calls()
+            .into_iter()
+            .filter_map(|tc| {
+                if tc.fn_name.is_empty() {
+                    warn!("Received tool call with empty name, skipping");
+                    return None;
                 }
-                Ok(ChatStreamEvent::ReasoningChunk(chunk)) => {
-                    content.push_str(&chunk.content);
-                }
-                Ok(ChatStreamEvent::ToolCallChunk(tc)) => {
-                    let tool_call = tc.tool_call;
-                    if tool_call.fn_name.is_empty() {
-                        warn!("Received tool call chunk with empty name, skipping");
-                        continue;
-                    }
-                    debug!(
-                        tool_name = %tool_call.fn_name,
-                        call_id = %tool_call.call_id,
-                        arguments = ?tool_call.fn_arguments,
-                        "Received tool call chunk (continuation)"
-                    );
-                    if tool_call.fn_arguments.is_null() ||
-                       (tool_call.fn_arguments.is_object() && tool_call.fn_arguments.as_object().map(|o| o.is_empty()).unwrap_or(false)) {
-                        warn!(
-                            tool_name = %tool_call.fn_name,
-                            arguments = ?tool_call.fn_arguments,
-                            "Tool call has empty or null arguments (continuation)"
-                        );
-                    }
-                    tool_calls.push(PendingToolCall {
-                        call_id: tool_call.call_id,
-                        name: tool_call.fn_name,
-                        arguments: tool_call.fn_arguments,
-                    });
-                }
-                Ok(ChatStreamEvent::End(_)) => {
-                    break;
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::error!(error = ?e, model = %self.model, "LLM continuation stream error");
-                    return Err(Error::Provider(format!("GenAI stream error: {:?}", e)));
-                }
-            }
-        }
+                debug!(
+                    tool_name = %tc.fn_name,
+                    call_id = %tc.call_id,
+                    arguments = ?tc.fn_arguments,
+                    "Received tool call (continuation)"
+                );
+                Some(PendingToolCall {
+                    call_id: tc.call_id,
+                    name: tc.fn_name,
+                    arguments: tc.fn_arguments,
+                })
+            })
+            .collect();
 
         Ok(CompletionResult {
-            content: if content.is_empty() { None } else { Some(content) },
+            content,
             tool_calls,
         })
     }
