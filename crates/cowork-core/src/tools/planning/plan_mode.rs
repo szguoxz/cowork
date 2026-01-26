@@ -2,7 +2,7 @@
 //!
 //! Used when in plan mode to signal completion of planning and request approval.
 
-
+use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -20,29 +20,70 @@ pub struct AllowedPrompt {
     pub prompt: String,
 }
 
+/// Generate a random plan file name like "keen-stirring-sunbeam"
+pub fn generate_plan_name() -> String {
+    const ADJECTIVES: &[&str] = &[
+        "keen", "swift", "bright", "calm", "bold", "clear", "warm", "cool",
+        "fresh", "wild", "soft", "pure", "deep", "wise", "fair", "kind",
+    ];
+    const VERBS: &[&str] = &[
+        "stirring", "flowing", "dancing", "glowing", "rising", "shining",
+        "drifting", "soaring", "blazing", "sparking", "singing", "humming",
+    ];
+    const NOUNS: &[&str] = &[
+        "sunbeam", "river", "breeze", "storm", "flame", "wave", "cloud",
+        "mountain", "forest", "meadow", "ocean", "canyon", "valley", "dawn",
+    ];
+
+    let mut rng = rand::rng();
+    let adj = ADJECTIVES.choose(&mut rng).unwrap_or(&"bright");
+    let verb = VERBS.choose(&mut rng).unwrap_or(&"flowing");
+    let noun = NOUNS.choose(&mut rng).unwrap_or(&"stream");
+
+    format!("{}-{}-{}", adj, verb, noun)
+}
+
+/// Get the plans directory path
+pub fn get_plans_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".claude")
+        .join("plans")
+}
+
 /// Plan mode state
 #[derive(Debug, Clone, Default)]
 pub struct PlanModeState {
     pub active: bool,
-    pub plan_file: Option<String>,
+    /// Full path to the plan file (e.g., ~/.claude/plans/keen-stirring-sunbeam.md)
+    pub plan_file: Option<PathBuf>,
     pub allowed_prompts: Vec<AllowedPrompt>,
+}
+
+impl PlanModeState {
+    /// Generate a new plan file path and set it
+    pub fn generate_plan_file(&mut self) -> PathBuf {
+        let plans_dir = get_plans_dir();
+        let name = generate_plan_name();
+        let plan_file = plans_dir.join(format!("{}.md", name));
+        self.plan_file = Some(plan_file.clone());
+        plan_file
+    }
 }
 
 /// Tool for exiting plan mode
 pub struct ExitPlanMode {
     state: Arc<RwLock<PlanModeState>>,
-    workspace: PathBuf,
 }
 
 impl ExitPlanMode {
-    pub fn new(state: Arc<RwLock<PlanModeState>>, workspace: PathBuf) -> Self {
-        Self { state, workspace }
+    pub fn new(state: Arc<RwLock<PlanModeState>>) -> Self {
+        Self { state }
     }
 
     pub fn new_standalone() -> Self {
         Self {
             state: Arc::new(RwLock::new(PlanModeState::default())),
-            workspace: PathBuf::from("."),
         }
     }
 }
@@ -109,10 +150,9 @@ impl Tool for ExitPlanMode {
                 }
             }
 
-            // Read the plan file if one was set
+            // Read the plan file if one was set (plan_file is already a full path)
             let plan_contents = if let Some(ref plan_file) = state.plan_file {
-                let plan_path = self.workspace.join(plan_file);
-                match std::fs::read_to_string(&plan_path) {
+                match std::fs::read_to_string(plan_file) {
                     Ok(contents) => Some(contents),
                     Err(_) => None,
                 }
@@ -137,7 +177,9 @@ impl Tool for ExitPlanMode {
 
             // Include plan contents if available
             if let Some(contents) = plan_contents {
-                result["plan_file"] = json!(state.plan_file);
+                if let Some(ref plan_file) = state.plan_file {
+                    result["plan_file"] = json!(plan_file.to_string_lossy());
+                }
                 result["plan_contents"] = json!(contents);
             }
 

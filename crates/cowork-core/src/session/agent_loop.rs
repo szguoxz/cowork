@@ -169,15 +169,26 @@ impl AgentLoop {
                         }
                     }
                     SessionInput::SetPlanMode { active } => {
-                        // Update plan mode state directly
-                        {
+                        // Update plan mode state
+                        let plan_file = {
                             let mut state = plan_mode_for_dispatcher.write().await;
                             state.active = active;
-                        }
-                        // Emit plan mode changed event
+                            if active && state.plan_file.is_none() {
+                                // Generate a new plan file when entering plan mode
+                                let plans_dir = crate::tools::planning::get_plans_dir();
+                                let _ = std::fs::create_dir_all(&plans_dir);
+                                Some(state.generate_plan_file())
+                            } else if !active {
+                                // Clear plan file when exiting plan mode
+                                state.plan_file.take()
+                            } else {
+                                state.plan_file.clone()
+                            }
+                        };
+                        // Emit plan mode changed event with plan file path
                         let _ = output_for_dispatcher.send((
                             sid_for_dispatcher.clone(),
-                            SessionOutput::plan_mode_changed(active),
+                            SessionOutput::plan_mode_changed(active, plan_file.map(|p| p.to_string_lossy().to_string())),
                         )).await;
                         debug!("Plan mode set to {} for session {}", active, sid_for_dispatcher);
                     }
@@ -578,8 +589,9 @@ impl AgentLoop {
     }
 
     /// Tools allowed when plan mode is active
+    /// Note: Write is allowed for writing the plan file to ~/.claude/plans/
     const PLAN_MODE_TOOLS: &'static [&'static str] = &[
-        "Read", "Glob", "Grep", "LSP", "WebFetch", "WebSearch",
+        "Read", "Glob", "Grep", "LSP", "WebFetch", "WebSearch", "Write",
         ASK_QUESTION_TOOL_NAME, "ExitPlanMode", "TodoWrite",
     ];
 
@@ -588,7 +600,10 @@ impl AgentLoop {
         let mut llm_messages = self.session.to_llm_messages();
 
         // Check plan mode state — filter tools and inject reminder
-        let plan_active = self.plan_mode_state.read().await.active;
+        let plan_state = self.plan_mode_state.read().await;
+        let plan_active = plan_state.active;
+        let plan_file = plan_state.plan_file.clone();
+        drop(plan_state); // Release the lock
 
         let tools = if self.tool_definitions.is_empty() {
             None
@@ -605,7 +620,14 @@ impl AgentLoop {
 
         // Inject plan mode reminder into the messages
         if plan_active {
-            let reminder = crate::prompt::builtin::claude_code::reminders::PLAN_MODE_ACTIVE;
+            let base_reminder = crate::prompt::builtin::claude_code::reminders::PLAN_MODE_ACTIVE;
+            // Add plan file path to the reminder
+            let reminder = if let Some(ref pf) = plan_file {
+                format!("{}\n\nA plan file exists from plan mode at: {}\n\nWrite your plan to this file using the Write tool.",
+                    base_reminder, pf.to_string_lossy())
+            } else {
+                base_reminder.to_string()
+            };
             // Append as a system reminder on the last user message
             if let Some(last_user) = llm_messages.iter_mut().rev()
                 .find(|m| m.role == "user")

@@ -31,4 +31,4 @@ Thumbs.db
 logs/
 
 # MCP server artifacts
-.playwright-mcp/
+#.playwright-mcp/

@@ -292,7 +292,7 @@ impl ToolRegistryBuilder {
                 Arc::new(tokio::sync::RwLock::new(PlanModeState::default()))
             );
             registry.register(Arc::new(EnterPlanMode::new(plan_mode_state.clone())));
-            registry.register(Arc::new(ExitPlanMode::new(plan_mode_state, self.workspace.clone())));
+            registry.register(Arc::new(ExitPlanMode::new(plan_mode_state)));
         }
 
         // Agent/Task tools - require provider_type for full functionality

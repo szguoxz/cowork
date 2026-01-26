@@ -10,7 +10,7 @@ use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
-use super::plan_mode::PlanModeState;
+use super::plan_mode::{get_plans_dir, PlanModeState};
 
 /// Tool for entering plan mode
 pub struct EnterPlanMode {
@@ -51,17 +51,32 @@ impl Tool for EnterPlanMode {
             let mut state = self.state.write().await;
 
             if state.active {
+                let plan_file = state.plan_file.as_ref()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 return Ok(ToolOutput::success(json!({
                     "status": "already_active",
-                    "message": "Already in plan mode"
+                    "message": "Already in plan mode",
+                    "plan_file": plan_file
                 })));
             }
 
+            // Create the plans directory if it doesn't exist
+            let plans_dir = get_plans_dir();
+            if let Err(e) = std::fs::create_dir_all(&plans_dir) {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "Failed to create plans directory: {}", e
+                )));
+            }
+
+            // Generate a new plan file path
+            let plan_file = state.generate_plan_file();
             state.active = true;
 
             Ok(ToolOutput::success(json!({
                 "status": "plan_mode_activated",
-                "message": "Plan mode activated. You can now explore the codebase and design your implementation approach. Use ExitPlanMode when ready to present your plan for user approval."
+                "message": "Plan mode activated. Write your plan to the plan file, then use ExitPlanMode when ready for user approval.",
+                "plan_file": plan_file.to_string_lossy()
             })))
         })
     }

@@ -417,10 +417,16 @@ impl App {
                 self.ephemeral = None;
                 self.modal = None;
             }
-            SessionOutput::PlanModeChanged { active } => {
+            SessionOutput::PlanModeChanged { active, plan_file } => {
                 self.plan_mode = active;
                 if active {
-                    self.add_message(Message::system("Plan mode enabled. Tools restricted to read-only."));
+                    if let Some(ref path) = plan_file {
+                        self.add_message(Message::system(format!(
+                            "Plan mode enabled. Write your plan to: {}", path
+                        )));
+                    } else {
+                        self.add_message(Message::system("Plan mode enabled."));
+                    }
                 } else {
                     self.add_message(Message::system("Plan mode disabled."));
                 }

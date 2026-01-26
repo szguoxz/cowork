@@ -157,7 +157,11 @@ pub enum SessionOutput {
     /// Turn was cancelled by user
     Cancelled,
     /// Plan mode state changed
-    PlanModeChanged { active: bool },
+    PlanModeChanged {
+        active: bool,
+        /// Path to the plan file (when entering plan mode)
+        plan_file: Option<String>,
+    },
 }
 
 impl SessionOutput {
@@ -250,8 +254,8 @@ impl SessionOutput {
     }
 
     /// Create a plan mode changed output
-    pub fn plan_mode_changed(active: bool) -> Self {
-        Self::PlanModeChanged { active }
+    pub fn plan_mode_changed(active: bool, plan_file: Option<String>) -> Self {
+        Self::PlanModeChanged { active, plan_file }
     }
 
     /// Create a tool call output (persistent message)
