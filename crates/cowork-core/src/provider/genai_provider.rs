@@ -479,6 +479,18 @@ impl GenAIProvider {
             chat_req = chat_req.with_tools(genai_tools);
         }
 
+        // Log request size for debugging truncation issues
+        let request_size_estimate: usize = messages_for_log.iter()
+            .map(|m| m.content_as_text().len())
+            .sum();
+        debug!(
+            model = %self.model,
+            message_count = messages_for_log.len(),
+            request_size_chars = request_size_estimate,
+            tool_count = tools_for_log.as_ref().map(|t| t.len()).unwrap_or(0),
+            "Sending LLM request"
+        );
+
         // Execute the chat (non-streaming to avoid genai streaming parsing issues)
         // See: https://github.com/jeremychone/rust-genai/issues/XXX
         let chat_res = self
@@ -533,7 +545,7 @@ impl GenAIProvider {
             Err(e) => {
                 // Use Debug format to get full error chain
                 let error_msg = format!("GenAI error: {:?}", e);
-                // Log failed interaction
+                // Log failed interaction with request context
                 log_llm_interaction(
                     &self.model,
                     &messages_for_log,
@@ -541,8 +553,14 @@ impl GenAIProvider {
                     None,
                     Some(&error_msg),
                 );
-                // Log with tracing for stack context
-                tracing::error!(error = ?e, model = %self.model, "LLM request failed");
+                // Log with tracing for stack context - include request size info
+                tracing::error!(
+                    error = ?e,
+                    model = %self.model,
+                    message_count = messages_for_log.len(),
+                    request_size_chars = request_size_estimate,
+                    "LLM request failed - possible response truncation"
+                );
                 Err(Error::Provider(error_msg))
             }
         }
