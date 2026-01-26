@@ -85,61 +85,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match provider.chat(messages.clone(), Some(tool_definitions.clone())).await {
             Ok(result) => {
-                match result {
-                    cowork_core::provider::CompletionResult::Message(text) => {
-                        println!("{}", text);
-                        messages.push(LlmMessage::assistant(text));
-                    }
-                    cowork_core::provider::CompletionResult::ToolCalls(calls) => {
-                        println!("(wants to use {} tool(s))", calls.len());
+                // Print any content from the assistant
+                if let Some(text) = &result.content {
+                    println!("{}", text);
+                }
 
-                        for call in &calls {
-                            println!("\n  Tool: {}", call.name);
-                            println!("  Args: {}", serde_json::to_string_pretty(&call.arguments)?);
+                if result.has_tool_calls() {
+                    println!("(wants to use {} tool(s))", result.tool_calls.len());
 
-                            // Ask for approval
-                            print!("  Approve? [y/n]: ");
-                            io::stdout().flush()?;
+                    for call in &result.tool_calls {
+                        println!("\n  Tool: {}", call.name);
+                        println!("  Args: {}", serde_json::to_string_pretty(&call.arguments)?);
 
-                            let mut approval = String::new();
-                            io::stdin().read_line(&mut approval)?;
+                        // Ask for approval
+                        print!("  Approve? [y/n]: ");
+                        io::stdout().flush()?;
 
-                            if approval.trim().to_lowercase() == "y" {
-                                // Execute tool
-                                if let Some(tool) = tool_registry.get(&call.name) {
-                                    match tool.execute(call.arguments.clone()).await {
-                                        Ok(output) => {
-                                            println!("  Result: {}",
-                                                if output.content.to_string().len() > 200 {
-                                                    format!("{}... (truncated)", &output.content.to_string()[..200])
-                                                } else {
-                                                    output.content.to_string()
-                                                }
-                                            );
+                        let mut approval = String::new();
+                        io::stdin().read_line(&mut approval)?;
 
-                                            // Add tool result to messages
-                                            messages.push(LlmMessage::assistant(
-                                                format!("Used tool {} with result: {}", call.name, output.content)
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            println!("  Error: {}", e);
-                                            messages.push(LlmMessage::assistant(
-                                                format!("Tool {} failed: {}", call.name, e)
-                                            ));
-                                        }
+                        if approval.trim().to_lowercase() == "y" {
+                            // Execute tool
+                            if let Some(tool) = tool_registry.get(&call.name) {
+                                match tool.execute(call.arguments.clone()).await {
+                                    Ok(output) => {
+                                        println!("  Result: {}",
+                                            if output.content.to_string().len() > 200 {
+                                                format!("{}... (truncated)", &output.content.to_string()[..200])
+                                            } else {
+                                                output.content.to_string()
+                                            }
+                                        );
+
+                                        // Add tool result to messages
+                                        messages.push(LlmMessage::assistant(
+                                            format!("Used tool {} with result: {}", call.name, output.content)
+                                        ));
                                     }
-                                } else {
-                                    println!("  Unknown tool: {}", call.name);
+                                    Err(e) => {
+                                        println!("  Error: {}", e);
+                                        messages.push(LlmMessage::assistant(
+                                            format!("Tool {} failed: {}", call.name, e)
+                                        ));
+                                    }
                                 }
                             } else {
-                                println!("  Rejected");
-                                messages.push(LlmMessage::assistant(
-                                    format!("User rejected tool call: {}", call.name)
-                                ));
+                                println!("  Unknown tool: {}", call.name);
                             }
+                        } else {
+                            println!("  Rejected");
+                            messages.push(LlmMessage::assistant(
+                                format!("User rejected tool call: {}", call.name)
+                            ));
                         }
                     }
+                } else if let Some(text) = result.content {
+                    // No tool calls, just add the message
+                    messages.push(LlmMessage::assistant(text));
                 }
             }
             Err(e) => {

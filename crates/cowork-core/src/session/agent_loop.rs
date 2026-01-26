@@ -24,7 +24,7 @@ use crate::context::{
 use crate::error::Result;
 use crate::orchestration::{ChatMessage, ChatSession, ToolCallInfo, ToolRegistryBuilder};
 use crate::prompt::{ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig};
-use crate::provider::{CompletionResult, GenAIProvider};
+use crate::provider::GenAIProvider;
 use crate::skills::SkillRegistry;
 use crate::tools::interaction::ASK_QUESTION_TOOL_NAME;
 use crate::tools::planning::PlanModeState;
@@ -647,13 +647,10 @@ impl AgentLoop {
         }
 
         match self.provider.chat(llm_messages, tools).await {
-            Ok(CompletionResult::Message(content)) => Ok(LlmCallResult {
-                content: Some(content),
-                tool_calls: Vec::new(),
-            }),
-            Ok(CompletionResult::ToolCalls(pending)) => Ok(LlmCallResult {
-                content: None,
-                tool_calls: pending
+            Ok(result) => Ok(LlmCallResult {
+                content: result.content,
+                tool_calls: result
+                    .tool_calls
                     .into_iter()
                     .map(|tc| LlmToolCall {
                         id: tc.call_id,

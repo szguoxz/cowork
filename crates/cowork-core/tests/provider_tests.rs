@@ -169,7 +169,6 @@ mod provider_creation_tests {
 
 mod integration_tests {
     use super::*;
-    use cowork_core::provider::CompletionResult;
 
     // Note: These tests require actual API keys and will make real API calls
     // They are marked with #[ignore] by default
@@ -198,15 +197,11 @@ mod integration_tests {
 
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
 
-        match result.unwrap() {
-            CompletionResult::Message(text) => {
-                println!("Response: {}", text);
-                assert!(text.contains("4"), "Expected response to contain '4'");
-            }
-            CompletionResult::ToolCalls(_) => {
-                panic!("Unexpected tool calls in simple chat");
-            }
-        }
+        let result = result.unwrap();
+        assert!(!result.has_tool_calls(), "Unexpected tool calls in simple chat");
+        let text = result.content.expect("Expected content");
+        println!("Response: {}", text);
+        assert!(text.contains("4"), "Expected response to contain '4'");
     }
 
     #[tokio::test]
@@ -232,15 +227,11 @@ mod integration_tests {
 
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
 
-        match result.unwrap() {
-            CompletionResult::Message(text) => {
-                println!("Response: {}", text);
-                assert!(text.contains("4"), "Expected response to contain '4'");
-            }
-            CompletionResult::ToolCalls(_) => {
-                panic!("Unexpected tool calls in simple chat");
-            }
-        }
+        let result = result.unwrap();
+        assert!(!result.has_tool_calls(), "Unexpected tool calls in simple chat");
+        let text = result.content.expect("Expected content");
+        println!("Response: {}", text);
+        assert!(text.contains("4"), "Expected response to contain '4'");
     }
 
     #[tokio::test]
@@ -285,16 +276,14 @@ mod integration_tests {
 
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
 
-        match result.unwrap() {
-            CompletionResult::ToolCalls(calls) => {
-                println!("Tool calls: {:?}", calls);
-                assert!(!calls.is_empty(), "Expected at least one tool call");
-                assert_eq!(calls[0].name, "get_weather");
-            }
-            CompletionResult::Message(text) => {
-                // Some models might not use tools - that's OK
-                println!("Got message instead of tool call: {}", text);
-            }
+        let result = result.unwrap();
+        if result.has_tool_calls() {
+            println!("Tool calls: {:?}", result.tool_calls);
+            assert!(!result.tool_calls.is_empty(), "Expected at least one tool call");
+            assert_eq!(result.tool_calls[0].name, "get_weather");
+        } else {
+            // Some models might not use tools - that's OK
+            println!("Got message instead of tool call: {:?}", result.content);
         }
     }
 
@@ -340,16 +329,14 @@ mod integration_tests {
 
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
 
-        match result.unwrap() {
-            CompletionResult::ToolCalls(calls) => {
-                println!("Tool calls: {:?}", calls);
-                assert!(!calls.is_empty(), "Expected at least one tool call");
-                assert_eq!(calls[0].name, "get_weather");
-            }
-            CompletionResult::Message(text) => {
-                // Some models might not use tools - that's OK
-                println!("Got message instead of tool call: {}", text);
-            }
+        let result = result.unwrap();
+        if result.has_tool_calls() {
+            println!("Tool calls: {:?}", result.tool_calls);
+            assert!(!result.tool_calls.is_empty(), "Expected at least one tool call");
+            assert_eq!(result.tool_calls[0].name, "get_weather");
+        } else {
+            // Some models might not use tools - that's OK
+            println!("Got message instead of tool call: {:?}", result.content);
         }
     }
 
@@ -375,10 +362,9 @@ mod integration_tests {
         let result1 = provider.chat(messages1.clone(), None).await;
         assert!(result1.is_ok(), "First API call failed: {:?}", result1.err());
 
-        let response1 = match result1.unwrap() {
-            CompletionResult::Message(text) => text,
-            _ => panic!("Unexpected tool calls"),
-        };
+        let result1 = result1.unwrap();
+        assert!(!result1.has_tool_calls(), "Unexpected tool calls");
+        let response1 = result1.content.expect("Expected content");
         println!("First response: {}", response1);
 
         // Second message - test context
@@ -389,16 +375,14 @@ mod integration_tests {
         let result2 = provider.chat(messages2, None).await;
         assert!(result2.is_ok(), "Second API call failed: {:?}", result2.err());
 
-        match result2.unwrap() {
-            CompletionResult::Message(text) => {
-                println!("Second response: {}", text);
-                assert!(
-                    text.to_lowercase().contains("alice"),
-                    "Expected response to remember 'Alice'"
-                );
-            }
-            _ => panic!("Unexpected tool calls"),
-        }
+        let result2 = result2.unwrap();
+        assert!(!result2.has_tool_calls(), "Unexpected tool calls");
+        let text = result2.content.expect("Expected content");
+        println!("Second response: {}", text);
+        assert!(
+            text.to_lowercase().contains("alice"),
+            "Expected response to remember 'Alice'"
+        );
     }
 }
 

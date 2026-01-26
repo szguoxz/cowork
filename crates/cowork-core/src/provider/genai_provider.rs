@@ -11,7 +11,8 @@
 //!
 //! Example: `LLM_LOG_FILE=/tmp/llm.log cowork`
 
-use genai::chat::{ChatMessage, ChatRequest, Tool, ToolCall, ToolResponse};
+use futures::StreamExt;
+use genai::chat::{ChatMessage, ChatRequest, ChatStreamEvent, Tool, ToolCall, ToolResponse};
 use genai::resolver::{AuthData, AuthResolver};
 use genai::WebConfig;
 use genai::Client;
@@ -50,24 +51,24 @@ fn log_llm_interaction(
                 .map(|m| m.content_as_text().len())
                 .sum::<usize>(),
         },
-        "response": result.map(|r| match r {
-            CompletionResult::Message(content) => serde_json::json!({
-                "type": "message",
-                "content_length": content.len(),
-                "content_preview": if content.len() > 500 {
+        "response": result.map(|r| {
+            let content_preview = r.content.as_ref().map(|content| {
+                if content.len() > 500 {
                     format!("{}...", &content[..500])
                 } else {
                     content.clone()
                 }
-            }),
-            CompletionResult::ToolCalls(calls) => serde_json::json!({
-                "type": "tool_calls",
-                "calls": calls.iter().map(|c| serde_json::json!({
+            });
+            serde_json::json!({
+                "type": if r.has_tool_calls() { "tool_calls" } else { "message" },
+                "content": content_preview,
+                "content_length": r.content.as_ref().map(|c| c.len()),
+                "tool_calls": r.tool_calls.iter().map(|c| serde_json::json!({
                     "name": c.name,
                     "call_id": c.call_id,
                     "arguments": c.arguments
                 })).collect::<Vec<_>>()
-            }),
+            })
         }),
         "error": error,
     });
@@ -211,13 +212,25 @@ impl From<ToolCall> for PendingToolCall {
     }
 }
 
-/// Response from completion that may contain tool calls
-#[derive(Debug, Clone)]
-pub enum CompletionResult {
-    /// Simple text response
-    Message(String),
+/// Response from completion that may contain both content and tool calls
+#[derive(Debug, Clone, Default)]
+pub struct CompletionResult {
+    /// Text content from the assistant (may be present even with tool calls)
+    pub content: Option<String>,
     /// Tool calls that need approval before execution
-    ToolCalls(Vec<PendingToolCall>),
+    pub tool_calls: Vec<PendingToolCall>,
+}
+
+impl CompletionResult {
+    /// Check if this result has any tool calls
+    pub fn has_tool_calls(&self) -> bool {
+        !self.tool_calls.is_empty()
+    }
+
+    /// Check if this result has text content
+    pub fn has_content(&self) -> bool {
+        self.content.as_ref().map(|c| !c.is_empty()).unwrap_or(false)
+    }
 }
 
 /// A provider implementation using genai
@@ -475,24 +488,64 @@ impl GenAIProvider {
             chat_req = chat_req.with_tools(genai_tools);
         }
 
-        // Execute the chat
-        let chat_res = self
+        // Execute the chat with streaming to avoid timeout issues
+        let stream_res = self
             .client
-            .exec_chat(&self.model, chat_req, None)
+            .exec_chat_stream(&self.model, chat_req, None)
             .await;
 
-        // Handle result and log
-        match chat_res {
-            Ok(res) => {
-                // Check for tool calls first (need to clone since into_tool_calls consumes)
-                let tool_calls = res.clone().into_tool_calls();
-                let result = if !tool_calls.is_empty() {
-                    let pending: Vec<PendingToolCall> = tool_calls.into_iter().map(Into::into).collect();
-                    CompletionResult::ToolCalls(pending)
-                } else {
-                    // Get text content
-                    let content = res.first_text().unwrap_or("").to_string();
-                    CompletionResult::Message(content)
+        match stream_res {
+            Ok(stream_response) => {
+                // Accumulate content and tool calls from stream
+                let mut content = String::new();
+                let mut tool_calls: Vec<PendingToolCall> = Vec::new();
+
+                // Use the stream field from ChatStreamResponse
+                let mut stream = stream_response.stream;
+
+                while let Some(event) = stream.next().await {
+                    match event {
+                        Ok(ChatStreamEvent::Chunk(chunk)) => {
+                            content.push_str(&chunk.content);
+                        }
+                        Ok(ChatStreamEvent::ReasoningChunk(chunk)) => {
+                            // Include reasoning in content
+                            content.push_str(&chunk.content);
+                        }
+                        Ok(ChatStreamEvent::ToolCallChunk(tc)) => {
+                            // Each ToolCallChunk contains a complete ToolCall
+                            let tool_call = tc.tool_call;
+                            tool_calls.push(PendingToolCall {
+                                call_id: tool_call.call_id,
+                                name: tool_call.fn_name,
+                                arguments: tool_call.fn_arguments,
+                            });
+                        }
+                        Ok(ChatStreamEvent::End(_)) => {
+                            // Stream complete
+                            break;
+                        }
+                        Ok(ChatStreamEvent::Start) | Ok(ChatStreamEvent::ThoughtSignatureChunk(_)) => {
+                            // Ignore start and thought signature events
+                        }
+                        Err(e) => {
+                            let error_msg = format!("GenAI stream error: {:?}", e);
+                            log_llm_interaction(
+                                &self.model,
+                                &messages_for_log,
+                                tools_for_log.as_deref(),
+                                None,
+                                Some(&error_msg),
+                            );
+                            tracing::error!(error = ?e, model = %self.model, "LLM stream error");
+                            return Err(Error::Provider(error_msg));
+                        }
+                    }
+                }
+
+                let result = CompletionResult {
+                    content: if content.is_empty() { None } else { Some(content) },
+                    tool_calls,
                 };
 
                 // Log successful interaction
@@ -552,25 +605,52 @@ impl GenAIProvider {
             chat_req = chat_req.append_message(tool_response);
         }
 
-        // Execute the chat again
-        let chat_res = self
+        // Execute the chat again with streaming
+        let stream_res = self
             .client
-            .exec_chat(&self.model, chat_req, None)
+            .exec_chat_stream(&self.model, chat_req, None)
             .await
             .map_err(|e| {
                 tracing::error!(error = ?e, model = %self.model, "LLM continuation request failed");
                 Error::Provider(format!("GenAI error: {:?}", e))
             })?;
 
-        // Check for more tool calls
-        let tool_calls = chat_res.clone().into_tool_calls();
-        if !tool_calls.is_empty() {
-            let pending: Vec<PendingToolCall> = tool_calls.into_iter().map(Into::into).collect();
-            Ok(CompletionResult::ToolCalls(pending))
-        } else {
-            let content = chat_res.first_text().unwrap_or("").to_string();
-            Ok(CompletionResult::Message(content))
+        // Accumulate content and tool calls from stream
+        let mut content = String::new();
+        let mut tool_calls: Vec<PendingToolCall> = Vec::new();
+        let mut stream = stream_res.stream;
+
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(ChatStreamEvent::Chunk(chunk)) => {
+                    content.push_str(&chunk.content);
+                }
+                Ok(ChatStreamEvent::ReasoningChunk(chunk)) => {
+                    content.push_str(&chunk.content);
+                }
+                Ok(ChatStreamEvent::ToolCallChunk(tc)) => {
+                    let tool_call = tc.tool_call;
+                    tool_calls.push(PendingToolCall {
+                        call_id: tool_call.call_id,
+                        name: tool_call.fn_name,
+                        arguments: tool_call.fn_arguments,
+                    });
+                }
+                Ok(ChatStreamEvent::End(_)) => {
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!(error = ?e, model = %self.model, "LLM continuation stream error");
+                    return Err(Error::Provider(format!("GenAI stream error: {:?}", e)));
+                }
+            }
         }
+
+        Ok(CompletionResult {
+            content: if content.is_empty() { None } else { Some(content) },
+            tool_calls,
+        })
     }
 
 }
@@ -619,27 +699,28 @@ impl LlmProvider for GenAIProvider {
             );
         }
 
-        match self.chat(messages, tools).await? {
-            CompletionResult::Message(content) => Ok(LlmResponse {
-                content: Some(content),
-                tool_calls: Vec::new(),
-                finish_reason: "stop".to_string(),
-                usage: TokenUsage::default(),
-            }),
-            CompletionResult::ToolCalls(pending) => Ok(LlmResponse {
-                content: None,
-                tool_calls: pending
-                    .into_iter()
-                    .map(|tc| super::ToolCall {
-                        id: tc.call_id,
-                        name: tc.name,
-                        arguments: tc.arguments,
-                    })
-                    .collect(),
-                finish_reason: "tool_calls".to_string(),
-                usage: TokenUsage::default(),
-            }),
-        }
+        let result = self.chat(messages, tools).await?;
+
+        let finish_reason = if result.has_tool_calls() {
+            "tool_calls"
+        } else {
+            "stop"
+        };
+
+        Ok(LlmResponse {
+            content: result.content,
+            tool_calls: result
+                .tool_calls
+                .into_iter()
+                .map(|tc| super::ToolCall {
+                    id: tc.call_id,
+                    name: tc.name,
+                    arguments: tc.arguments,
+                })
+                .collect(),
+            finish_reason: finish_reason.to_string(),
+            usage: TokenUsage::default(),
+        })
     }
 
     async fn health_check(&self) -> Result<bool> {
