@@ -55,6 +55,7 @@ jobs:
 
       - name: Get tag message
         id: tag_message
+        shell: bash
         run: |
           TAG_MESSAGE=$(git tag -l --format='%(contents)' ${{ github.ref_name }})
           echo "message<<EOF" >> $GITHUB_OUTPUT
@@ -116,6 +117,7 @@ jobs:
 
       - name: Get tag message
         id: tag_message
+        shell: bash
         run: |
           TAG_MESSAGE=$(git tag -l --format='%(contents)' ${{ github.ref_name }})
           echo "message<<EOF" >> $GITHUB_OUTPUT
