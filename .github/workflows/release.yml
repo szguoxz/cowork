@@ -30,6 +30,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed to get tag annotations
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -86,6 +88,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed to get tag annotations
 
       - uses: actions/setup-node@v4
         with:
