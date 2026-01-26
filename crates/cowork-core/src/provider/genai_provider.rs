@@ -44,25 +44,17 @@ fn log_llm_interaction(
         "request": {
             "messages": messages,
             "message_count": messages.len(),
-            "tools": tools.map(|t| t.iter().map(|tool| &tool.name).collect::<Vec<_>>()),
+            "tools": tools.map(|t| t.iter().map(|tool| serde_json::json!({
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters
+            })).collect::<Vec<_>>()),
             "tool_count": tools.map(|t| t.len()).unwrap_or(0),
-            // Estimate request size
-            "estimated_chars": messages.iter()
-                .map(|m| m.content_as_text().len())
-                .sum::<usize>(),
         },
         "response": result.map(|r| {
-            let content_preview = r.content.as_ref().map(|content| {
-                if content.len() > 500 {
-                    format!("{}...", &content[..500])
-                } else {
-                    content.clone()
-                }
-            });
             serde_json::json!({
                 "type": if r.has_tool_calls() { "tool_calls" } else { "message" },
-                "content": content_preview,
-                "content_length": r.content.as_ref().map(|c| c.len()),
+                "content": r.content,
                 "tool_calls": r.tool_calls.iter().map(|c| serde_json::json!({
                     "name": c.name,
                     "call_id": c.call_id,
