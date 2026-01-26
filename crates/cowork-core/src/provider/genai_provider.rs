@@ -507,7 +507,8 @@ impl GenAIProvider {
                 Ok(result)
             }
             Err(e) => {
-                let error_msg = format!("GenAI error: {}", e);
+                // Use Debug format to get full error chain
+                let error_msg = format!("GenAI error: {:?}", e);
                 // Log failed interaction
                 log_llm_interaction(
                     &self.model,
@@ -516,6 +517,8 @@ impl GenAIProvider {
                     None,
                     Some(&error_msg),
                 );
+                // Log with tracing for stack context
+                tracing::error!(error = ?e, model = %self.model, "LLM request failed");
                 Err(Error::Provider(error_msg))
             }
         }
@@ -554,7 +557,10 @@ impl GenAIProvider {
             .client
             .exec_chat(&self.model, chat_req, None)
             .await
-            .map_err(|e| Error::Provider(format!("GenAI error: {}", e)))?;
+            .map_err(|e| {
+                tracing::error!(error = ?e, model = %self.model, "LLM continuation request failed");
+                Error::Provider(format!("GenAI error: {:?}", e))
+            })?;
 
         // Check for more tool calls
         let tool_calls = chat_res.clone().into_tool_calls();
