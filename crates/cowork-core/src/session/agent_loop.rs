@@ -435,6 +435,16 @@ impl AgentLoop {
             let mut needs_interaction = Vec::new();
 
             for tc in &tool_calls {
+                // Log warning if tool call has empty or null arguments
+                if tc.arguments.is_null() ||
+                   (tc.arguments.is_object() && tc.arguments.as_object().map(|o| o.is_empty()).unwrap_or(false)) {
+                    warn!(
+                        tool_name = %tc.name,
+                        tool_id = %tc.id,
+                        arguments = ?tc.arguments,
+                        "Tool call received with empty or null arguments"
+                    );
+                }
                 if tc.name == ASK_QUESTION_TOOL_NAME {
                     needs_interaction.push(tc);
                 } else if self.approval_config.should_auto_approve_with_args(&tc.name, &tc.arguments) {

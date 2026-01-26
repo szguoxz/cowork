@@ -512,6 +512,22 @@ impl GenAIProvider {
                                 warn!("Received tool call chunk with empty name, skipping");
                                 continue;
                             }
+                            // Log tool call details for debugging
+                            debug!(
+                                tool_name = %tool_call.fn_name,
+                                call_id = %tool_call.call_id,
+                                arguments = ?tool_call.fn_arguments,
+                                "Received tool call chunk"
+                            );
+                            // Warn if arguments appear to be empty or malformed
+                            if tool_call.fn_arguments.is_null() ||
+                               (tool_call.fn_arguments.is_object() && tool_call.fn_arguments.as_object().map(|o| o.is_empty()).unwrap_or(false)) {
+                                warn!(
+                                    tool_name = %tool_call.fn_name,
+                                    arguments = ?tool_call.fn_arguments,
+                                    "Tool call has empty or null arguments"
+                                );
+                            }
                             tool_calls.push(PendingToolCall {
                                 call_id: tool_call.call_id,
                                 name: tool_call.fn_name,
@@ -630,6 +646,20 @@ impl GenAIProvider {
                     if tool_call.fn_name.is_empty() {
                         warn!("Received tool call chunk with empty name, skipping");
                         continue;
+                    }
+                    debug!(
+                        tool_name = %tool_call.fn_name,
+                        call_id = %tool_call.call_id,
+                        arguments = ?tool_call.fn_arguments,
+                        "Received tool call chunk (continuation)"
+                    );
+                    if tool_call.fn_arguments.is_null() ||
+                       (tool_call.fn_arguments.is_object() && tool_call.fn_arguments.as_object().map(|o| o.is_empty()).unwrap_or(false)) {
+                        warn!(
+                            tool_name = %tool_call.fn_name,
+                            arguments = ?tool_call.fn_arguments,
+                            "Tool call has empty or null arguments (continuation)"
+                        );
                     }
                     tool_calls.push(PendingToolCall {
                         call_id: tool_call.call_id,
