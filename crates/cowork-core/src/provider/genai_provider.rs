@@ -13,9 +13,11 @@
 
 use genai::chat::{ChatMessage, ChatRequest, Tool, ToolCall, ToolResponse};
 use genai::resolver::{AuthData, AuthResolver};
+use genai::WebConfig;
 use genai::Client;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
+use std::time::Duration;
 use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
@@ -227,9 +229,21 @@ pub struct GenAIProvider {
 }
 
 impl GenAIProvider {
+    /// Default timeout for LLM API requests (5 minutes)
+    const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
+
+    /// Create WebConfig with appropriate timeouts for LLM requests
+    fn default_web_config() -> WebConfig {
+        WebConfig::default()
+            .with_timeout(Self::DEFAULT_TIMEOUT)
+            .with_connect_timeout(Duration::from_secs(30))
+    }
+
     /// Create a new provider with default settings (uses environment variables for auth)
     pub fn new(provider_type: ProviderType, model: Option<&str>) -> Self {
-        let client = Client::default();
+        let client = Client::builder()
+            .with_web_config(Self::default_web_config())
+            .build();
         Self {
             client,
             provider_type,
@@ -247,7 +261,10 @@ impl GenAIProvider {
             },
         );
 
-        let client = Client::builder().with_auth_resolver(auth_resolver).build();
+        let client = Client::builder()
+            .with_web_config(Self::default_web_config())
+            .with_auth_resolver(auth_resolver)
+            .build();
 
         Self {
             client,
