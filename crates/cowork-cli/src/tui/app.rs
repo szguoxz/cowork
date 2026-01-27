@@ -383,7 +383,17 @@ impl App {
             }
             SessionOutput::AssistantMessage { content, context_usage, .. } => {
                 if !content.is_empty() {
-                    self.add_message(Message::assistant(content));
+                    // Append context usage to message if available
+                    let display_content = if let Some(ref usage) = context_usage {
+                        let input_k = usage.breakdown.input_tokens / 1000;
+                        let output_k = usage.breakdown.output_tokens / 1000;
+                        let total_k = usage.limit_tokens / 1000;
+                        let pct = (usage.used_percentage * 100.0).round() as u32;
+                        format!("{} [{}k/{}k/{}k ({}%)]", content, input_k, output_k, total_k, pct)
+                    } else {
+                        content
+                    };
+                    self.add_message(Message::assistant(display_content));
                 }
                 self.context_usage = context_usage;
                 self.status.clear();
