@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
-use tracing::info;
+use tracing::{debug, info};
 
 use tokio::sync::mpsc;
 
@@ -303,6 +303,13 @@ pub async fn run_subagent(
     );
     let env_info = build_environment_info(&config.workspace);
     let system_prompt = format!("{}{}", base_prompt, env_info);
+
+    debug!(
+        "Subagent {}: system_prompt_len={}, model={}",
+        agent_id,
+        system_prompt.len(),
+        get_model_for_tier(model, &config.model_tiers)
+    );
 
     // Build SessionConfig: scoped tools, no hooks, no save
     // Use default approval config so Bash commands get parsed for safety
