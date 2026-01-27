@@ -1022,9 +1022,12 @@ impl AgentLoop {
 
             // Add the task as a user message so the LLM sees it needs to be executed
             // The LLM will then call the Task tool with the appropriate parameters
+            let model_hint = info.model.as_ref()
+                .map(|m| format!(" with model=\"{}\"", m))
+                .unwrap_or_default();
             let task_instruction = format!(
-                "Execute this skill in a subagent:\n\n<skill name=\"{}\" agent=\"{}\">\n{}\n</skill>\n\nUse the Task tool with subagent_type=\"{}\" to execute this.",
-                info.skill_name, info.agent_type, info.prompt, info.agent_type
+                "Execute this skill in a subagent:\n\n<skill name=\"{}\" agent=\"{}\">\n{}\n</skill>\n\nUse the Task tool with subagent_type=\"{}\"{} to execute this.",
+                info.skill_name, info.agent_type, info.prompt, info.agent_type, model_hint
             );
             self.session.add_user_message(&task_instruction);
             return;

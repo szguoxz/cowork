@@ -198,7 +198,7 @@ mod tests {
         let opus_max = get_model_max_output(ProviderType::Anthropic, "claude-opus-4-5-20251101");
         let sonnet_max = get_model_max_output(ProviderType::Anthropic, "claude-sonnet-4-5-20250929");
         assert_eq!(opus_max, Some(32768)); // Opus: 32k
-        assert_eq!(sonnet_max, Some(65536)); // Sonnet: 64k
+        assert_eq!(sonnet_max, Some(64000)); // Sonnet: 64k
 
         // Test OpenAI models
         let gpt5_max = get_model_max_output(ProviderType::OpenAI, "gpt-5");
@@ -206,7 +206,7 @@ mod tests {
 
         // Test fallback for unknown model returns balanced tier
         let unknown_max = get_model_max_output(ProviderType::Anthropic, "unknown-model");
-        assert_eq!(unknown_max, Some(65536)); // Falls back to balanced (Sonnet 64k)
+        assert_eq!(unknown_max, Some(64000)); // Falls back to balanced (Sonnet 64k)
     }
 
     #[test]
