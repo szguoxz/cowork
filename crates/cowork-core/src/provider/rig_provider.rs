@@ -2,18 +2,93 @@
 //!
 //! Uses rig-core for LLM API calls with proper JSON parsing and streaming support.
 //! This provider has the same interface as GenAIProvider but uses rig under the hood.
+//!
+//! ## LLM Request/Response Logging
+//!
+//! Set the `LLM_LOG_FILE` environment variable to enable detailed logging of all
+//! LLM requests and responses to a JSON file. Includes system prompt in requests.
+//!
+//! Example: `LLM_LOG_FILE=/tmp/llm.log cowork`
 
 use futures::{Stream, StreamExt};
 use rig::prelude::*;
 use rig::completion::{CompletionRequestBuilder, ToolDefinition as RigToolDef};
 use rig::message::{AssistantContent, Message, Text, ToolCall as RigToolCall, ToolFunction, ToolResult, ToolResultContent, UserContent};
 use rig::streaming::StreamedAssistantContent;
+use std::io::Write;
 use std::pin::Pin;
+use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
 use crate::tools::ToolDefinition;
 use super::{ContentBlock, LlmMessage, MessageContent};
 use super::genai_provider::{CompletionResult, PendingToolCall, ProviderType};
+
+/// Log LLM request/response to file if LLM_LOG_FILE is set
+///
+/// Includes system prompt in the request for complete context.
+fn log_llm_interaction(
+    model: &str,
+    system_prompt: Option<&str>,
+    messages: &[LlmMessage],
+    tools: Option<&[ToolDefinition]>,
+    result: Option<&CompletionResult>,
+    raw_response: Option<&str>,
+    error: Option<&str>,
+) {
+    let log_file = match std::env::var("LLM_LOG_FILE") {
+        Ok(path) => path,
+        Err(_) => return, // No logging if env var not set
+    };
+
+    let entry = serde_json::json!({
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "model": model,
+        "provider": "rig",
+        "request": {
+            "system_prompt": system_prompt,
+            "messages": messages,
+            "message_count": messages.len(),
+            "tools": tools.map(|t| t.iter().map(|tool| serde_json::json!({
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters
+            })).collect::<Vec<_>>()),
+            "tool_count": tools.map(|t| t.len()).unwrap_or(0),
+        },
+        "response": {
+            "parsed": result.map(|r| serde_json::json!({
+                "type": if !r.tool_calls.is_empty() { "tool_calls" } else { "message" },
+                "content": r.content,
+                "tool_calls": r.tool_calls.iter().map(|c| serde_json::json!({
+                    "name": c.name,
+                    "call_id": c.call_id,
+                    "arguments": c.arguments
+                })).collect::<Vec<_>>()
+            })),
+            "raw": raw_response,
+        },
+        "error": error,
+    });
+
+    // Append to log file
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+    {
+        Ok(mut file) => {
+            if let Err(e) = writeln!(file, "{}", serde_json::to_string_pretty(&entry).unwrap_or_default()) {
+                warn!("Failed to write to LLM log file: {}", e);
+            }
+        }
+        Err(e) => {
+            warn!("Failed to open LLM log file {}: {}", log_file, e);
+        }
+    }
+
+    debug!("Logged LLM interaction to {}", log_file);
+}
 
 /// Event emitted during streaming completion
 #[derive(Debug, Clone)]
@@ -345,6 +420,10 @@ impl RigProvider {
         messages: Vec<LlmMessage>,
         tools: Option<Vec<ToolDefinition>>,
     ) -> Result<CompletionResult> {
+        // Keep copies for logging
+        let messages_for_log = messages.clone();
+        let tools_for_log = tools.clone();
+
         // Convert messages to rig format
         let rig_messages = self.convert_messages(messages)?;
 
@@ -378,12 +457,12 @@ impl RigProvider {
         }
 
         // Add tools if provided
-        if let Some(tool_defs) = tools {
+        if let Some(ref tool_defs) = tools_for_log {
             for tool in tool_defs {
                 let rig_tool = RigToolDef {
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: tool.parameters,
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                    parameters: tool.parameters.clone(),
                 };
                 builder = builder.tool(rig_tool);
             }
@@ -391,11 +470,53 @@ impl RigProvider {
 
         // Execute the request
         let request = builder.build();
-        let response = model.completion(request).await
-            .map_err(|e| Error::Provider(format!("Completion error: {}", e)))?;
+        let response = model.completion(request).await;
 
-        // Extract content and tool calls from response
-        self.parse_response(response)
+        match response {
+            Ok(resp) => {
+                // Extract content and tool calls from response
+                let result = self.parse_response(resp)?;
+
+                // For raw response, we serialize what we have (rig deserializes internally)
+                let raw_response = serde_json::to_string(&serde_json::json!({
+                    "content": &result.content,
+                    "tool_calls": result.tool_calls.iter().map(|tc| serde_json::json!({
+                        "call_id": tc.call_id,
+                        "name": tc.name,
+                        "arguments": tc.arguments
+                    })).collect::<Vec<_>>()
+                })).unwrap_or_else(|_| "serialization_error".to_string());
+
+                // Log successful interaction
+                log_llm_interaction(
+                    &self.model,
+                    self.system_prompt.as_deref(),
+                    &messages_for_log,
+                    tools_for_log.as_deref(),
+                    Some(&result),
+                    Some(&raw_response),
+                    None,
+                );
+
+                Ok(result)
+            }
+            Err(e) => {
+                let error_msg = format!("Completion error: {}", e);
+
+                // Log failed interaction
+                log_llm_interaction(
+                    &self.model,
+                    self.system_prompt.as_deref(),
+                    &messages_for_log,
+                    tools_for_log.as_deref(),
+                    None,
+                    None,
+                    Some(&error_msg),
+                );
+
+                Err(Error::Provider(error_msg))
+            }
+        }
     }
 
     /// Convert our LlmMessage format to rig Message format

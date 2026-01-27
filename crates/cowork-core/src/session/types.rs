@@ -373,7 +373,7 @@ impl Default for SessionConfig {
             enable_hooks: None,
             save_session: true,
             session_registry: None,
-            use_rig_provider: false,
+            use_rig_provider: true,  // Use Rig provider by default for streaming support
         }
     }
 }
