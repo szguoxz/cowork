@@ -15,6 +15,13 @@ pub mod catalog;
 pub mod factory;
 mod genai_provider;
 pub mod model_listing;
+pub mod rig_provider;
+
+// Re-export rig provider types for convenience
+pub use rig_provider::{
+    RigAgentConfig, RigAgentError, RigProviderType, ToolContext,
+    create_wrapped_tools, run_rig_agent,
+};
 
 pub use factory::{
     create_provider_from_config, create_provider_from_provider_config, create_provider_with_settings,
