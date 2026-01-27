@@ -369,6 +369,14 @@ impl App {
                     self.status = "Thinking...".to_string();
                 }
             }
+            SessionOutput::TextDelta { delta, .. } => {
+                // Streaming text - append to ephemeral display
+                if let Some(ref mut ephemeral) = self.ephemeral {
+                    ephemeral.push_str(&delta);
+                } else {
+                    self.ephemeral = Some(delta);
+                }
+            }
             SessionOutput::AssistantMessage { content, .. } => {
                 if !content.is_empty() {
                     self.add_message(Message::assistant(content));

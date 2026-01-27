@@ -99,6 +99,13 @@ pub enum SessionOutput {
     UserMessage { id: String, content: String },
     /// Assistant is thinking (streaming indicator)
     Thinking { content: String },
+    /// Streaming text delta from assistant (real-time token output)
+    TextDelta {
+        /// Message ID this delta belongs to
+        id: String,
+        /// The text chunk/token
+        delta: String,
+    },
     /// Assistant message (complete)
     AssistantMessage { id: String, content: String },
     /// Tool execution starting (auto-approved or approved by user)
@@ -187,6 +194,14 @@ impl SessionOutput {
     pub fn thinking(content: impl Into<String>) -> Self {
         Self::Thinking {
             content: content.into(),
+        }
+    }
+
+    /// Create a text delta (streaming token)
+    pub fn text_delta(id: impl Into<String>, delta: impl Into<String>) -> Self {
+        Self::TextDelta {
+            id: id.into(),
+            delta: delta.into(),
         }
     }
 
@@ -338,6 +353,8 @@ pub struct SessionConfig {
     pub save_session: bool,
     /// Shared session registry for routing approvals to subagents
     pub session_registry: Option<SessionRegistry>,
+    /// Use Rig provider instead of GenAI (better streaming/JSON support)
+    pub use_rig_provider: bool,
 }
 
 impl Default for SessionConfig {
@@ -356,6 +373,7 @@ impl Default for SessionConfig {
             enable_hooks: None,
             save_session: true,
             session_registry: None,
+            use_rig_provider: false,
         }
     }
 }
@@ -438,6 +456,12 @@ impl SessionConfig {
     /// Set the shared session registry (for subagent approval routing)
     pub fn with_session_registry(mut self, registry: SessionRegistry) -> Self {
         self.session_registry = Some(registry);
+        self
+    }
+
+    /// Use Rig provider instead of GenAI (better streaming/JSON support)
+    pub fn with_rig_provider(mut self, use_rig: bool) -> Self {
+        self.use_rig_provider = use_rig;
         self
     }
 }

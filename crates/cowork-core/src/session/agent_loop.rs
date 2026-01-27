@@ -24,7 +24,7 @@ use crate::context::{
 use crate::error::Result;
 use crate::orchestration::{ChatMessage, ChatSession, ToolCallInfo, ToolRegistryBuilder};
 use crate::prompt::{ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig};
-use crate::provider::GenAIProvider;
+use crate::provider::{GenAIProvider, ProviderBackend, RigProvider};
 use crate::skills::SkillRegistry;
 use crate::tools::interaction::ASK_QUESTION_TOOL_NAME;
 use crate::tools::planning::PlanModeState;
@@ -103,8 +103,8 @@ pub struct AgentLoop {
     input_rx: mpsc::Receiver<SessionInput>,
     /// Output sender
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
-    /// LLM provider
-    provider: GenAIProvider,
+    /// LLM provider (can be GenAI or Rig backend)
+    provider: ProviderBackend,
     /// Chat session with message history
     session: ChatSession,
     /// Tool registry
@@ -204,20 +204,37 @@ impl AgentLoop {
             debug!("Dispatcher ended for session: {}", sid);
         });
 
-        // Create the provider
-        let provider = match &config.api_key {
-            Some(key) => GenAIProvider::with_api_key(
-                config.provider_type,
-                key,
-                config.model.as_deref(),
-            ),
-            None => GenAIProvider::new(config.provider_type, config.model.as_deref()),
-        };
-
-        // Add system prompt if provided
-        let provider = match &config.system_prompt {
-            Some(prompt) => provider.with_system_prompt(prompt),
-            None => provider,
+        // Create the provider (using Rig or GenAI backend)
+        let provider = if config.use_rig_provider {
+            // Use Rig backend
+            let rig_provider = match &config.api_key {
+                Some(key) => RigProvider::with_api_key(
+                    config.provider_type,
+                    key,
+                    config.model.as_deref(),
+                ),
+                None => RigProvider::new(config.provider_type, config.model.as_deref()),
+            };
+            let rig_provider = match &config.system_prompt {
+                Some(prompt) => rig_provider.with_system_prompt(prompt),
+                None => rig_provider,
+            };
+            ProviderBackend::Rig(rig_provider)
+        } else {
+            // Use GenAI backend (default)
+            let genai_provider = match &config.api_key {
+                Some(key) => GenAIProvider::with_api_key(
+                    config.provider_type,
+                    key,
+                    config.model.as_deref(),
+                ),
+                None => GenAIProvider::new(config.provider_type, config.model.as_deref()),
+            };
+            let genai_provider = match &config.system_prompt {
+                Some(prompt) => genai_provider.with_system_prompt(prompt),
+                None => genai_provider,
+            };
+            ProviderBackend::GenAI(genai_provider)
         };
 
         // Create chat session
@@ -1018,15 +1035,31 @@ impl AgentLoop {
         // Use LLM-powered compaction for better context preservation
         // This is a separate API call, not recursive - Claude Code does this too
         let config = CompactConfig::auto();
-        let result = self
-            .summarizer
-            .compact(
-                &messages,
-                self.context_monitor.counter(),
-                config,
-                Some(&self.provider), // Use LLM for better summaries
-            )
-            .await?;
+
+        // Perform compaction - use LLM for GenAI backend, fallback for Rig
+        let result = match &self.provider {
+            ProviderBackend::GenAI(p) => {
+                self.summarizer
+                    .compact(
+                        &messages,
+                        self.context_monitor.counter(),
+                        config,
+                        Some(p),
+                    )
+                    .await?
+            }
+            ProviderBackend::Rig(_) => {
+                // Rig backend uses fallback non-LLM compaction
+                self.summarizer
+                    .compact::<GenAIProvider>(
+                        &messages,
+                        self.context_monitor.counter(),
+                        config,
+                        None,
+                    )
+                    .await?
+            }
+        };
 
         info!(
             "Compaction complete: {} -> {} tokens ({} messages summarized)",

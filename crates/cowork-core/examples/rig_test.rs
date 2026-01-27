@@ -5,104 +5,117 @@
 //!
 //! Or with OpenAI:
 //! OPENAI_API_KEY="your-key" cargo run -p cowork-core --example rig_test -- --provider openai
+//!
+//! Add --stream flag to test streaming:
+//! DEEPSEEK_API_KEY="your-key" cargo run -p cowork-core --example rig_test -- --stream
 
-use std::sync::Arc;
-
-use cowork_core::approval::{ApprovalLevel, ToolApprovalConfig};
-use cowork_core::provider::rig_provider::{
-    RigAgentConfig, RigProviderType, ToolContext, run_rig_agent,
-};
-use cowork_core::session::SessionOutput;
-use cowork_core::tools::filesystem::{GlobFiles, GrepFiles, ReadFile};
-use cowork_core::tools::Tool;
-use tokio::sync::mpsc;
-
-const SYSTEM_PROMPT: &str = r#"You are a helpful AI assistant. You have access to tools for reading files. Be concise in your responses."#;
+use cowork_core::provider::{LlmMessage, ProviderType, RigProvider, StreamEvent};
+use cowork_core::tools::ToolDefinition;
+use futures::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     // Parse args for provider selection
     let args: Vec<String> = std::env::args().collect();
-    let provider = if args.iter().any(|a| a == "--provider") {
+    let provider_type = if args.iter().any(|a| a == "--provider") {
         let idx = args.iter().position(|a| a == "--provider").unwrap();
         match args.get(idx + 1).map(|s| s.as_str()) {
-            Some("openai") => RigProviderType::OpenAI,
-            Some("anthropic") => RigProviderType::Anthropic,
-            Some("deepseek") | None => RigProviderType::DeepSeek,
+            Some("openai") => ProviderType::OpenAI,
+            Some("anthropic") => ProviderType::Anthropic,
+            Some("deepseek") | None => ProviderType::DeepSeek,
             Some(other) => {
                 eprintln!("Unknown provider: {}. Using DeepSeek.", other);
-                RigProviderType::DeepSeek
+                ProviderType::DeepSeek
             }
         }
     } else {
-        RigProviderType::DeepSeek
+        ProviderType::DeepSeek
     };
 
     println!("=== Rig Provider Test ===");
-    println!("Provider: {:?}", provider);
+    println!("Provider: {:?}", provider_type);
     println!();
 
-    // Create channels for tool context
-    let (output_tx, mut output_rx) = mpsc::channel::<SessionOutput>(100);
-    let (_input_tx, input_rx) = mpsc::channel(100);
+    // Create the provider
+    let provider = RigProvider::new(provider_type, None)
+        .with_system_prompt("You are a helpful assistant. Be concise.");
 
-    // Create tool context
-    let workspace = std::env::current_dir()?;
-    let approval_config = ToolApprovalConfig::new(ApprovalLevel::None); // Auto-approve all
-    let context = ToolContext::new(output_tx, input_rx, approval_config, workspace.clone());
+    // Test simple chat
+    let messages = vec![LlmMessage::user("What is 2 + 2? Reply with just the number.")];
 
-    // Create tools
-    let tools: Vec<Arc<dyn Tool>> = vec![
-        Arc::new(ReadFile::new(workspace.clone())),
-        Arc::new(GlobFiles::new(workspace.clone())),
-        Arc::new(GrepFiles::new(workspace)),
-    ];
+    println!("Testing simple chat...");
+    let result = provider.chat(messages.clone(), None).await?;
+    println!("Response: {:?}", result.content);
+    println!();
 
-    // Spawn a task to print tool events
-    tokio::spawn(async move {
-        while let Some(output) = output_rx.recv().await {
-            match output {
-                SessionOutput::ToolStart { name, .. } => {
-                    println!("[Tool Start] {}", name);
+    // Test with a tool definition
+    let tool = ToolDefinition {
+        name: "get_weather".to_string(),
+        description: "Get the current weather for a location".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "The city and state, e.g. San Francisco, CA"
                 }
-                SessionOutput::ToolDone { name, success, .. } => {
-                    println!("[Tool Done] {} - success: {}", name, success);
-                }
-                SessionOutput::ToolResult { name, summary, .. } => {
-                    println!("[Tool Result] {} - {}", name, summary);
-                }
-                _ => {}
-            }
-        }
-    });
-
-    // Configure agent
-    let config = RigAgentConfig {
-        provider,
-        api_key: None, // Use environment variable
-        model: None,   // Use default model
-        system_prompt: Some(SYSTEM_PROMPT.to_string()),
-        max_iterations: 10,
+            },
+            "required": ["location"]
+        }),
     };
 
-    // Test prompt
-    let prompt = "List the files in the current directory using the Glob tool with pattern '*'. Then tell me how many files you found.";
-    println!("Prompt: {}", prompt);
-    println!();
+    let messages_with_tool = vec![LlmMessage::user("What's the weather in San Francisco?")];
 
-    // Run the agent
-    match run_rig_agent(config, tools, context, prompt).await {
-        Ok(result) => {
-            println!("\n=== Result ===");
-            println!("{}", result);
-        }
-        Err(e) => {
-            eprintln!("\n=== Error ===");
-            eprintln!("{}", e);
-            return Err(e.into());
+    println!("Testing chat with tools...");
+    let result = provider
+        .chat(messages_with_tool, Some(vec![tool]))
+        .await?;
+
+    if let Some(content) = result.content {
+        println!("Text response: {}", content);
+    }
+    if !result.tool_calls.is_empty() {
+        println!("Tool calls:");
+        for tc in &result.tool_calls {
+            println!("  - {} (id: {})", tc.name, tc.call_id);
+            println!("    args: {}", tc.arguments);
         }
     }
+
+    // Test streaming if requested
+    if args.iter().any(|a| a == "--stream") {
+        println!();
+        println!("Testing streaming chat...");
+        let stream_messages = vec![LlmMessage::user("Count from 1 to 5, one number per line.")];
+
+        let mut stream = provider.chat_stream(stream_messages, None).await?;
+        print!("Streaming response: ");
+        while let Some(event) = stream.next().await {
+            match event {
+                StreamEvent::TextDelta(text) => {
+                    print!("{}", text);
+                    use std::io::Write;
+                    std::io::stdout().flush().ok();
+                }
+                StreamEvent::ToolCall(tc) => {
+                    println!("\n[Tool call: {} ({})]", tc.name, tc.call_id);
+                }
+                StreamEvent::Reasoning(r) => {
+                    println!("\n[Reasoning: {}]", r);
+                }
+                StreamEvent::Done(result) => {
+                    println!("\n[Done: {:?}]", result);
+                }
+                StreamEvent::Error(e) => {
+                    println!("\n[Error: {}]", e);
+                }
+            }
+        }
+        println!();
+    }
+
+    println!();
+    println!("=== Test Complete ===");
 
     Ok(())
 }

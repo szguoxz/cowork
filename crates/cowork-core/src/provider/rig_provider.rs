@@ -1,489 +1,562 @@
 //! Rig-based LLM provider implementation
 //!
-//! This module provides LLM integration using the rig-core crate,
-//! which handles the agentic loop automatically.
-//!
-//! Key design:
-//! - Tools implement rig's Tool trait
-//! - Approval logic happens inside Tool::call
-//! - Event emission (ToolStart, ToolDone) happens inside Tool::call
-//! - ToolContext provides channels for communication with frontend
+//! Uses rig-core for LLM API calls with proper JSON parsing and streaming support.
+//! This provider has the same interface as GenAIProvider but uses rig under the hood.
 
-use std::path::PathBuf;
+use futures::{Stream, StreamExt};
+use rig::prelude::*;
+use rig::completion::{CompletionRequestBuilder, ToolDefinition as RigToolDef};
+use rig::message::{AssistantContent, Message, Text, ToolCall as RigToolCall, ToolFunction, ToolResult, ToolResultContent, UserContent};
+use rig::streaming::StreamedAssistantContent;
 use std::pin::Pin;
-use std::sync::Arc;
-use std::future::Future;
 
-use rig::completion::ToolDefinition;
-use rig::tool::{ToolDyn, ToolError as RigToolError, ToolSet};
-use serde_json::Value;
-use tokio::sync::mpsc;
+use crate::error::{Error, Result};
+use crate::tools::ToolDefinition;
+use super::{ContentBlock, LlmMessage, MessageContent};
+use super::genai_provider::{CompletionResult, PendingToolCall, ProviderType};
 
-use crate::approval::ToolApprovalConfig;
-use crate::formatting::{format_tool_call, format_tool_result_summary};
-// Re-exported from session/mod.rs
-pub use crate::session::{SessionInput, SessionOutput};
-use crate::tools::Tool as CoworkTool;
-
-// Type alias for boxed futures (rig uses this for WASM compat)
-type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-/// Context passed to tools for event emission and approval
-#[derive(Clone)]
-pub struct ToolContext {
-    /// Channel to send events to the frontend
-    output_tx: mpsc::Sender<SessionOutput>,
-    /// Channel to receive input from the frontend (for approvals)
-    input_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<SessionInput>>>,
-    /// Approval configuration
-    approval_config: ToolApprovalConfig,
-    /// Workspace path
-    pub workspace: PathBuf,
+/// Event emitted during streaming completion
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    /// Text chunk/token from the assistant
+    TextDelta(String),
+    /// Tool call is complete (with id, name, and arguments)
+    ToolCall(PendingToolCall),
+    /// Reasoning content (for models that support it)
+    Reasoning(String),
+    /// Stream has completed with final result
+    Done(CompletionResult),
+    /// Error occurred during streaming
+    Error(String),
 }
 
-impl ToolContext {
-    pub fn new(
-        output_tx: mpsc::Sender<SessionOutput>,
-        input_rx: mpsc::Receiver<SessionInput>,
-        approval_config: ToolApprovalConfig,
-        workspace: PathBuf,
-    ) -> Self {
+/// Type alias for a boxed stream of StreamEvents
+pub type StreamEventStream = Pin<Box<dyn Stream<Item = StreamEvent> + Send>>;
+
+/// Rig-based LLM provider
+///
+/// Uses rig-core for API calls, providing better JSON parsing reliability
+/// than genai, especially for streaming responses.
+pub struct RigProvider {
+    provider_type: ProviderType,
+    model: String,
+    system_prompt: Option<String>,
+    api_key: Option<String>,
+}
+
+impl RigProvider {
+    /// Create a new provider with default settings (uses environment variables for auth)
+    pub fn new(provider_type: ProviderType, model: Option<&str>) -> Self {
         Self {
-            output_tx,
-            input_rx: Arc::new(tokio::sync::Mutex::new(input_rx)),
-            approval_config,
-            workspace,
-        }
-    }
-
-    /// Emit an event to the frontend
-    pub async fn emit(&self, output: SessionOutput) {
-        let _ = self.output_tx.send(output).await;
-    }
-
-    /// Check if a tool should be auto-approved based on config
-    pub fn should_auto_approve(&self, tool_name: &str, args: &Value) -> bool {
-        self.approval_config.should_auto_approve_with_args(tool_name, args)
-    }
-
-    /// Wait for approval of a tool call
-    /// Returns true if approved, false if rejected
-    pub async fn wait_for_approval(&self, tool_call_id: &str) -> bool {
-        let mut rx: tokio::sync::MutexGuard<'_, mpsc::Receiver<SessionInput>> =
-            self.input_rx.lock().await;
-        while let Some(input) = rx.recv().await {
-            match input {
-                SessionInput::ApproveTool { tool_call_id: id } if id == tool_call_id => {
-                    return true;
-                }
-                SessionInput::RejectTool { tool_call_id: id, .. } if id == tool_call_id => {
-                    return false;
-                }
-                _ => continue, // Ignore other inputs
-            }
-        }
-        false // Channel closed = rejection
-    }
-}
-
-/// Wrapper that adapts a Cowork tool to rig's ToolDyn trait
-pub struct RigToolWrapper {
-    /// The underlying Cowork tool
-    tool: Arc<dyn CoworkTool>,
-    /// Context for event emission and approval
-    context: ToolContext,
-    /// Cached tool name (for ToolDyn::name)
-    name: String,
-}
-
-impl RigToolWrapper {
-    pub fn new(tool: Arc<dyn CoworkTool>, context: ToolContext) -> Self {
-        let name = tool.name().to_string();
-        Self { tool, context, name }
-    }
-}
-
-// Implement ToolDyn directly for dynamic dispatch
-impl ToolDyn for RigToolWrapper {
-    fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    fn definition<'a>(&'a self, _prompt: String) -> BoxFuture<'a, ToolDefinition> {
-        Box::pin(async move {
-            ToolDefinition {
-                name: self.tool.name().to_string(),
-                description: self.tool.description().to_string(),
-                parameters: self.tool.parameters_schema(),
-            }
-        })
-    }
-
-    fn call<'a>(&'a self, args_str: String) -> BoxFuture<'a, Result<String, RigToolError>> {
-        Box::pin(async move {
-            // Parse args from JSON string
-            let args: Value = serde_json::from_str(&args_str)
-                .map_err(RigToolError::JsonError)?;
-
-            let tool_call_id = uuid::Uuid::new_v4().to_string();
-            let tool_name = self.tool.name();
-            let formatted = format_tool_call(tool_name, &args);
-
-            // Check if we need approval
-            let needs_approval = !self.context.should_auto_approve(tool_name, &args);
-
-            if needs_approval {
-                // Emit pending event and wait for approval
-                self.context
-                    .emit(SessionOutput::tool_pending(
-                        &tool_call_id,
-                        tool_name,
-                        args.clone(),
-                        Some(formatted.clone()),
-                    ))
-                    .await;
-
-                if !self.context.wait_for_approval(&tool_call_id).await {
-                    return Err(RigToolError::ToolCallError(
-                        Box::new(std::io::Error::new(
-                            std::io::ErrorKind::PermissionDenied,
-                            "Tool rejected by user",
-                        ))
-                    ));
-                }
-            }
-
-            // Emit tool start
-            self.context
-                .emit(SessionOutput::tool_start(&tool_call_id, tool_name, args.clone()))
-                .await;
-
-            // Clone args for later use (execute takes ownership)
-            let args_for_summary = args.clone();
-
-            self.context
-                .emit(SessionOutput::tool_call(
-                    &tool_call_id,
-                    tool_name,
-                    args.clone(),
-                    formatted,
-                ))
-                .await;
-
-            // Execute the tool
-            let result = self.tool.execute(args).await;
-
-            match result {
-                Ok(output) => {
-                    let output_str = output.content.to_string();
-                    let (summary, diff) = format_tool_result_summary(
-                        tool_name,
-                        output.success,
-                        &output_str,
-                        &args_for_summary,
-                    );
-
-                    // Emit tool done and result
-                    self.context
-                        .emit(SessionOutput::tool_done(
-                            &tool_call_id,
-                            tool_name,
-                            output.success,
-                            &output_str,
-                        ))
-                        .await;
-
-                    self.context
-                        .emit(SessionOutput::tool_result(
-                            &tool_call_id,
-                            tool_name,
-                            output.success,
-                            &output_str,
-                            summary,
-                            diff,
-                        ))
-                        .await;
-
-                    Ok(output_str)
-                }
-                Err(e) => {
-                    let error_msg = format!("Error: {}", e);
-
-                    self.context
-                        .emit(SessionOutput::tool_done(&tool_call_id, tool_name, false, &error_msg))
-                        .await;
-
-                    Err(RigToolError::ToolCallError(Box::new(e)))
-                }
-            }
-        })
-    }
-}
-
-/// Create a ToolSet from our Cowork tools
-pub fn create_toolset(tools: Vec<Arc<dyn CoworkTool>>, context: ToolContext) -> ToolSet {
-    let wrapped: Vec<Box<dyn ToolDyn>> = tools
-        .into_iter()
-        .map(|tool| {
-            Box::new(RigToolWrapper::new(tool, context.clone())) as Box<dyn ToolDyn>
-        })
-        .collect();
-
-    ToolSet::from_tools_boxed(wrapped)
-}
-
-/// Provider type for rig
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RigProviderType {
-    DeepSeek,
-    OpenAI,
-    Anthropic,
-}
-
-impl RigProviderType {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "deepseek" => Some(Self::DeepSeek),
-            "openai" => Some(Self::OpenAI),
-            "anthropic" => Some(Self::Anthropic),
-            _ => None,
-        }
-    }
-}
-
-/// Create wrapped tools as Vec<Box<dyn ToolDyn>> for use with rig's agent builder
-pub fn create_wrapped_tools(
-    tools: Vec<Arc<dyn CoworkTool>>,
-    context: ToolContext,
-) -> Vec<Box<dyn ToolDyn>> {
-    tools
-        .into_iter()
-        .map(|tool| {
-            Box::new(RigToolWrapper::new(tool, context.clone())) as Box<dyn ToolDyn>
-        })
-        .collect()
-}
-
-/// Configuration for the rig agent
-pub struct RigAgentConfig {
-    pub provider: RigProviderType,
-    pub api_key: Option<String>,
-    pub model: Option<String>,
-    pub system_prompt: Option<String>,
-    pub max_iterations: usize,
-}
-
-impl Default for RigAgentConfig {
-    fn default() -> Self {
-        Self {
-            provider: RigProviderType::DeepSeek,
-            api_key: None,
-            model: None,
+            provider_type,
+            model: model.unwrap_or(provider_type.default_model()).to_string(),
             system_prompt: None,
-            max_iterations: 100,
+            api_key: None,
         }
     }
-}
 
-/// Run a single prompt through the rig agent and return the result
-///
-/// This function creates an agent with the given tools, sends the prompt,
-/// and handles the multi-turn agentic loop via rig's `.multi_turn()`.
-///
-/// Tool approval and event emission are handled inside `RigToolWrapper::call()`.
-pub async fn run_rig_agent(
-    config: RigAgentConfig,
-    tools: Vec<Arc<dyn CoworkTool>>,
-    context: ToolContext,
-    prompt: &str,
-) -> Result<String, RigAgentError> {
-    // Wrap Cowork tools for rig
-    let wrapped_tools = create_wrapped_tools(tools, context);
-
-    match config.provider {
-        RigProviderType::DeepSeek => {
-            run_deepseek_agent(config, wrapped_tools, prompt).await
-        }
-        RigProviderType::OpenAI => {
-            run_openai_agent(config, wrapped_tools, prompt).await
-        }
-        RigProviderType::Anthropic => {
-            run_anthropic_agent(config, wrapped_tools, prompt).await
+    /// Create a provider with a specific API key
+    pub fn with_api_key(provider_type: ProviderType, api_key: &str, model: Option<&str>) -> Self {
+        Self {
+            provider_type,
+            model: model.unwrap_or(provider_type.default_model()).to_string(),
+            system_prompt: None,
+            api_key: Some(api_key.to_string()),
         }
     }
-}
 
-/// Errors that can occur when running a rig agent
-#[derive(Debug, thiserror::Error)]
-pub enum RigAgentError {
-    #[error("API key not provided and not found in environment")]
-    MissingApiKey,
-    #[error("Completion error: {0}")]
-    CompletionError(String),
-    #[error("Provider error: {0}")]
-    ProviderError(String),
-}
-
-async fn run_deepseek_agent(
-    config: RigAgentConfig,
-    wrapped_tools: Vec<Box<dyn ToolDyn>>,
-    prompt: &str,
-) -> Result<String, RigAgentError> {
-    use rig::prelude::*;
-    use rig::completion::Prompt;
-    use rig::providers::deepseek;
-
-    // Create DeepSeek client - from_env() panics if not set, so check first
-    let client = if let Some(ref api_key) = config.api_key {
-        deepseek::Client::new(api_key)
-            .map_err(|e| RigAgentError::ProviderError(e.to_string()))?
-    } else {
-        if std::env::var("DEEPSEEK_API_KEY").is_err() {
-            return Err(RigAgentError::MissingApiKey);
-        }
-        deepseek::Client::from_env()
-    };
-
-    // Get model (default to deepseek-chat)
-    let model_name = config.model.as_deref().unwrap_or(deepseek::DEEPSEEK_CHAT);
-
-    // Build agent using client.agent() pattern (simpler API)
-    let agent_builder = client
-        .agent(model_name)
-        .max_tokens(8192); // DeepSeek max output
-
-    let agent_builder = if let Some(ref system_prompt) = config.system_prompt {
-        agent_builder.preamble(system_prompt)
-    } else {
-        agent_builder
-    };
-
-    // Add tools if we have any and run
-    if wrapped_tools.is_empty() {
-        let agent = agent_builder.build();
-        let result = agent
-            .prompt(prompt)
-            .multi_turn(config.max_iterations)
-            .await
-            .map_err(|e| RigAgentError::CompletionError(e.to_string()))?;
-        Ok(result)
-    } else {
-        let agent = agent_builder.tools(wrapped_tools).build();
-        let result = agent
-            .prompt(prompt)
-            .multi_turn(config.max_iterations)
-            .await
-            .map_err(|e| RigAgentError::CompletionError(e.to_string()))?;
-        Ok(result)
+    /// Set the system prompt
+    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.system_prompt = Some(prompt.into());
+        self
     }
-}
 
-async fn run_openai_agent(
-    config: RigAgentConfig,
-    wrapped_tools: Vec<Box<dyn ToolDyn>>,
-    prompt: &str,
-) -> Result<String, RigAgentError> {
-    use rig::prelude::*;
-    use rig::completion::Prompt;
-    use rig::providers::openai;
-
-    // Create OpenAI client
-    let client = if let Some(ref api_key) = config.api_key {
-        openai::Client::new(api_key)
-            .map_err(|e| RigAgentError::ProviderError(e.to_string()))?
-    } else {
-        if std::env::var("OPENAI_API_KEY").is_err() {
-            return Err(RigAgentError::MissingApiKey);
-        }
-        openai::Client::from_env()
-    };
-
-    // Get model (default to gpt-4o)
-    let model_name = config.model.as_deref().unwrap_or(openai::GPT_4O);
-
-    // Build agent using client.agent() pattern
-    let agent_builder = client
-        .agent(model_name)
-        .max_tokens(4096);
-
-    let agent_builder = if let Some(ref system_prompt) = config.system_prompt {
-        agent_builder.preamble(system_prompt)
-    } else {
-        agent_builder
-    };
-
-    if wrapped_tools.is_empty() {
-        let agent = agent_builder.build();
-        let result = agent
-            .prompt(prompt)
-            .multi_turn(config.max_iterations)
-            .await
-            .map_err(|e| RigAgentError::CompletionError(e.to_string()))?;
-        Ok(result)
-    } else {
-        let agent = agent_builder.tools(wrapped_tools).build();
-        let result = agent
-            .prompt(prompt)
-            .multi_turn(config.max_iterations)
-            .await
-            .map_err(|e| RigAgentError::CompletionError(e.to_string()))?;
-        Ok(result)
+    /// Get the provider type
+    pub fn provider_type(&self) -> ProviderType {
+        self.provider_type
     }
-}
 
-async fn run_anthropic_agent(
-    config: RigAgentConfig,
-    wrapped_tools: Vec<Box<dyn ToolDyn>>,
-    prompt: &str,
-) -> Result<String, RigAgentError> {
-    use rig::prelude::*;
-    use rig::completion::Prompt;
-    use rig::providers::anthropic;
+    /// Get the model name
+    pub fn model(&self) -> &str {
+        &self.model
+    }
 
-    // Create Anthropic client
-    let client = if let Some(ref api_key) = config.api_key {
-        anthropic::Client::new(api_key)
-            .map_err(|e| RigAgentError::ProviderError(e.to_string()))?
-    } else {
-        if std::env::var("ANTHROPIC_API_KEY").is_err() {
-            return Err(RigAgentError::MissingApiKey);
+    /// Execute a chat completion and return either a message or tool calls
+    pub async fn chat(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<CompletionResult> {
+        match self.provider_type {
+            ProviderType::DeepSeek => self.chat_deepseek(messages, tools).await,
+            ProviderType::OpenAI => self.chat_openai(messages, tools).await,
+            ProviderType::Anthropic => self.chat_anthropic(messages, tools).await,
+            _ => Err(Error::Provider(format!(
+                "Provider {:?} not yet supported by rig provider",
+                self.provider_type
+            ))),
         }
-        anthropic::Client::from_env()
-    };
+    }
 
-    // Get model (default to claude-3-5-sonnet)
-    let model_name = config
-        .model
-        .as_deref()
-        .unwrap_or(anthropic::completion::CLAUDE_3_5_SONNET);
+    /// Execute a streaming chat completion
+    ///
+    /// Returns a stream of `StreamEvent` that yields text deltas as they arrive,
+    /// followed by any tool calls, and finally a `Done` event with the complete result.
+    pub async fn chat_stream(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<StreamEventStream> {
+        match self.provider_type {
+            ProviderType::DeepSeek => self.stream_deepseek(messages, tools).await,
+            ProviderType::OpenAI => self.stream_openai(messages, tools).await,
+            ProviderType::Anthropic => self.stream_anthropic(messages, tools).await,
+            _ => Err(Error::Provider(format!(
+                "Provider {:?} not yet supported by rig provider for streaming",
+                self.provider_type
+            ))),
+        }
+    }
 
-    // Build agent using client.agent() pattern
-    let agent_builder = client
-        .agent(model_name)
-        .max_tokens(8192);
+    /// Chat with DeepSeek
+    async fn chat_deepseek(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<CompletionResult> {
+        use rig::providers::deepseek;
 
-    let agent_builder = if let Some(ref system_prompt) = config.system_prompt {
-        agent_builder.preamble(system_prompt)
-    } else {
-        agent_builder
-    };
+        let client = if let Some(ref api_key) = self.api_key {
+            deepseek::Client::new(api_key)
+                .map_err(|e| Error::Provider(format!("Failed to create DeepSeek client: {}", e)))?
+        } else {
+            if std::env::var("DEEPSEEK_API_KEY").is_err() {
+                return Err(Error::Provider("DEEPSEEK_API_KEY not set".to_string()));
+            }
+            deepseek::Client::from_env()
+        };
 
-    if wrapped_tools.is_empty() {
-        let agent = agent_builder.build();
-        let result = agent
-            .prompt(prompt)
-            .multi_turn(config.max_iterations)
-            .await
-            .map_err(|e| RigAgentError::CompletionError(e.to_string()))?;
-        Ok(result)
-    } else {
-        let agent = agent_builder.tools(wrapped_tools).build();
-        let result = agent
-            .prompt(prompt)
-            .multi_turn(config.max_iterations)
-            .await
-            .map_err(|e| RigAgentError::CompletionError(e.to_string()))?;
-        Ok(result)
+        let model = client.completion_model(&self.model);
+        self.execute_completion(model, messages, tools).await
+    }
+
+    /// Chat with OpenAI
+    async fn chat_openai(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<CompletionResult> {
+        use rig::providers::openai;
+
+        let client = if let Some(ref api_key) = self.api_key {
+            openai::Client::new(api_key)
+                .map_err(|e| Error::Provider(format!("Failed to create OpenAI client: {}", e)))?
+        } else {
+            if std::env::var("OPENAI_API_KEY").is_err() {
+                return Err(Error::Provider("OPENAI_API_KEY not set".to_string()));
+            }
+            openai::Client::from_env()
+        };
+
+        let model = client.completion_model(&self.model);
+        self.execute_completion(model, messages, tools).await
+    }
+
+    /// Chat with Anthropic
+    async fn chat_anthropic(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<CompletionResult> {
+        use rig::providers::anthropic;
+
+        let client = if let Some(ref api_key) = self.api_key {
+            anthropic::Client::new(api_key)
+                .map_err(|e| Error::Provider(format!("Failed to create Anthropic client: {}", e)))?
+        } else {
+            if std::env::var("ANTHROPIC_API_KEY").is_err() {
+                return Err(Error::Provider("ANTHROPIC_API_KEY not set".to_string()));
+            }
+            anthropic::Client::from_env()
+        };
+
+        let model = client.completion_model(&self.model);
+        self.execute_completion(model, messages, tools).await
+    }
+
+    /// Stream with DeepSeek
+    async fn stream_deepseek(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<StreamEventStream> {
+        use rig::providers::deepseek;
+
+        let client = if let Some(ref api_key) = self.api_key {
+            deepseek::Client::new(api_key)
+                .map_err(|e| Error::Provider(format!("Failed to create DeepSeek client: {}", e)))?
+        } else {
+            if std::env::var("DEEPSEEK_API_KEY").is_err() {
+                return Err(Error::Provider("DEEPSEEK_API_KEY not set".to_string()));
+            }
+            deepseek::Client::from_env()
+        };
+
+        let model = client.completion_model(&self.model);
+        self.execute_stream(model, messages, tools).await
+    }
+
+    /// Stream with OpenAI
+    async fn stream_openai(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<StreamEventStream> {
+        use rig::providers::openai;
+
+        let client = if let Some(ref api_key) = self.api_key {
+            openai::Client::new(api_key)
+                .map_err(|e| Error::Provider(format!("Failed to create OpenAI client: {}", e)))?
+        } else {
+            if std::env::var("OPENAI_API_KEY").is_err() {
+                return Err(Error::Provider("OPENAI_API_KEY not set".to_string()));
+            }
+            openai::Client::from_env()
+        };
+
+        let model = client.completion_model(&self.model);
+        self.execute_stream(model, messages, tools).await
+    }
+
+    /// Stream with Anthropic
+    async fn stream_anthropic(
+        &self,
+        messages: Vec<LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<StreamEventStream> {
+        use rig::providers::anthropic;
+
+        let client = if let Some(ref api_key) = self.api_key {
+            anthropic::Client::new(api_key)
+                .map_err(|e| Error::Provider(format!("Failed to create Anthropic client: {}", e)))?
+        } else {
+            if std::env::var("ANTHROPIC_API_KEY").is_err() {
+                return Err(Error::Provider("ANTHROPIC_API_KEY not set".to_string()));
+            }
+            anthropic::Client::from_env()
+        };
+
+        let model = client.completion_model(&self.model);
+        self.execute_stream(model, messages, tools).await
+    }
+
+    /// Execute streaming completion with a rig model
+    async fn execute_stream<M>(
+        &self,
+        model: M,
+        messages: Vec<LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<StreamEventStream>
+    where
+        M: rig::completion::CompletionModel,
+        M::StreamingResponse: 'static,
+    {
+        // Convert messages to rig format
+        let rig_messages = self.convert_messages(messages)?;
+
+        // The last message should be the prompt, previous messages are history
+        if rig_messages.is_empty() {
+            return Err(Error::Provider("No messages provided".to_string()));
+        }
+
+        let (history, prompt) = if rig_messages.len() == 1 {
+            (Vec::new(), rig_messages.into_iter().next().unwrap())
+        } else {
+            let mut msgs = rig_messages;
+            let prompt = msgs.pop().unwrap();
+            (msgs, prompt)
+        };
+
+        // Build the request
+        let mut builder: CompletionRequestBuilder<M> = model.completion_request(prompt);
+
+        if let Some(ref system) = self.system_prompt {
+            builder = builder.preamble(system.clone());
+        }
+
+        builder = builder.max_tokens(8192);
+
+        for msg in history {
+            builder = builder.message(msg);
+        }
+
+        if let Some(tool_defs) = tools {
+            for tool in tool_defs {
+                let rig_tool = RigToolDef {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters,
+                };
+                builder = builder.tool(rig_tool);
+            }
+        }
+
+        // Execute streaming request
+        let request = builder.build();
+        let stream_response = model.stream(request).await
+            .map_err(|e| Error::Provider(format!("Stream error: {}", e)))?;
+
+        // Transform rig's streaming response into our StreamEvent stream
+        let event_stream = stream_response.map(|result| {
+            match result {
+                Ok(content) => match content {
+                    StreamedAssistantContent::Text(text) => StreamEvent::TextDelta(text.text),
+                    StreamedAssistantContent::ToolCall(tc) => StreamEvent::ToolCall(PendingToolCall {
+                        call_id: tc.id,
+                        name: tc.function.name,
+                        arguments: tc.function.arguments,
+                    }),
+                    StreamedAssistantContent::ToolCallDelta { .. } => {
+                        // Ignore deltas - we'll get the full tool call
+                        StreamEvent::TextDelta(String::new())
+                    }
+                    StreamedAssistantContent::Reasoning(reasoning) => {
+                        StreamEvent::Reasoning(reasoning.reasoning.join(""))
+                    }
+                    StreamedAssistantContent::ReasoningDelta { reasoning, .. } => {
+                        StreamEvent::Reasoning(reasoning)
+                    }
+                    StreamedAssistantContent::Final(_) => {
+                        // Final response - we'll construct Done event from accumulated state
+                        StreamEvent::TextDelta(String::new())
+                    }
+                },
+                Err(e) => StreamEvent::Error(e.to_string()),
+            }
+        });
+
+        Ok(Box::pin(event_stream))
+    }
+
+    /// Execute completion with a rig model
+    async fn execute_completion<M: rig::completion::CompletionModel>(
+        &self,
+        model: M,
+        messages: Vec<LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<CompletionResult> {
+        // Convert messages to rig format
+        let rig_messages = self.convert_messages(messages)?;
+
+        // The last message should be the prompt, previous messages are history
+        if rig_messages.is_empty() {
+            return Err(Error::Provider("No messages provided".to_string()));
+        }
+
+        let (history, prompt) = if rig_messages.len() == 1 {
+            (Vec::new(), rig_messages.into_iter().next().unwrap())
+        } else {
+            let mut msgs = rig_messages;
+            let prompt = msgs.pop().unwrap();
+            (msgs, prompt)
+        };
+
+        // Build the request starting with the prompt
+        let mut builder: CompletionRequestBuilder<M> = model.completion_request(prompt);
+
+        // Add system prompt
+        if let Some(ref system) = self.system_prompt {
+            builder = builder.preamble(system.clone());
+        }
+
+        // Set max tokens
+        builder = builder.max_tokens(8192);
+
+        // Add chat history
+        for msg in history {
+            builder = builder.message(msg);
+        }
+
+        // Add tools if provided
+        if let Some(tool_defs) = tools {
+            for tool in tool_defs {
+                let rig_tool = RigToolDef {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters,
+                };
+                builder = builder.tool(rig_tool);
+            }
+        }
+
+        // Execute the request
+        let request = builder.build();
+        let response = model.completion(request).await
+            .map_err(|e| Error::Provider(format!("Completion error: {}", e)))?;
+
+        // Extract content and tool calls from response
+        self.parse_response(response)
+    }
+
+    /// Convert our LlmMessage format to rig Message format
+    fn convert_messages(&self, messages: Vec<LlmMessage>) -> Result<Vec<Message>> {
+        let mut rig_messages = Vec::new();
+
+        for msg in messages {
+            match msg.role.as_str() {
+                "user" => {
+                    let content = self.convert_user_content(&msg)?;
+                    rig_messages.push(Message::User { content });
+                }
+                "assistant" => {
+                    let content = self.convert_assistant_content(&msg)?;
+                    rig_messages.push(Message::Assistant { id: None, content });
+                }
+                "system" => {
+                    // System messages are handled via preamble, skip
+                }
+                _ => {
+                    // Unknown role, treat as user
+                    let text = msg.content_as_text();
+                    rig_messages.push(Message::User {
+                        content: rig::OneOrMany::one(UserContent::Text(Text { text })),
+                    });
+                }
+            }
+        }
+
+        Ok(rig_messages)
+    }
+
+    /// Convert user message content to rig format
+    fn convert_user_content(&self, msg: &LlmMessage) -> Result<rig::OneOrMany<UserContent>> {
+        match &msg.content {
+            MessageContent::Text(text) => {
+                Ok(rig::OneOrMany::one(UserContent::Text(Text { text: text.clone() })))
+            }
+            MessageContent::Blocks(blocks) => {
+                let mut contents = Vec::new();
+                for block in blocks {
+                    match block {
+                        ContentBlock::Text { text } => {
+                            contents.push(UserContent::Text(Text { text: text.clone() }));
+                        }
+                        ContentBlock::ToolResult { tool_use_id, content, is_error: _ } => {
+                            contents.push(UserContent::ToolResult(ToolResult {
+                                id: tool_use_id.clone(),
+                                call_id: None,
+                                content: rig::OneOrMany::one(ToolResultContent::Text(Text { text: content.clone() })),
+                            }));
+                        }
+                        ContentBlock::ToolUse { .. } => {
+                            // Tool use in user message is unusual, skip
+                        }
+                    }
+                }
+                if contents.is_empty() {
+                    Ok(rig::OneOrMany::one(UserContent::Text(Text { text: String::new() })))
+                } else if contents.len() == 1 {
+                    Ok(rig::OneOrMany::one(contents.remove(0)))
+                } else {
+                    Ok(rig::OneOrMany::many(contents).unwrap())
+                }
+            }
+        }
+    }
+
+    /// Convert assistant message content to rig format
+    fn convert_assistant_content(&self, msg: &LlmMessage) -> Result<rig::OneOrMany<AssistantContent>> {
+        let mut contents = Vec::new();
+
+        // Extract text content
+        let text = msg.content_as_text();
+        if !text.is_empty() {
+            contents.push(AssistantContent::Text(Text { text }));
+        }
+
+        // Extract tool calls
+        if let Some(tool_calls) = &msg.tool_calls {
+            for tc in tool_calls {
+                contents.push(AssistantContent::ToolCall(RigToolCall::new(
+                    tc.id.clone(),
+                    ToolFunction::new(tc.name.clone(), tc.arguments.clone()),
+                )));
+            }
+        }
+
+        // Also check content blocks for tool calls
+        if let MessageContent::Blocks(blocks) = &msg.content {
+            for block in blocks {
+                if let ContentBlock::ToolUse { id, name, input } = block {
+                    // Avoid duplicates if already added from tool_calls field
+                    let already_added = contents.iter().any(|c| {
+                        if let AssistantContent::ToolCall(tc) = c {
+                            tc.id == *id
+                        } else {
+                            false
+                        }
+                    });
+                    if !already_added {
+                        contents.push(AssistantContent::ToolCall(RigToolCall::new(
+                            id.clone(),
+                            ToolFunction::new(name.clone(), input.clone()),
+                        )));
+                    }
+                }
+            }
+        }
+
+        if contents.is_empty() {
+            Ok(rig::OneOrMany::one(AssistantContent::Text(Text { text: String::new() })))
+        } else if contents.len() == 1 {
+            Ok(rig::OneOrMany::one(contents.remove(0)))
+        } else {
+            Ok(rig::OneOrMany::many(contents).unwrap())
+        }
+    }
+
+    /// Parse rig completion response into our CompletionResult format
+    fn parse_response<R>(&self, response: rig::completion::CompletionResponse<R>) -> Result<CompletionResult> {
+        let mut content = None;
+        let mut tool_calls = Vec::new();
+
+        // CompletionResponse.choice is OneOrMany<AssistantContent>
+        for ac in response.choice.iter() {
+            self.extract_assistant_content(ac, &mut content, &mut tool_calls);
+        }
+
+        Ok(CompletionResult { content, tool_calls })
+    }
+
+    /// Extract content and tool calls from AssistantContent
+    fn extract_assistant_content(
+        &self,
+        ac: &AssistantContent,
+        content: &mut Option<String>,
+        tool_calls: &mut Vec<PendingToolCall>,
+    ) {
+        match ac {
+            AssistantContent::Text(Text { text }) => {
+                if let Some(c) = content {
+                    c.push_str(text);
+                } else {
+                    *content = Some(text.clone());
+                }
+            }
+            AssistantContent::ToolCall(tc) => {
+                tool_calls.push(PendingToolCall {
+                    call_id: tc.id.clone(),
+                    name: tc.function.name.clone(),
+                    arguments: tc.function.arguments.clone(),
+                });
+            }
+            AssistantContent::Reasoning(_) => {
+                // Reasoning content, skip for now (could log or process separately)
+            }
+            AssistantContent::Image(_) => {
+                // Image content in assistant response, skip
+            }
+        }
     }
 }
 
@@ -492,19 +565,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_provider_type_from_str() {
-        assert_eq!(
-            RigProviderType::from_str("deepseek"),
-            Some(RigProviderType::DeepSeek)
-        );
-        assert_eq!(
-            RigProviderType::from_str("DEEPSEEK"),
-            Some(RigProviderType::DeepSeek)
-        );
-        assert_eq!(
-            RigProviderType::from_str("openai"),
-            Some(RigProviderType::OpenAI)
-        );
-        assert_eq!(RigProviderType::from_str("unknown"), None);
+    fn test_provider_creation() {
+        let provider = RigProvider::new(ProviderType::DeepSeek, None);
+        assert_eq!(provider.provider_type(), ProviderType::DeepSeek);
+    }
+
+    #[test]
+    fn test_with_api_key() {
+        let provider = RigProvider::with_api_key(ProviderType::OpenAI, "test-key", Some("gpt-4"));
+        assert_eq!(provider.model(), "gpt-4");
     }
 }
