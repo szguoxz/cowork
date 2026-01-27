@@ -206,6 +206,13 @@ impl AgentLoop {
         });
 
         // Create the provider (using Rig or GenAI backend)
+        debug!(
+            "AgentLoop config: provider={:?}, model={:?}, system_prompt_len={}, use_rig={}",
+            config.provider_type,
+            config.model,
+            config.system_prompt.as_ref().map(|s| s.len()).unwrap_or(0),
+            config.use_rig_provider
+        );
         let provider = create_provider_backend(
             config.provider_type,
             config.api_key.as_deref(),

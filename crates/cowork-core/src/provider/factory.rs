@@ -205,10 +205,10 @@ pub fn create_provider_backend(
     use_rig: bool,
 ) -> ProviderBackend {
     debug!(
-        "Creating provider backend: type={:?}, use_rig={}, system_prompt_set={}",
+        "Creating provider backend: type={:?}, use_rig={}, system_prompt_len={}",
         provider_type,
         use_rig,
-        system_prompt.is_some()
+        system_prompt.map(|s| s.len()).unwrap_or(0)
     );
     if use_rig {
         let provider = match api_key {
