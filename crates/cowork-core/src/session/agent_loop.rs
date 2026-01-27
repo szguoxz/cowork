@@ -44,8 +44,6 @@ const MAX_TOOL_RESULT_SIZE: usize = 30_000;
 struct LlmCallResult {
     content: Option<String>,
     tool_calls: Vec<LlmToolCall>,
-    /// Finish reason if available (e.g., "stop", "max_tokens", "tool_use")
-    finish_reason: Option<String>,
 }
 
 /// Tool call from the LLM
@@ -443,21 +441,8 @@ impl AgentLoop {
                 // Add final assistant message to session history (important for multi-turn conversations)
                 self.session.add_assistant_message(&content, Vec::new());
 
-                // Check for truncation via finish_reason
-                let is_truncated = response.finish_reason.as_deref() == Some("max_tokens")
-                    || response.finish_reason.as_deref() == Some("length");
-
-                if is_truncated {
-                    warn!(
-                        content = %content,
-                        finish_reason = ?response.finish_reason,
-                        iteration = iteration,
-                        "Response was truncated due to max_tokens - tool calls may have been cut off"
-                    );
-                }
-
-                // Also warn if content suggests the model intended to make tool calls but didn't
-                // This can happen when the response is truncated but finish_reason isn't available
+                // Warn if content suggests the model intended to make tool calls but didn't
+                // This can happen when the response is truncated due to max_tokens
                 let content_lower = content.to_lowercase();
                 let suggests_action = content_lower.contains("let me ")
                     || content_lower.contains("i'll ")
@@ -468,10 +453,9 @@ impl AgentLoop {
                     || content_lower.ends_with(":")
                     || content_lower.ends_with("...");
 
-                if suggests_action && !content.is_empty() && !is_truncated {
+                if suggests_action && !content.is_empty() {
                     warn!(
                         content = %content,
-                        finish_reason = ?response.finish_reason,
                         iteration = iteration,
                         "Response has content suggesting tool usage but no tool calls - possible truncation"
                     );
@@ -774,7 +758,6 @@ impl AgentLoop {
                             arguments: tc.arguments,
                         })
                         .collect(),
-                    finish_reason: result.finish_reason,
                 }),
                 Err(e) => Err(crate::error::Error::Provider(e.to_string())),
             }
@@ -873,7 +856,6 @@ impl AgentLoop {
         let result = CompletionResult {
             content: if content.is_empty() { None } else { Some(content.clone()) },
             tool_calls: pending_tool_calls,
-            finish_reason: None, // Streaming doesn't easily expose finish_reason
         };
         self.provider.log_streaming_interaction(
             &messages_for_log,
@@ -885,7 +867,6 @@ impl AgentLoop {
         Ok(LlmCallResult {
             content: if content.is_empty() { None } else { Some(content) },
             tool_calls,
-            finish_reason: None, // Streaming doesn't easily expose finish_reason
         })
     }
 
