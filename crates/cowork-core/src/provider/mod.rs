@@ -14,6 +14,7 @@
 pub mod catalog;
 pub mod factory;
 mod genai_provider;
+mod logging;
 pub mod model_listing;
 pub mod rig_provider;
 
@@ -64,8 +65,8 @@ impl ProviderBackend {
 }
 
 pub use factory::{
-    create_provider_from_config, create_provider_from_provider_config, create_provider_with_settings,
-    get_api_key, get_model_tiers, has_api_key_configured,
+    create_provider_backend, create_provider_from_config, create_provider_from_provider_config,
+    create_provider_with_settings, get_api_key, get_model_tiers, has_api_key_configured,
 };
 pub use genai_provider::{
     create_provider, CompletionResult, GenAIProvider, PendingToolCall, ProviderType,

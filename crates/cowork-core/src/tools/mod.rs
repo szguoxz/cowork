@@ -11,6 +11,7 @@ pub mod interaction;
 pub mod lsp;
 pub mod notebook;
 pub mod planning;
+pub mod process_utils;
 pub mod shell;
 pub mod skill;
 pub mod task;

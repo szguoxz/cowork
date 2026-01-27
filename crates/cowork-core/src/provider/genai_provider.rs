@@ -16,72 +16,13 @@ use genai::resolver::{AuthData, AuthResolver};
 use genai::WebConfig;
 use genai::Client;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::time::Duration;
 use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
 use crate::tools::ToolDefinition;
 use super::catalog;
-
-/// Log LLM request/response to file if LLM_LOG_FILE is set
-fn log_llm_interaction(
-    model: &str,
-    messages: &[LlmMessage],
-    tools: Option<&[ToolDefinition]>,
-    result: Option<&CompletionResult>,
-    error: Option<&str>,
-) {
-    let log_file = match std::env::var("LLM_LOG_FILE") {
-        Ok(path) => path,
-        Err(_) => return, // No logging if env var not set
-    };
-
-    let entry = serde_json::json!({
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "model": model,
-        "request": {
-            "messages": messages,
-            "message_count": messages.len(),
-            "tools": tools.map(|t| t.iter().map(|tool| serde_json::json!({
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.parameters
-            })).collect::<Vec<_>>()),
-            "tool_count": tools.map(|t| t.len()).unwrap_or(0),
-        },
-        "response": result.map(|r| {
-            serde_json::json!({
-                "type": if r.has_tool_calls() { "tool_calls" } else { "message" },
-                "content": r.content,
-                "tool_calls": r.tool_calls.iter().map(|c| serde_json::json!({
-                    "name": c.name,
-                    "call_id": c.call_id,
-                    "arguments": c.arguments
-                })).collect::<Vec<_>>()
-            })
-        }),
-        "error": error,
-    });
-
-    // Append to log file
-    match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file)
-    {
-        Ok(mut file) => {
-            if let Err(e) = writeln!(file, "{}", serde_json::to_string(&entry).unwrap_or_default()) {
-                warn!("Failed to write to LLM log file: {}", e);
-            }
-        }
-        Err(e) => {
-            warn!("Failed to open LLM log file {}: {}", log_file, e);
-        }
-    }
-
-    debug!("Logged LLM interaction to {}", log_file);
-}
+use super::logging::{log_llm_interaction, LogConfig};
 
 use super::{ContentBlock, LlmMessage, LlmProvider, LlmRequest, LlmResponse, MessageContent, TokenUsage};
 
@@ -537,13 +478,15 @@ impl GenAIProvider {
                 };
 
                 // Log successful interaction
-                log_llm_interaction(
-                    &self.model,
-                    &messages_for_log,
-                    tools_for_log.as_deref(),
-                    Some(&result),
-                    None,
-                );
+                log_llm_interaction(LogConfig {
+                    model: &self.model,
+                    provider: Some("genai"),
+                    system_prompt: self.system_prompt.as_deref(),
+                    messages: &messages_for_log,
+                    tools: tools_for_log.as_deref(),
+                    result: Some(&result),
+                    ..Default::default()
+                });
 
                 Ok(result)
             }
@@ -551,13 +494,15 @@ impl GenAIProvider {
                 // Use Debug format to get full error chain
                 let error_msg = format!("GenAI error: {:?}", e);
                 // Log failed interaction with request context
-                log_llm_interaction(
-                    &self.model,
-                    &messages_for_log,
-                    tools_for_log.as_deref(),
-                    None,
-                    Some(&error_msg),
-                );
+                log_llm_interaction(LogConfig {
+                    model: &self.model,
+                    provider: Some("genai"),
+                    system_prompt: self.system_prompt.as_deref(),
+                    messages: &messages_for_log,
+                    tools: tools_for_log.as_deref(),
+                    error: Some(&error_msg),
+                    ..Default::default()
+                });
                 // Log with tracing for stack context - include request size info
                 tracing::error!(
                     error = ?e,

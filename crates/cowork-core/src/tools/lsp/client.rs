@@ -19,10 +19,12 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use tracing::debug;
+
+use crate::tools::process_utils::std_direct_command;
 
 /// LSP client for communicating with a language server
 pub struct LspClient {
@@ -137,7 +139,8 @@ impl LspClient {
     /// Start a new language server and initialize it
     pub async fn new(workspace: &Path, command: &str, args: &[String]) -> Result<Self, String> {
         // Spawn the language server process
-        let mut process = Command::new(command)
+        // Uses process_utils which handles hiding console windows on Windows
+        let mut process = std_direct_command(command)
             .args(args)
             .current_dir(workspace)
             .stdin(Stdio::piped())

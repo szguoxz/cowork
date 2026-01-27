@@ -24,7 +24,8 @@ use crate::context::{
 use crate::error::Result;
 use crate::orchestration::{ChatMessage, ChatSession, ToolCallInfo, ToolRegistryBuilder};
 use crate::prompt::{ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig};
-use crate::provider::{GenAIProvider, ProviderBackend, RigProvider};
+use crate::provider::{create_provider_backend, GenAIProvider, ProviderBackend, StreamEvent};
+use futures::StreamExt;
 use crate::skills::SkillRegistry;
 use crate::tools::interaction::ASK_QUESTION_TOOL_NAME;
 use crate::tools::planning::PlanModeState;
@@ -205,37 +206,13 @@ impl AgentLoop {
         });
 
         // Create the provider (using Rig or GenAI backend)
-        let provider = if config.use_rig_provider {
-            // Use Rig backend
-            let rig_provider = match &config.api_key {
-                Some(key) => RigProvider::with_api_key(
-                    config.provider_type,
-                    key,
-                    config.model.as_deref(),
-                ),
-                None => RigProvider::new(config.provider_type, config.model.as_deref()),
-            };
-            let rig_provider = match &config.system_prompt {
-                Some(prompt) => rig_provider.with_system_prompt(prompt),
-                None => rig_provider,
-            };
-            ProviderBackend::Rig(rig_provider)
-        } else {
-            // Use GenAI backend (default)
-            let genai_provider = match &config.api_key {
-                Some(key) => GenAIProvider::with_api_key(
-                    config.provider_type,
-                    key,
-                    config.model.as_deref(),
-                ),
-                None => GenAIProvider::new(config.provider_type, config.model.as_deref()),
-            };
-            let genai_provider = match &config.system_prompt {
-                Some(prompt) => genai_provider.with_system_prompt(prompt),
-                None => genai_provider,
-            };
-            ProviderBackend::GenAI(genai_provider)
-        };
+        let provider = create_provider_backend(
+            config.provider_type,
+            config.api_key.as_deref(),
+            config.model.as_deref(),
+            config.system_prompt.as_deref(),
+            config.use_rig_provider,
+        );
 
         // Create chat session
         let session = match &config.system_prompt {
@@ -673,21 +650,95 @@ impl AgentLoop {
             }
         }
 
-        match self.provider.chat(llm_messages, tools).await {
-            Ok(result) => Ok(LlmCallResult {
-                content: result.content,
-                tool_calls: result
-                    .tool_calls
-                    .into_iter()
-                    .map(|tc| LlmToolCall {
+        // Use streaming if available for real-time token output
+        if self.provider.supports_streaming() {
+            self.call_llm_streaming(llm_messages, tools).await
+        } else {
+            // Fall back to non-streaming
+            match self.provider.chat(llm_messages, tools).await {
+                Ok(result) => Ok(LlmCallResult {
+                    content: result.content,
+                    tool_calls: result
+                        .tool_calls
+                        .into_iter()
+                        .map(|tc| LlmToolCall {
+                            id: tc.call_id,
+                            name: tc.name,
+                            arguments: tc.arguments,
+                        })
+                        .collect(),
+                }),
+                Err(e) => Err(crate::error::Error::Provider(e.to_string())),
+            }
+        }
+    }
+
+    /// Call the LLM with streaming enabled
+    ///
+    /// Emits TextDelta events as tokens arrive for real-time display.
+    async fn call_llm_streaming(
+        &self,
+        messages: Vec<crate::provider::LlmMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<LlmCallResult> {
+        // Generate a message ID for this streaming response
+        let message_id = uuid::Uuid::new_v4().to_string();
+
+        // Start the stream
+        let mut stream = match self.provider.chat_stream(messages, tools).await {
+            Ok(s) => s,
+            Err(e) => return Err(crate::error::Error::Provider(e.to_string())),
+        };
+
+        // Accumulate content and tool calls as they arrive
+        let mut content = String::new();
+        let mut tool_calls = Vec::new();
+        let mut reasoning = String::new();
+
+        // Process stream events
+        while let Some(event) = stream.next().await {
+            match event {
+                StreamEvent::TextDelta(delta) => {
+                    if !delta.is_empty() {
+                        // Emit the delta for real-time display
+                        self.emit(SessionOutput::text_delta(&message_id, &delta)).await;
+                        content.push_str(&delta);
+                    }
+                }
+                StreamEvent::ToolCall(tc) => {
+                    tool_calls.push(LlmToolCall {
                         id: tc.call_id,
                         name: tc.name,
                         arguments: tc.arguments,
-                    })
-                    .collect(),
-            }),
-            Err(e) => Err(crate::error::Error::Provider(e.to_string())),
+                    });
+                }
+                StreamEvent::Reasoning(r) => {
+                    // Accumulate reasoning (could emit as thinking indicator)
+                    if !r.is_empty() {
+                        reasoning.push_str(&r);
+                        // Optionally emit as thinking
+                        self.emit(SessionOutput::thinking(&r)).await;
+                    }
+                }
+                StreamEvent::Done(_result) => {
+                    // Stream complete - we've already accumulated everything
+                    break;
+                }
+                StreamEvent::Error(e) => {
+                    return Err(crate::error::Error::Provider(e));
+                }
+            }
         }
+
+        // Log reasoning if present (for debugging)
+        if !reasoning.is_empty() {
+            debug!("LLM reasoning: {}", reasoning);
+        }
+
+        Ok(LlmCallResult {
+            content: if content.is_empty() { None } else { Some(content) },
+            tool_calls,
+        })
     }
 
     /// Execute a single tool

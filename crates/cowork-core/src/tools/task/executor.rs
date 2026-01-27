@@ -233,10 +233,11 @@ Is git repo: {}"#,
 
 /// Get OS version (cross-platform)
 fn get_os_version() -> String {
+    use crate::tools::process_utils::os_version_command;
+
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("uname")
-            .arg("-r")
+        os_version_command()
             .output()
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
@@ -246,8 +247,7 @@ fn get_os_version() -> String {
 
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("sw_vers")
-            .arg("-productVersion")
+        os_version_command()
             .output()
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
@@ -257,8 +257,7 @@ fn get_os_version() -> String {
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "ver"])
+        os_version_command()
             .output()
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())

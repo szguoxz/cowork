@@ -4,11 +4,10 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::process::Command;
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::filesystem::shell_escape_str;
+use crate::tools::process_utils::{shell_command, shell_command_background};
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 use super::{BackgroundShell, ShellConfig, ShellProcessRegistry, ShellStatus};
@@ -127,19 +126,9 @@ impl Tool for ExecuteCommand {
                         .to_string_lossy()
                         .to_string();
 
-                    // Spawn the command in background (platform-specific)
-                    // Use shell_escape_str to properly handle paths with spaces/special chars
-                    #[cfg(windows)]
-                    let child = Command::new("cmd")
-                        .args(["/C", &format!("{} > {} 2>&1", command, shell_escape_str(&output_file))])
-                        .current_dir(&working_dir)
-                        .spawn()
-                        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to spawn: {}", e)))?;
-
-                    #[cfg(not(windows))]
-                    let child = Command::new("sh")
-                        .arg("-c")
-                        .arg(format!("{} > {} 2>&1", command, shell_escape_str(&output_file)))
+                    // Spawn the command in background with output redirection
+                    // Uses process_utils which handles hiding console windows on Windows
+                    let child = shell_command_background(command, &output_file)
                         .current_dir(&working_dir)
                         .spawn()
                         .map_err(|e| ToolError::ExecutionFailed(format!("Failed to spawn: {}", e)))?;
@@ -168,29 +157,11 @@ impl Tool for ExecuteCommand {
                 }
             }
 
-            // Foreground execution with timeout (platform-specific)
-            #[cfg(windows)]
+            // Foreground execution with timeout
+            // Uses process_utils which handles hiding console windows on Windows
             let output = tokio::time::timeout(
                 std::time::Duration::from_secs(timeout_secs),
-                Command::new("cmd")
-                    .args(["/C", command])
-                    .current_dir(&working_dir)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .output(),
-            )
-            .await
-            .map_err(|_| {
-                ToolError::ExecutionFailed(format!("Command timed out after {}s", timeout_secs))
-            })?
-            .map_err(ToolError::Io)?;
-
-            #[cfg(not(windows))]
-            let output = tokio::time::timeout(
-                std::time::Duration::from_secs(timeout_secs),
-                Command::new("sh")
-                    .arg("-c")
-                    .arg(command)
+                shell_command(command)
                     .current_dir(&working_dir)
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
