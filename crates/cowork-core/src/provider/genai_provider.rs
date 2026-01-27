@@ -152,6 +152,9 @@ pub struct CompletionResult {
     pub content: Option<String>,
     /// Tool calls that need approval before execution
     pub tool_calls: Vec<PendingToolCall>,
+    /// Finish reason: "stop" (normal), "tool_use", "max_tokens" (truncated), "end_turn", etc.
+    /// Not all providers populate this field
+    pub finish_reason: Option<String>,
 }
 
 impl CompletionResult {
@@ -476,6 +479,7 @@ impl GenAIProvider {
                 let result = CompletionResult {
                     content,
                     tool_calls,
+                    finish_reason: None, // genai doesn't expose finish_reason
                 };
 
                 // Log successful interaction
@@ -588,6 +592,7 @@ impl GenAIProvider {
         Ok(CompletionResult {
             content,
             tool_calls,
+            finish_reason: None, // genai streaming doesn't expose finish_reason
         })
     }
 

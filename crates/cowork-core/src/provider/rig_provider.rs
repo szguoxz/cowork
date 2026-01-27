@@ -612,7 +612,7 @@ impl RigProvider {
             self.extract_assistant_content(ac, &mut content, &mut tool_calls);
         }
 
-        Ok(CompletionResult { content, tool_calls })
+        Ok(CompletionResult { content, tool_calls, finish_reason: None })
     }
 
     /// Extract content and tool calls from AssistantContent
