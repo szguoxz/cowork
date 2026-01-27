@@ -310,8 +310,16 @@ async fn run_one_shot(
     // Process outputs until idle
     while let Some((_, output)) = output_rx.recv().await {
         match output {
-            SessionOutput::AssistantMessage { content, .. } => {
-                println!("{}: {}", style("Assistant").bold().green(), content);
+            SessionOutput::AssistantMessage { content, context_usage, .. } => {
+                // Format context usage if available
+                let usage_str = context_usage.map(|u| {
+                    let input_k = u.breakdown.input_tokens / 1000;
+                    let output_k = u.breakdown.output_tokens / 1000;
+                    let total_k = u.limit_tokens / 1000;
+                    let pct = (u.used_percentage * 100.0).round() as u32;
+                    format!(" [{}k/{}k/{}k ({}%)]", input_k, output_k, total_k, pct)
+                }).unwrap_or_default();
+                println!("{}: {}{}", style("Assistant").bold().green(), content, style(&usage_str).dim());
             }
             SessionOutput::ToolStart { name, .. } => {
                 println!("  {} {}", style("[Executing:").dim(), style(&name).yellow());

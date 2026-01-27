@@ -6,8 +6,8 @@
       "api_key_env": "ANTHROPIC_API_KEY",
       "native_web_search": true,
       "models": {
-        "fast": { "id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5", "context": 200000, "max_output": 65536 },
-        "balanced": { "id": "claude-sonnet-4-5-20250929", "name": "Claude Sonnet 4.5", "context": 200000, "max_output": 65536 },
+        "fast": { "id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5", "context": 200000, "max_output": 8192 },
+        "balanced": { "id": "claude-sonnet-4-5-20250929", "name": "Claude Sonnet 4.5", "context": 200000, "max_output": 64000 },
         "powerful": { "id": "claude-opus-4-5-20251101", "name": "Claude Opus 4.5", "context": 200000, "max_output": 32768 }
       }
     },
