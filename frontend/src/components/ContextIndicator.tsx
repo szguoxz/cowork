@@ -36,14 +36,7 @@ export default function ContextIndicator({ sessionId, contextUsage, onClear }: C
 
   const handleClear = async () => {
     if (!isTauri) {
-      // Mock clear in browser
-      setUsage({
-        ...mockUsage,
-        used_tokens: 5000,
-        used_percentage: 0.025,
-        remaining_tokens: 195000,
-        breakdown: { ...mockUsage.breakdown, conversation_tokens: 0, tool_tokens: 0 },
-      })
+      // Mock clear in browser - just call onClear
       onClear?.()
       return
     }
@@ -52,7 +45,6 @@ export default function ContextIndicator({ sessionId, contextUsage, onClear }: C
 
     try {
       await invoke('clear_session', { sessionId })
-      await fetchUsage()
       onClear?.()
     } catch (err) {
       console.error('Failed to clear:', err)
