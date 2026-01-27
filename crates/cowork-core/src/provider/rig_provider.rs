@@ -16,6 +16,7 @@ use rig::completion::{CompletionRequestBuilder, ToolDefinition as RigToolDef};
 use rig::message::{AssistantContent, Message, Text, ToolCall as RigToolCall, ToolFunction, ToolResult, ToolResultContent, UserContent};
 use rig::streaming::StreamedAssistantContent;
 use std::pin::Pin;
+use tracing::{debug, warn};
 
 use crate::error::{Error, Result};
 use crate::tools::ToolDefinition;
@@ -350,13 +351,21 @@ impl RigProvider {
             match result {
                 Ok(content) => match content {
                     StreamedAssistantContent::Text(text) => StreamEvent::TextDelta(text.text),
-                    StreamedAssistantContent::ToolCall(tc) => StreamEvent::ToolCall(PendingToolCall {
-                        call_id: tc.id,
-                        name: tc.function.name,
-                        arguments: tc.function.arguments,
-                    }),
-                    StreamedAssistantContent::ToolCallDelta { .. } => {
-                        // Ignore deltas - we'll get the full tool call
+                    StreamedAssistantContent::ToolCall(tc) => {
+                        debug!(
+                            tool_name = %tc.function.name,
+                            tool_id = %tc.id,
+                            "Received complete tool call from stream"
+                        );
+                        StreamEvent::ToolCall(PendingToolCall {
+                            call_id: tc.id,
+                            name: tc.function.name,
+                            arguments: tc.function.arguments,
+                        })
+                    }
+                    StreamedAssistantContent::ToolCallDelta { id, .. } => {
+                        debug!(tool_id = %id, "Received tool call delta (waiting for complete event)");
+                        // Ignore deltas - we'll get the full tool call when content_block_stop arrives
                         StreamEvent::TextDelta(String::new())
                     }
                     StreamedAssistantContent::Reasoning(reasoning) => {
@@ -366,11 +375,15 @@ impl RigProvider {
                         StreamEvent::Reasoning(reasoning)
                     }
                     StreamedAssistantContent::Final(_) => {
+                        debug!("Received Final event from stream");
                         // Final response - we'll construct Done event from accumulated state
                         StreamEvent::TextDelta(String::new())
                     }
                 },
-                Err(e) => StreamEvent::Error(e.to_string()),
+                Err(e) => {
+                    warn!(error = %e, "Error in streaming response");
+                    StreamEvent::Error(e.to_string())
+                }
             }
         });
 
@@ -607,9 +620,27 @@ impl RigProvider {
         let mut content = None;
         let mut tool_calls = Vec::new();
 
+        // Log usage info
+        debug!(
+            usage_input = response.usage.input_tokens,
+            usage_output = response.usage.output_tokens,
+            choice_count = response.choice.len(),
+            "Parsing rig completion response"
+        );
+
         // CompletionResponse.choice is OneOrMany<AssistantContent>
         for ac in response.choice.iter() {
             self.extract_assistant_content(ac, &mut content, &mut tool_calls);
+        }
+
+        // Log warning if we got content but no tool calls
+        if content.is_some() && tool_calls.is_empty() {
+            warn!(
+                content = ?content,
+                input_tokens = response.usage.input_tokens,
+                output_tokens = response.usage.output_tokens,
+                "Response has content but no tool calls"
+            );
         }
 
         Ok(CompletionResult { content, tool_calls })

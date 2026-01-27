@@ -811,6 +811,11 @@ impl AgentLoop {
                     }
                 }
                 StreamEvent::ToolCall(tc) => {
+                    debug!(
+                        tool_name = %tc.name,
+                        tool_id = %tc.call_id,
+                        "Received ToolCall event in agent loop"
+                    );
                     pending_tool_calls.push(PendingToolCall {
                         call_id: tc.call_id.clone(),
                         name: tc.name.clone(),
@@ -846,6 +851,14 @@ impl AgentLoop {
                 }
             }
         }
+
+        // Log what we accumulated from streaming
+        debug!(
+            content_len = content.len(),
+            tool_call_count = tool_calls.len(),
+            reasoning_len = reasoning.len(),
+            "Streaming completed"
+        );
 
         // Log reasoning if present (for debugging)
         if !reasoning.is_empty() {
