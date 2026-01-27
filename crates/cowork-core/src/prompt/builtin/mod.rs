@@ -18,6 +18,48 @@ pub mod claude_code;
 /// Main system prompt template - uses Claude Code's pre-expanded prompt
 pub const SYSTEM_PROMPT: &str = claude_code::SYSTEM_PROMPT;
 
+/// Strip markdown title header from prompt content.
+///
+/// Removes the first line if it starts with `# ` and is followed by a blank line.
+/// This is used to strip file title comments (e.g., "# Claude Code System Prompt")
+/// that are meant for human readers but waste tokens when sent to the LLM.
+///
+/// # Example
+/// ```
+/// use cowork_core::prompt::builtin::strip_markdown_header;
+///
+/// let content = "# Title\n\nActual content here.";
+/// assert_eq!(strip_markdown_header(content), "Actual content here.");
+///
+/// // Preserves content without header
+/// let no_header = "Actual content here.";
+/// assert_eq!(strip_markdown_header(no_header), "Actual content here.");
+///
+/// // Preserves ## section headers (not file titles)
+/// let section = "## Section\n\nContent";
+/// assert_eq!(strip_markdown_header(section), "## Section\n\nContent");
+/// ```
+pub fn strip_markdown_header(content: &str) -> &str {
+    // Check if content starts with "# " (h1 header)
+    if !content.starts_with("# ") {
+        return content;
+    }
+
+    // Find the end of the first line
+    if let Some(newline_pos) = content.find('\n') {
+        let after_first_line = &content[newline_pos + 1..];
+
+        // Check if followed by blank line (either \n or \r\n)
+        if after_first_line.starts_with('\n') {
+            return &after_first_line[1..];
+        } else if after_first_line.starts_with("\r\n") {
+            return &after_first_line[2..];
+        }
+    }
+
+    content
+}
+
 /// Agent definitions
 pub mod agents {
     /// Explore agent - fast codebase searching
@@ -96,6 +138,43 @@ mod tests {
         // System prompt comes from Claude Code
         assert!(SYSTEM_PROMPT.contains("You are Claude"));
         assert!(SYSTEM_PROMPT.contains("Security"));
+    }
+
+    #[test]
+    fn test_strip_markdown_header() {
+        // Should strip h1 header followed by blank line
+        let with_header = "# Title\n\nContent here.";
+        assert_eq!(strip_markdown_header(with_header), "Content here.");
+
+        // Should preserve content without header
+        let no_header = "Content here.";
+        assert_eq!(strip_markdown_header(no_header), "Content here.");
+
+        // Should preserve h2 headers (section headers, not file titles)
+        let section = "## Section\n\nContent";
+        assert_eq!(strip_markdown_header(section), "## Section\n\nContent");
+
+        // Should not strip h1 without blank line after
+        let no_blank = "# Title\nContent here.";
+        assert_eq!(strip_markdown_header(no_blank), "# Title\nContent here.");
+
+        // Should handle Windows line endings
+        let windows = "# Title\r\n\r\nContent here.";
+        assert_eq!(strip_markdown_header(windows), "Content here.");
+
+        // Should handle multiline content
+        let multi = "# Title\n\nFirst line.\nSecond line.";
+        assert_eq!(strip_markdown_header(multi), "First line.\nSecond line.");
+    }
+
+    #[test]
+    fn test_system_prompt_header_stripped() {
+        // Verify the actual system prompt gets its header stripped
+        let stripped = strip_markdown_header(SYSTEM_PROMPT);
+        // Should start with content, not "# "
+        assert!(stripped.starts_with("You are Claude") || stripped.starts_with("You are Cowork"),
+            "System prompt should start with 'You are...' after stripping header, got: {}",
+            &stripped[..stripped.len().min(50)]);
     }
 
     #[test]

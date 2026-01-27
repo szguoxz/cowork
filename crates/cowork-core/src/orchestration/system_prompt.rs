@@ -45,7 +45,7 @@ impl SystemPrompt {
     /// Create a new system prompt with the default content
     pub fn new() -> Self {
         Self {
-            base: builtin::SYSTEM_PROMPT.to_string(),
+            base: builtin::strip_markdown_header(builtin::SYSTEM_PROMPT).to_string(),
             context: None,
             template_vars: None,
             registry: None,
