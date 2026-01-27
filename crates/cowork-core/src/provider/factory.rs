@@ -8,6 +8,7 @@ use crate::error::{Error, Result};
 use super::genai_provider::{GenAIProvider, ProviderType};
 use super::rig_provider::RigProvider;
 use super::ProviderBackend;
+use tracing::debug;
 
 /// Get API key for a provider, checking config then environment variables
 ///
@@ -203,6 +204,12 @@ pub fn create_provider_backend(
     system_prompt: Option<&str>,
     use_rig: bool,
 ) -> ProviderBackend {
+    debug!(
+        "Creating provider backend: type={:?}, use_rig={}, system_prompt_set={}",
+        provider_type,
+        use_rig,
+        system_prompt.is_some()
+    );
     if use_rig {
         let provider = match api_key {
             Some(key) => RigProvider::with_api_key(provider_type, key, model),

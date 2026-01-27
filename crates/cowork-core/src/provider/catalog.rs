@@ -23,6 +23,13 @@ pub struct Model {
     pub id: String,
     pub name: String,
     pub context: usize,
+    /// Maximum output tokens for this model
+    #[serde(default = "default_max_output")]
+    pub max_output: usize,
+}
+
+fn default_max_output() -> usize {
+    8192
 }
 
 /// Provider information

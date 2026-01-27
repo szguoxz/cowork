@@ -6,9 +6,9 @@
       "api_key_env": "ANTHROPIC_API_KEY",
       "native_web_search": true,
       "models": {
-        "fast": { "id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5", "context": 200000 },
-        "balanced": { "id": "claude-sonnet-4-5-20250929", "name": "Claude Sonnet 4.5", "context": 200000 },
-        "powerful": { "id": "claude-opus-4-5-20251101", "name": "Claude Opus 4.5", "context": 200000 }
+        "fast": { "id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5", "context": 200000, "max_output": 8192 },
+        "balanced": { "id": "claude-sonnet-4-5-20250929", "name": "Claude Sonnet 4.5", "context": 200000, "max_output": 16384 },
+        "powerful": { "id": "claude-opus-4-5-20251101", "name": "Claude Opus 4.5", "context": 200000, "max_output": 16384 }
       }
     },
     "openai": {
@@ -17,9 +17,9 @@
       "api_key_env": "OPENAI_API_KEY",
       "native_web_search": true,
       "models": {
-        "fast": { "id": "gpt-5-mini", "name": "GPT-5 Mini", "context": 1000000 },
-        "balanced": { "id": "gpt-5", "name": "GPT-5", "context": 1000000 },
-        "powerful": { "id": "gpt-5.2", "name": "GPT-5.2", "context": 200000 }
+        "fast": { "id": "gpt-5-mini", "name": "GPT-5 Mini", "context": 1000000, "max_output": 16384 },
+        "balanced": { "id": "gpt-5", "name": "GPT-5", "context": 1000000, "max_output": 32768 },
+        "powerful": { "id": "gpt-5.2", "name": "GPT-5.2", "context": 200000, "max_output": 32768 }
       }
     },
     "gemini": {
@@ -28,9 +28,9 @@
       "api_key_env": "GEMINI_API_KEY",
       "native_web_search": true,
       "models": {
-        "fast": { "id": "gemini-3-flash-preview", "name": "Gemini-3-flash-preview", "context": 1000000 },
-        "balanced": { "id": "gemini-3-flash-preview", "name": "Gemini-3-flash-preview", "context": 1000000 },
-        "powerful": { "id": "gemini-3-pro-preview", "name": "Gemini 3 Pro", "context": 1000000 }
+        "fast": { "id": "gemini-3-flash-preview", "name": "Gemini-3-flash-preview", "context": 1000000, "max_output": 8192 },
+        "balanced": { "id": "gemini-3-flash-preview", "name": "Gemini-3-flash-preview", "context": 1000000, "max_output": 8192 },
+        "powerful": { "id": "gemini-3-pro-preview", "name": "Gemini 3 Pro", "context": 1000000, "max_output": 8192 }
       }
     },
     "deepseek": {
@@ -39,9 +39,9 @@
       "api_key_env": "DEEPSEEK_API_KEY",
       "native_web_search": false,
       "models": {
-        "fast": { "id": "deepseek-chat", "name": "DeepSeek Chat", "context": 131072 },
-        "balanced": { "id": "deepseek-chat", "name": "DeepSeek Chat", "context": 131072 },
-        "powerful": { "id": "deepseek-reasoner", "name": "DeepSeek Reasoner (R1)", "context": 131072 }
+        "fast": { "id": "deepseek-chat", "name": "DeepSeek Chat", "context": 131072, "max_output": 8192 },
+        "balanced": { "id": "deepseek-chat", "name": "DeepSeek Chat", "context": 131072, "max_output": 8192 },
+        "powerful": { "id": "deepseek-reasoner", "name": "DeepSeek Reasoner (R1)", "context": 131072, "max_output": 8192 }
       }
     },
     "groq": {
@@ -50,9 +50,9 @@
       "api_key_env": "GROQ_API_KEY",
       "native_web_search": false,
       "models": {
-        "fast": { "id": "llama-3.1-8b-instant", "name": "Llama 3.1 8B", "context": 128000 },
-        "balanced": { "id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B", "context": 128000 },
-        "powerful": { "id": "deepseek-r1-distill-llama-70b", "name": "DeepSeek R1 Distill 70B", "context": 128000 }
+        "fast": { "id": "llama-3.1-8b-instant", "name": "Llama 3.1 8B", "context": 128000, "max_output": 8192 },
+        "balanced": { "id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B", "context": 128000, "max_output": 8192 },
+        "powerful": { "id": "deepseek-r1-distill-llama-70b", "name": "DeepSeek R1 Distill 70B", "context": 128000, "max_output": 8192 }
       }
     },
     "xai": {
@@ -61,9 +61,9 @@
       "api_key_env": "XAI_API_KEY",
       "native_web_search": true,
       "models": {
-        "fast": { "id": "grok-3-mini-beta", "name": "Grok 3 Mini", "context": 131072 },
-        "balanced": { "id": "grok-3-beta", "name": "Grok 3", "context": 131072 },
-        "powerful": { "id": "grok-3-beta", "name": "Grok 3", "context": 131072 }
+        "fast": { "id": "grok-3-mini-beta", "name": "Grok 3 Mini", "context": 131072, "max_output": 16384 },
+        "balanced": { "id": "grok-3-beta", "name": "Grok 3", "context": 131072, "max_output": 16384 },
+        "powerful": { "id": "grok-3-beta", "name": "Grok 3", "context": 131072, "max_output": 16384 }
       }
     },
     "cohere": {
@@ -72,9 +72,9 @@
       "api_key_env": "COHERE_API_KEY",
       "native_web_search": true,
       "models": {
-        "fast": { "id": "command-r", "name": "Command R", "context": 128000 },
-        "balanced": { "id": "command-r-plus", "name": "Command R+", "context": 128000 },
-        "powerful": { "id": "command-r-plus", "name": "Command R+", "context": 128000 }
+        "fast": { "id": "command-r", "name": "Command R", "context": 128000, "max_output": 4096 },
+        "balanced": { "id": "command-r-plus", "name": "Command R+", "context": 128000, "max_output": 4096 },
+        "powerful": { "id": "command-r-plus", "name": "Command R+", "context": 128000, "max_output": 4096 }
       }
     },
     "perplexity": {
@@ -83,9 +83,9 @@
       "api_key_env": "PERPLEXITY_API_KEY",
       "native_web_search": true,
       "models": {
-        "fast": { "id": "sonar", "name": "Sonar", "context": 128000 },
-        "balanced": { "id": "sonar-pro", "name": "Sonar Pro", "context": 128000 },
-        "powerful": { "id": "sonar-reasoning", "name": "Sonar Reasoning", "context": 128000 }
+        "fast": { "id": "sonar", "name": "Sonar", "context": 128000, "max_output": 8192 },
+        "balanced": { "id": "sonar-pro", "name": "Sonar Pro", "context": 128000, "max_output": 8192 },
+        "powerful": { "id": "sonar-reasoning", "name": "Sonar Reasoning", "context": 128000, "max_output": 8192 }
       }
     },
     "together": {
@@ -94,9 +94,9 @@
       "api_key_env": "TOGETHER_API_KEY",
       "native_web_search": false,
       "models": {
-        "fast": { "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo", "name": "Llama 3.3 70B Turbo", "context": 128000 },
-        "balanced": { "id": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", "name": "Llama 4 Maverick", "context": 1000000 },
-        "powerful": { "id": "deepseek-ai/DeepSeek-R1", "name": "DeepSeek R1", "context": 131072 }
+        "fast": { "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo", "name": "Llama 3.3 70B Turbo", "context": 128000, "max_output": 8192 },
+        "balanced": { "id": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", "name": "Llama 4 Maverick", "context": 1000000, "max_output": 16384 },
+        "powerful": { "id": "deepseek-ai/DeepSeek-R1", "name": "DeepSeek R1", "context": 131072, "max_output": 8192 }
       }
     },
     "fireworks": {
@@ -105,9 +105,9 @@
       "api_key_env": "FIREWORKS_API_KEY",
       "native_web_search": false,
       "models": {
-        "fast": { "id": "accounts/fireworks/models/llama-v3p3-70b-instruct", "name": "Llama 3.3 70B", "context": 128000 },
-        "balanced": { "id": "accounts/fireworks/models/llama-v3p3-70b-instruct", "name": "Llama 3.3 70B", "context": 128000 },
-        "powerful": { "id": "accounts/fireworks/models/deepseek-r1", "name": "DeepSeek R1", "context": 131072 }
+        "fast": { "id": "accounts/fireworks/models/llama-v3p3-70b-instruct", "name": "Llama 3.3 70B", "context": 128000, "max_output": 8192 },
+        "balanced": { "id": "accounts/fireworks/models/llama-v3p3-70b-instruct", "name": "Llama 3.3 70B", "context": 128000, "max_output": 8192 },
+        "powerful": { "id": "accounts/fireworks/models/deepseek-r1", "name": "DeepSeek R1", "context": 131072, "max_output": 8192 }
       }
     },
     "ollama": {
@@ -116,9 +116,9 @@
       "api_key_env": null,
       "native_web_search": false,
       "models": {
-        "fast": { "id": "llama3.2:3b", "name": "Llama 3.2 3B", "context": 8192 },
-        "balanced": { "id": "llama3.2", "name": "Llama 3.2", "context": 8192 },
-        "powerful": { "id": "llama3.3:70b", "name": "Llama 3.3 70B", "context": 128000 }
+        "fast": { "id": "llama3.2:3b", "name": "Llama 3.2 3B", "context": 8192, "max_output": 4096 },
+        "balanced": { "id": "llama3.2", "name": "Llama 3.2", "context": 8192, "max_output": 4096 },
+        "powerful": { "id": "llama3.3:70b", "name": "Llama 3.3 70B", "context": 128000, "max_output": 8192 }
       }
     },
     "nebius": {
@@ -127,9 +127,9 @@
       "api_key_env": "NEBIUS_API_KEY",
       "native_web_search": false,
       "models": {
-        "fast": { "id": "meta-llama/Meta-Llama-3.1-8B-Instruct", "name": "Llama 3.1 8B", "context": 128000 },
-        "balanced": { "id": "meta-llama/Meta-Llama-3.1-70B-Instruct", "name": "Llama 3.1 70B", "context": 128000 },
-        "powerful": { "id": "deepseek-ai/DeepSeek-R1", "name": "DeepSeek R1", "context": 131072 }
+        "fast": { "id": "meta-llama/Meta-Llama-3.1-8B-Instruct", "name": "Llama 3.1 8B", "context": 128000, "max_output": 8192 },
+        "balanced": { "id": "meta-llama/Meta-Llama-3.1-70B-Instruct", "name": "Llama 3.1 70B", "context": 128000, "max_output": 8192 },
+        "powerful": { "id": "deepseek-ai/DeepSeek-R1", "name": "DeepSeek R1", "context": 131072, "max_output": 8192 }
       }
     },
     "zai": {
@@ -138,9 +138,9 @@
       "api_key_env": "ZAI_API_KEY",
       "native_web_search": false,
       "models": {
-        "fast": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000 },
-        "balanced": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000 },
-        "powerful": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000 }
+        "fast": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000, "max_output": 8192 },
+        "balanced": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000, "max_output": 8192 },
+        "powerful": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000, "max_output": 8192 }
       }
     },
     "bigmodel": {
@@ -149,9 +149,9 @@
       "api_key_env": "BIGMODEL_API_KEY",
       "native_web_search": false,
       "models": {
-         "fast": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000 },
-        "balanced": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000 },
-        "powerful": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000 }
+        "fast": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000, "max_output": 8192 },
+        "balanced": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000, "max_output": 8192 },
+        "powerful": { "id": "glm-4.7", "name": "GLM-4.7", "context": 128000, "max_output": 8192 }
       }
     },
     "mimo": {
@@ -160,9 +160,9 @@
       "api_key_env": "MIMO_API_KEY",
       "native_web_search": false,
       "models": {
-        "fast": { "id": "mimo-v2-flash", "name": "MIMO v2 Flash", "context": 128000 },
-        "balanced": { "id": "mimo-v2-flash", "name": "MIMO v2 Flash", "context": 128000 },
-        "powerful": { "id": "mimo-v2-flash", "name": "MIMO v2 Flash", "context": 128000 }
+        "fast": { "id": "mimo-v2-flash", "name": "MIMO v2 Flash", "context": 128000, "max_output": 8192 },
+        "balanced": { "id": "mimo-v2-flash", "name": "MIMO v2 Flash", "context": 128000, "max_output": 8192 },
+        "powerful": { "id": "mimo-v2-flash", "name": "MIMO v2 Flash", "context": 128000, "max_output": 8192 }
       }
     }
   }
