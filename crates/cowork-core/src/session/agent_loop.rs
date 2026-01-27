@@ -24,7 +24,7 @@ use crate::context::{
 use crate::error::Result;
 use crate::orchestration::{ChatMessage, ChatSession, ToolCallInfo, ToolRegistryBuilder};
 use crate::prompt::{ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig};
-use crate::provider::{create_provider_backend, GenAIProvider, ProviderBackend, StreamEvent};
+use crate::provider::{create_provider_backend, CompletionResult, GenAIProvider, PendingToolCall, ProviderBackend, StreamEvent};
 use futures::StreamExt;
 use crate::skills::SkillRegistry;
 use crate::tools::interaction::ASK_QUESTION_TOOL_NAME;
@@ -681,18 +681,32 @@ impl AgentLoop {
         messages: Vec<crate::provider::LlmMessage>,
         tools: Option<Vec<ToolDefinition>>,
     ) -> Result<LlmCallResult> {
+        // Keep copies for logging
+        let messages_for_log = messages.clone();
+        let tools_for_log = tools.clone();
+
         // Generate a message ID for this streaming response
         let message_id = uuid::Uuid::new_v4().to_string();
 
         // Start the stream
         let mut stream = match self.provider.chat_stream(messages, tools).await {
             Ok(s) => s,
-            Err(e) => return Err(crate::error::Error::Provider(e.to_string())),
+            Err(e) => {
+                // Log the error
+                self.provider.log_streaming_interaction(
+                    &messages_for_log,
+                    tools_for_log.as_deref(),
+                    None,
+                    Some(&e.to_string()),
+                );
+                return Err(crate::error::Error::Provider(e.to_string()));
+            }
         };
 
         // Accumulate content and tool calls as they arrive
         let mut content = String::new();
         let mut tool_calls = Vec::new();
+        let mut pending_tool_calls = Vec::new();
         let mut reasoning = String::new();
 
         // Process stream events
@@ -706,6 +720,11 @@ impl AgentLoop {
                     }
                 }
                 StreamEvent::ToolCall(tc) => {
+                    pending_tool_calls.push(PendingToolCall {
+                        call_id: tc.call_id.clone(),
+                        name: tc.name.clone(),
+                        arguments: tc.arguments.clone(),
+                    });
                     tool_calls.push(LlmToolCall {
                         id: tc.call_id,
                         name: tc.name,
@@ -725,6 +744,13 @@ impl AgentLoop {
                     break;
                 }
                 StreamEvent::Error(e) => {
+                    // Log the error
+                    self.provider.log_streaming_interaction(
+                        &messages_for_log,
+                        tools_for_log.as_deref(),
+                        None,
+                        Some(&e),
+                    );
                     return Err(crate::error::Error::Provider(e));
                 }
             }
@@ -734,6 +760,18 @@ impl AgentLoop {
         if !reasoning.is_empty() {
             debug!("LLM reasoning: {}", reasoning);
         }
+
+        // Log the successful streaming interaction
+        let result = CompletionResult {
+            content: if content.is_empty() { None } else { Some(content.clone()) },
+            tool_calls: pending_tool_calls,
+        };
+        self.provider.log_streaming_interaction(
+            &messages_for_log,
+            tools_for_log.as_deref(),
+            Some(&result),
+            None,
+        );
 
         Ok(LlmCallResult {
             content: if content.is_empty() { None } else { Some(content) },

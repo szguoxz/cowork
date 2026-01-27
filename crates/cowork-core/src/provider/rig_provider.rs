@@ -89,6 +89,34 @@ impl RigProvider {
         &self.model
     }
 
+    /// Get the system prompt
+    pub fn system_prompt(&self) -> Option<&str> {
+        self.system_prompt.as_deref()
+    }
+
+    /// Log a streaming interaction after the stream has completed
+    ///
+    /// This should be called by the agent loop after consuming the stream
+    /// to ensure streaming interactions are logged just like non-streaming ones.
+    pub fn log_streaming_interaction(
+        &self,
+        messages: &[LlmMessage],
+        tools: Option<&[ToolDefinition]>,
+        result: Option<&CompletionResult>,
+        error: Option<&str>,
+    ) {
+        log_llm_interaction(LogConfig {
+            model: &self.model,
+            provider: Some("rig"),
+            system_prompt: self.system_prompt.as_deref(),
+            messages,
+            tools,
+            result,
+            error,
+            ..Default::default()
+        });
+    }
+
     /// Execute a chat completion and return either a message or tool calls
     pub async fn chat(
         &self,

@@ -62,6 +62,27 @@ impl ProviderBackend {
     pub fn supports_streaming(&self) -> bool {
         matches!(self, ProviderBackend::Rig(_))
     }
+
+    /// Log an interaction after streaming completes
+    ///
+    /// Call this after consuming a stream to log the request/response
+    /// in the same format as non-streaming interactions.
+    pub fn log_streaming_interaction(
+        &self,
+        messages: &[LlmMessage],
+        tools: Option<&[ToolDefinition]>,
+        result: Option<&CompletionResult>,
+        error: Option<&str>,
+    ) {
+        match self {
+            ProviderBackend::GenAI(_) => {
+                // GenAI doesn't support streaming, so this shouldn't be called
+            }
+            ProviderBackend::Rig(provider) => {
+                provider.log_streaming_interaction(messages, tools, result, error);
+            }
+        }
+    }
 }
 
 pub use factory::{
