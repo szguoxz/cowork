@@ -160,7 +160,7 @@ impl Tool for SkillTool {
 /// - `$ARGUMENTS` / `${ARGUMENTS}` - all arguments
 /// - `$ARGUMENTS[N]` / `${ARGUMENTS[N]}` - positional argument by index
 /// - `$N` - shorthand for positional argument (e.g., `$0`, `$1`)
-fn substitute_arguments(template: &str, args: &str) -> String {
+pub fn substitute_arguments(template: &str, args: &str) -> String {
     // Split arguments by whitespace for positional access
     let arg_parts: Vec<&str> = args.split_whitespace().collect();
 

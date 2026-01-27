@@ -475,4 +475,174 @@ Deploy instructions.
         // Should include the dynamic skill
         assert!(skills.iter().any(|s| s.name == "deploy"));
     }
+
+    /// Test skills with context: fork should indicate subagent execution
+    #[test]
+    fn test_skill_context_fork_runs_in_subagent() {
+        let workspace = TempDir::new().unwrap();
+
+        // Create a skill with context: fork
+        let skills_dir = workspace.path().join(".cowork").join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+
+        create_skill_dir(
+            &skills_dir,
+            "research",
+            r#"---
+name: research
+description: Deep research task
+context: fork
+agent: Explore
+---
+
+Research $ARGUMENTS thoroughly.
+"#,
+        );
+
+        // Initialize git repo
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+
+        let registry = SkillRegistry::with_builtins(workspace.path().to_path_buf());
+        let skill = registry.get("research").unwrap();
+
+        // Should indicate it runs in a subagent
+        assert!(skill.runs_in_subagent(), "Skill with context: fork should run in subagent");
+        assert_eq!(skill.subagent_type(), Some("Explore"));
+    }
+
+    /// Test skills without context: fork should run inline
+    #[test]
+    fn test_skill_default_runs_inline() {
+        let workspace = TempDir::new().unwrap();
+
+        // Create a skill without context: fork
+        let skills_dir = workspace.path().join(".cowork").join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+
+        create_skill_dir(
+            &skills_dir,
+            "lint",
+            r#"---
+name: lint
+description: Run linter
+---
+
+Run the linter on the codebase.
+"#,
+        );
+
+        // Initialize git repo
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+
+        let registry = SkillRegistry::with_builtins(workspace.path().to_path_buf());
+        let skill = registry.get("lint").unwrap();
+
+        // Should NOT run in subagent by default
+        assert!(!skill.runs_in_subagent(), "Skill without context: fork should run inline");
+        assert_eq!(skill.subagent_type(), None);
+    }
+
+    /// Test skill with model override
+    #[test]
+    fn test_skill_model_override() {
+        let workspace = TempDir::new().unwrap();
+
+        // Create a skill with model override
+        let skills_dir = workspace.path().join(".cowork").join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+
+        create_skill_dir(
+            &skills_dir,
+            "quick-task",
+            r#"---
+name: quick-task
+description: A quick task using fast model
+model: haiku
+---
+
+Do this quickly.
+"#,
+        );
+
+        // Initialize git repo
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+
+        let registry = SkillRegistry::with_builtins(workspace.path().to_path_buf());
+        let skill = registry.get("quick-task").unwrap();
+
+        assert_eq!(skill.model_override(), Some("haiku"));
+    }
+}
+
+/// Tests for positional argument substitution
+mod argument_substitution_tests {
+    use cowork_core::tools::skill::substitute_arguments;
+
+    #[test]
+    fn test_full_arguments_substitution() {
+        let template = "Process: $ARGUMENTS";
+        let result = substitute_arguments(template, "file1.txt file2.txt");
+        assert_eq!(result, "Process: file1.txt file2.txt");
+    }
+
+    #[test]
+    fn test_braced_arguments_substitution() {
+        let template = "Process: ${ARGUMENTS}";
+        let result = substitute_arguments(template, "file1.txt file2.txt");
+        assert_eq!(result, "Process: file1.txt file2.txt");
+    }
+
+    #[test]
+    fn test_positional_shorthand() {
+        let template = "Move $0 to $1";
+        let result = substitute_arguments(template, "source.txt dest.txt");
+        assert_eq!(result, "Move source.txt to dest.txt");
+    }
+
+    #[test]
+    fn test_positional_indexed() {
+        let template = "First: $ARGUMENTS[0], Second: $ARGUMENTS[1]";
+        let result = substitute_arguments(template, "alpha beta");
+        assert_eq!(result, "First: alpha, Second: beta");
+    }
+
+    #[test]
+    fn test_positional_indexed_braced() {
+        let template = "First: ${ARGUMENTS[0]}, Second: ${ARGUMENTS[1]}";
+        let result = substitute_arguments(template, "alpha beta");
+        assert_eq!(result, "First: alpha, Second: beta");
+    }
+
+    #[test]
+    fn test_mixed_substitution() {
+        let template = "Command: $0, Full: $ARGUMENTS";
+        let result = substitute_arguments(template, "git status --short");
+        assert_eq!(result, "Command: git, Full: git status --short");
+    }
+
+    #[test]
+    fn test_missing_positional_argument() {
+        let template = "Third: $2";
+        let result = substitute_arguments(template, "only two");
+        assert_eq!(result, "Third: ");  // Empty string for missing args
+    }
+
+    #[test]
+    fn test_empty_arguments() {
+        let template = "Args: $ARGUMENTS, First: $0";
+        let result = substitute_arguments(template, "");
+        assert_eq!(result, "Args: , First: ");
+    }
 }
