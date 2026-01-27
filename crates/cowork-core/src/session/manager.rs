@@ -12,6 +12,8 @@ use tracing::info;
 use super::agent_loop::AgentLoop;
 use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
 use crate::error::Result;
+use crate::orchestration::SystemPrompt;
+use crate::prompt::TemplateVars;
 use crate::ConfigManager;
 
 /// Type alias for the output receiver
@@ -188,9 +190,13 @@ impl SessionManager {
         let mut tool_approval_config = crate::ToolApprovalConfig::default();
         tool_approval_config.set_level(approval_level);
 
+        // Build system prompt with workspace context and git info
+        let system_prompt = self.build_system_prompt(default_provider.as_ref().map(|p| p.model.as_str()));
+
         let mut session_config = SessionConfig::new(self.workspace_path.clone())
             .with_approval_config(tool_approval_config)
-            .with_web_search_config(config.web_search.clone());
+            .with_web_search_config(config.web_search.clone())
+            .with_system_prompt(system_prompt);
 
         if let Some(provider_config) = default_provider {
             let provider_type: crate::provider::ProviderType = provider_config
@@ -206,6 +212,48 @@ impl SessionManager {
         }
 
         session_config
+    }
+
+    /// Build system prompt with workspace context and git info
+    fn build_system_prompt(&self, model_info: Option<&str>) -> String {
+        let mut vars = TemplateVars::default();
+        vars.working_directory = self.workspace_path.display().to_string();
+        vars.is_git_repo = self.workspace_path.join(".git").exists();
+
+        // Get git status and branch info if in a repo
+        if vars.is_git_repo {
+            if let Ok(output) = std::process::Command::new("git")
+                .args(["status", "--short", "--branch"])
+                .current_dir(&self.workspace_path)
+                .output()
+            {
+                vars.git_status = String::from_utf8_lossy(&output.stdout).to_string();
+            }
+
+            if let Ok(output) = std::process::Command::new("git")
+                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                .current_dir(&self.workspace_path)
+                .output()
+            {
+                vars.current_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            }
+
+            if let Ok(output) = std::process::Command::new("git")
+                .args(["log", "--oneline", "-5"])
+                .current_dir(&self.workspace_path)
+                .output()
+            {
+                vars.recent_commits = String::from_utf8_lossy(&output.stdout).to_string();
+            }
+        }
+
+        if let Some(info) = model_info {
+            vars.model_info = info.to_string();
+        }
+
+        SystemPrompt::new()
+            .with_template_vars(vars)
+            .build()
     }
 }
 
