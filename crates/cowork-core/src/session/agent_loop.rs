@@ -742,7 +742,13 @@ impl AgentLoop {
         }
 
         // Use streaming if available for real-time token output
-        if self.provider.supports_streaming() {
+        // Set COWORK_NO_STREAMING=1 to disable streaming for debugging (shows full response in llm_log_file)
+        let streaming_disabled = std::env::var("COWORK_NO_STREAMING").is_ok();
+        if streaming_disabled {
+            debug!("Streaming disabled via COWORK_NO_STREAMING env var");
+        }
+
+        if self.provider.supports_streaming() && !streaming_disabled {
             self.call_llm_streaming(llm_messages, tools).await
         } else {
             // Fall back to non-streaming
@@ -800,10 +806,19 @@ impl AgentLoop {
         let mut pending_tool_calls = Vec::new();
         let mut reasoning = String::new();
 
+        // Event counters for diagnostic logging
+        let mut text_delta_count = 0usize;
+        let mut tool_call_count = 0usize;
+        let mut reasoning_count = 0usize;
+        let mut done_count = 0usize;
+        #[allow(unused_assignments)]
+        let mut _error_count = 0usize;
+
         // Process stream events
         while let Some(event) = stream.next().await {
             match event {
                 StreamEvent::TextDelta(delta) => {
+                    text_delta_count += 1;
                     if !delta.is_empty() {
                         // Emit the delta for real-time display
                         self.emit(SessionOutput::text_delta(&message_id, &delta)).await;
@@ -811,10 +826,12 @@ impl AgentLoop {
                     }
                 }
                 StreamEvent::ToolCall(tc) => {
-                    debug!(
+                    tool_call_count += 1;
+                    info!(
                         tool_name = %tc.name,
                         tool_id = %tc.call_id,
-                        "Received ToolCall event in agent loop"
+                        count = tool_call_count,
+                        "AGENT_LOOP: Received ToolCall event"
                     );
                     pending_tool_calls.push(PendingToolCall {
                         call_id: tc.call_id.clone(),
@@ -828,6 +845,7 @@ impl AgentLoop {
                     });
                 }
                 StreamEvent::Reasoning(r) => {
+                    reasoning_count += 1;
                     // Accumulate reasoning (could emit as thinking indicator)
                     if !r.is_empty() {
                         reasoning.push_str(&r);
@@ -836,10 +854,12 @@ impl AgentLoop {
                     }
                 }
                 StreamEvent::Done(_result) => {
+                    done_count += 1;
                     // Stream complete - we've already accumulated everything
                     break;
                 }
                 StreamEvent::Error(e) => {
+                    _error_count += 1;
                     // Log the error
                     self.provider.log_streaming_interaction(
                         &messages_for_log,
@@ -852,13 +872,32 @@ impl AgentLoop {
             }
         }
 
-        // Log what we accumulated from streaming
-        debug!(
+        // Log stream event summary
+        info!(
+            text_deltas = text_delta_count,
+            tool_calls = tool_call_count,
+            reasoning = reasoning_count,
+            done = done_count,
             content_len = content.len(),
-            tool_call_count = tool_calls.len(),
-            reasoning_len = reasoning.len(),
-            "Streaming completed"
+            "AGENT_LOOP: Stream event summary"
         );
+
+        // Warn if content suggests tool usage but no tool calls received
+        if tool_calls.is_empty() && !content.is_empty() {
+            let content_lower = content.to_lowercase();
+            let suggests_tool = content_lower.contains("let me ")
+                || content_lower.contains("i'll ")
+                || content_lower.contains("i will ")
+                || content_lower.contains("now i")
+                || content_lower.contains("first, i");
+
+            if suggests_tool {
+                warn!(
+                    content_preview = %content.chars().take(100).collect::<String>(),
+                    "Content suggests tool usage but no tool calls received - LLM may have decided not to use tools"
+                );
+            }
+        }
 
         // Log reasoning if present (for debugging)
         if !reasoning.is_empty() {

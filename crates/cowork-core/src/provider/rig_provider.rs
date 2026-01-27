@@ -16,7 +16,7 @@ use rig::completion::{CompletionRequestBuilder, ToolDefinition as RigToolDef};
 use rig::message::{AssistantContent, Message, Text, ToolCall as RigToolCall, ToolFunction, ToolResult, ToolResultContent, UserContent};
 use rig::streaming::StreamedAssistantContent;
 use std::pin::Pin;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::error::{Error, Result};
 use crate::tools::ToolDefinition;
@@ -347,15 +347,35 @@ impl RigProvider {
             .map_err(|e| Error::Provider(format!("Stream error: {}", e)))?;
 
         // Transform rig's streaming response into our StreamEvent stream
-        let event_stream = stream_response.map(|result| {
+        // Use shared counters to track event types for debugging
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let text_count = Arc::new(AtomicUsize::new(0));
+        let tool_call_count = Arc::new(AtomicUsize::new(0));
+        let tool_delta_count = Arc::new(AtomicUsize::new(0));
+        let reasoning_count = Arc::new(AtomicUsize::new(0));
+        let final_count = Arc::new(AtomicUsize::new(0));
+
+        let tc_clone = tool_call_count.clone();
+        let td_clone = tool_delta_count.clone();
+        let txt_clone = text_count.clone();
+        let r_clone = reasoning_count.clone();
+        let f_clone = final_count.clone();
+
+        let event_stream = stream_response.map(move |result| {
             match result {
                 Ok(content) => match content {
-                    StreamedAssistantContent::Text(text) => StreamEvent::TextDelta(text.text),
+                    StreamedAssistantContent::Text(text) => {
+                        txt_clone.fetch_add(1, Ordering::Relaxed);
+                        StreamEvent::TextDelta(text.text)
+                    }
                     StreamedAssistantContent::ToolCall(tc) => {
-                        debug!(
+                        let count = tc_clone.fetch_add(1, Ordering::Relaxed) + 1;
+                        info!(
                             tool_name = %tc.function.name,
                             tool_id = %tc.id,
-                            "Received complete tool call from stream"
+                            count = count,
+                            "STREAM: Received complete tool call"
                         );
                         StreamEvent::ToolCall(PendingToolCall {
                             call_id: tc.id,
@@ -363,29 +383,38 @@ impl RigProvider {
                             arguments: tc.function.arguments,
                         })
                     }
-                    StreamedAssistantContent::ToolCallDelta { id, .. } => {
-                        debug!(tool_id = %id, "Received tool call delta (waiting for complete event)");
+                    StreamedAssistantContent::ToolCallDelta { id, content } => {
+                        let count = td_clone.fetch_add(1, Ordering::Relaxed) + 1;
+                        debug!(tool_id = %id, delta_count = count, content = ?content, "STREAM: Tool call delta");
                         // Ignore deltas - we'll get the full tool call when content_block_stop arrives
                         StreamEvent::TextDelta(String::new())
                     }
                     StreamedAssistantContent::Reasoning(reasoning) => {
+                        r_clone.fetch_add(1, Ordering::Relaxed);
                         StreamEvent::Reasoning(reasoning.reasoning.join(""))
                     }
                     StreamedAssistantContent::ReasoningDelta { reasoning, .. } => {
+                        r_clone.fetch_add(1, Ordering::Relaxed);
                         StreamEvent::Reasoning(reasoning)
                     }
                     StreamedAssistantContent::Final(_) => {
-                        debug!("Received Final event from stream");
+                        f_clone.fetch_add(1, Ordering::Relaxed);
+                        debug!("STREAM: Received Final event");
                         // Final response - we'll construct Done event from accumulated state
                         StreamEvent::TextDelta(String::new())
                     }
                 },
                 Err(e) => {
-                    warn!(error = %e, "Error in streaming response");
+                    warn!(error = %e, "STREAM: Error in streaming response");
                     StreamEvent::Error(e.to_string())
                 }
             }
         });
+
+        // Log summary after stream ends (note: this logs immediately, actual counts update during stream)
+        debug!(
+            "Stream setup complete - counters will be populated as events arrive"
+        );
 
         Ok(Box::pin(event_stream))
     }
