@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::config::PromptSystemConfig;
+use crate::context::ContextUsage;
 use crate::formatting::DiffLine;
 use crate::mcp_manager::McpServerManager;
 use crate::orchestration::ToolScope;
@@ -176,6 +177,11 @@ pub enum SessionOutput {
         /// Path to the plan file (when entering plan mode)
         plan_file: Option<String>,
     },
+    /// Context usage update (tokens used/total)
+    ContextUpdate {
+        /// Current context usage statistics
+        usage: ContextUsage,
+    },
 }
 
 impl SessionOutput {
@@ -296,6 +302,11 @@ impl SessionOutput {
     /// Create a plan mode changed output
     pub fn plan_mode_changed(active: bool, plan_file: Option<String>) -> Self {
         Self::PlanModeChanged { active, plan_file }
+    }
+
+    /// Create a context usage update output
+    pub fn context_update(usage: ContextUsage) -> Self {
+        Self::ContextUpdate { usage }
     }
 
     /// Create a tool call output (persistent message)

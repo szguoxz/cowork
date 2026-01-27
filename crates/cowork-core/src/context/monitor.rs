@@ -59,6 +59,10 @@ pub struct ContextBreakdown {
     pub tool_tokens: usize,
     /// Tokens used by memory files (CLAUDE.md, etc.)
     pub memory_tokens: usize,
+    /// Input tokens (system + memory + user messages + tool results)
+    pub input_tokens: usize,
+    /// Output tokens (assistant messages)
+    pub output_tokens: usize,
 }
 
 /// Context monitor that tracks token usage and signals when compaction is needed
@@ -141,9 +145,11 @@ impl ContextMonitor {
         // Count memory tokens
         let memory_tokens = memory_content.map(|c| self.counter.count(c)).unwrap_or(0);
 
-        // Count conversation and tool tokens
+        // Count conversation and tool tokens, separating input from output
         let mut conversation_tokens = 0;
         let mut tool_tokens = 0;
+        let mut user_tokens = 0;
+        let mut assistant_tokens = 0;
 
         for msg in messages {
             let tokens = self.counter.count(&msg.content) + 4; // +4 for message overhead
@@ -152,11 +158,26 @@ impl ContextMonitor {
                 super::MessageRole::Tool => {
                     tool_tokens += tokens;
                 }
-                _ => {
+                super::MessageRole::User => {
+                    user_tokens += tokens;
+                    conversation_tokens += tokens;
+                }
+                super::MessageRole::Assistant => {
+                    assistant_tokens += tokens;
+                    conversation_tokens += tokens;
+                }
+                super::MessageRole::System => {
+                    // System messages in conversation count as input
+                    user_tokens += tokens;
                     conversation_tokens += tokens;
                 }
             }
         }
+
+        // Input = system prompt + memory + user messages + tool results
+        // Output = assistant messages
+        let input_tokens = system_tokens + memory_tokens + user_tokens + tool_tokens;
+        let output_tokens = assistant_tokens;
 
         let used_tokens = system_tokens + memory_tokens + conversation_tokens + tool_tokens;
         let remaining_tokens = limit_tokens.saturating_sub(used_tokens);
@@ -180,6 +201,8 @@ impl ContextMonitor {
                 conversation_tokens,
                 tool_tokens,
                 memory_tokens,
+                input_tokens,
+                output_tokens,
             },
         }
     }

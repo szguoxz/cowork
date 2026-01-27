@@ -1,5 +1,6 @@
 //! Application state and types for the TUI
 
+use cowork_core::context::ContextUsage;
 use cowork_core::formatting::{format_ephemeral, truncate_str};
 pub use cowork_core::DiffLine;
 use std::time::Instant;
@@ -234,6 +235,8 @@ pub struct App {
     pub turn_start: Option<Instant>,
     /// Whether plan mode is active
     pub plan_mode: bool,
+    /// Current context usage (tokens used/total)
+    pub context_usage: Option<ContextUsage>,
 }
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -260,6 +263,7 @@ impl App {
             approve_all_session: false,
             turn_start: None,
             plan_mode: false,
+            context_usage: None,
         }
     }
 
@@ -438,6 +442,9 @@ impl App {
                 } else {
                     self.add_message(Message::system("Plan mode disabled."));
                 }
+            }
+            SessionOutput::ContextUpdate { usage } => {
+                self.context_usage = Some(usage);
             }
         }
     }

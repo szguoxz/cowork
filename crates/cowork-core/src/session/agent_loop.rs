@@ -174,12 +174,12 @@ impl AgentLoop {
         // This task reads from the main input channel and routes messages to the correct internal channel
         let sid = session_id.clone();
         tokio::spawn(async move {
-            debug!("Dispatcher started for session: {}", sid);
+            info!("Dispatcher started for session: {}", sid);
             while let Some(input) = input_rx.recv().await {
                 match input {
                     SessionInput::UserMessage { content } => {
                         if let Err(e) = message_tx.send(content) {
-                            error!("Failed to dispatch user message: {}", e);
+                            error!("Dispatcher: failed to send user message (receiver dropped?): {}", e);
                             break;
                         }
                     }
@@ -210,13 +210,13 @@ impl AgentLoop {
                     // All other inputs are answers/approvals
                     input => {
                         if let Err(e) = answer_tx.send(input) {
-                            error!("Failed to dispatch answer: {:?}", e);
+                            error!("Dispatcher: failed to send answer/approval (receiver dropped?): {:?}", e);
                             break;
                         }
                     }
                 }
             }
-            debug!("Dispatcher ended for session: {}", sid);
+            info!("Dispatcher ended for session: {} (input channel closed)", sid);
         });
 
         // Create the provider (using Rig or GenAI backend)
@@ -350,7 +350,10 @@ impl AgentLoop {
             self.emit(SessionOutput::idle()).await;
         }
 
-        // Channel closed - save session before exiting (if enabled)
+        // Channel closed - this happens when the session is stopped or the dispatcher exits
+        info!("Message channel closed for session: {}", self.session_id);
+
+        // Save session before exiting (if enabled)
         if self.save_session {
             info!("Saving session {} before exit", self.session_id);
             if let Err(e) = self.save_session().await {
@@ -431,6 +434,10 @@ impl AgentLoop {
                 self.emit(SessionOutput::assistant_message(&msg_id, &content))
                     .await;
             }
+
+            // Emit context usage update
+            let context_usage = self.calculate_context_usage();
+            self.emit(SessionOutput::context_update(context_usage)).await;
 
             // Check for tool calls
             if response.tool_calls.is_empty() {
@@ -599,7 +606,12 @@ impl AgentLoop {
                                 Some(other) => {
                                     warn!("Unexpected input while waiting for answer: {:?}", other);
                                 }
-                                None => return Ok(()), // Channel closed
+                                None => {
+                                    // Channel closed unexpectedly
+                                    warn!("Answer channel closed while waiting for question response");
+                                    self.emit(SessionOutput::error("Session interrupted: input channel closed".to_string())).await;
+                                    return Ok(());
+                                }
                             }
                         }
                     }
@@ -631,7 +643,12 @@ impl AgentLoop {
                             Some(other) => {
                                 warn!("Unexpected input while waiting for approval: {:?}", other);
                             }
-                            None => return Ok(()), // Channel closed
+                            None => {
+                                // Channel closed unexpectedly
+                                warn!("Answer channel closed while waiting for tool approval");
+                                self.emit(SessionOutput::error("Session interrupted: input channel closed".to_string())).await;
+                                return Ok(());
+                            }
                         }
                     }
                 }
@@ -1109,6 +1126,17 @@ impl AgentLoop {
     // ========================================================================
     // Context Management
     // ========================================================================
+
+    /// Calculate current context usage
+    fn calculate_context_usage(&self) -> crate::context::ContextUsage {
+        let messages = self.chat_messages_to_context_messages();
+        let tool_defs_json = serde_json::to_string(&self.tool_definitions).unwrap_or_default();
+        self.context_monitor.calculate_usage(
+            &messages,
+            &self.session.system_prompt,
+            Some(&tool_defs_json),
+        )
+    }
 
     /// Convert ChatMessages to context Messages for token counting
     ///
