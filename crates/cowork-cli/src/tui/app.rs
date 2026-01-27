@@ -459,3 +459,59 @@ impl App {
 }
 
 // Formatting functions now imported from cowork_core::formatting
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cowork_core::context::{ContextBreakdown, ContextUsage};
+
+    #[test]
+    fn test_assistant_message_with_context_usage() {
+        let mut app = App::new("test".to_string(), "0.1.0".to_string());
+
+        let usage = ContextUsage {
+            used_tokens: 45000,
+            limit_tokens: 200000,
+            used_percentage: 0.225,
+            remaining_tokens: 155000,
+            should_compact: false,
+            breakdown: ContextBreakdown {
+                system_tokens: 5000,
+                conversation_tokens: 30000,
+                tool_tokens: 5000,
+                memory_tokens: 5000,
+                input_tokens: 40000,
+                output_tokens: 5000,
+            },
+        };
+
+        app.handle_session_output(SessionOutput::AssistantMessage {
+            id: "msg1".to_string(),
+            content: "Hello world".to_string(),
+            context_usage: Some(usage),
+        });
+
+        assert_eq!(app.messages.len(), 2); // Welcome + assistant
+        let last_msg = &app.messages[1];
+        assert!(matches!(last_msg.message_type, MessageType::Assistant));
+        // Check format: "Hello world [40k/5k/200k (23%)]"
+        assert!(last_msg.content.contains("Hello world"));
+        assert!(last_msg.content.contains("[40k/5k/200k (23%)]"));
+    }
+
+    #[test]
+    fn test_assistant_message_without_context_usage() {
+        let mut app = App::new("test".to_string(), "0.1.0".to_string());
+
+        app.handle_session_output(SessionOutput::AssistantMessage {
+            id: "msg1".to_string(),
+            content: "Hello world".to_string(),
+            context_usage: None,
+        });
+
+        assert_eq!(app.messages.len(), 2);
+        let last_msg = &app.messages[1];
+        assert_eq!(last_msg.content, "Hello world");
+        assert!(!last_msg.content.contains("["));
+    }
+}
