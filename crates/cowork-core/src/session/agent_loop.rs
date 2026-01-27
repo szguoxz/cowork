@@ -53,6 +53,18 @@ struct LlmToolCall {
     arguments: serde_json::Value,
 }
 
+/// Info for spawning a subagent from a skill with `context: fork`
+struct SubagentSpawnInfo {
+    /// The skill prompt to use as the task
+    prompt: String,
+    /// Skill name
+    skill_name: String,
+    /// Agent type (e.g., "Explore", "Plan", "general-purpose")
+    agent_type: String,
+    /// Model override (optional)
+    model: Option<String>,
+}
+
 /// Result from a spawned tool execution
 struct SpawnedToolResult {
     id: String,
@@ -62,6 +74,8 @@ struct SpawnedToolResult {
     output: String,
     /// For skill injection: (content, skill_name)
     inject_info: Option<(String, Option<String>)>,
+    /// For skill subagent spawning (context: fork)
+    subagent_info: Option<SubagentSpawnInfo>,
 }
 
 /// Saved message for persistence
@@ -484,14 +498,41 @@ impl AgentLoop {
                     join_set.spawn(async move {
                         match tool.execute(arguments.clone()).await {
                             Ok(output) => {
-                                let inject = output.metadata.get(crate::tools::skill::INJECT_AS_MESSAGE)
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
+                                let output_str = output.content.to_string();
                                 let skill_name = output.metadata.get(crate::tools::skill::SKILL_NAME_KEY)
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string());
-                                let output_str = output.content.to_string();
-                                let inject_info = if inject { Some((output_str.clone(), skill_name)) } else { None };
+
+                                // Check if this skill should spawn a subagent
+                                let spawn_subagent = output.metadata.get(crate::tools::skill::SPAWN_SUBAGENT)
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+
+                                let (inject_info, subagent_info) = if spawn_subagent {
+                                    // Extract subagent configuration
+                                    let agent_type = output.metadata.get(crate::tools::skill::SUBAGENT_TYPE)
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("general-purpose")
+                                        .to_string();
+                                    let model = output.metadata.get(crate::tools::skill::MODEL_OVERRIDE)
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+
+                                    (None, Some(SubagentSpawnInfo {
+                                        prompt: output_str.clone(),
+                                        skill_name: skill_name.clone().unwrap_or_default(),
+                                        agent_type,
+                                        model,
+                                    }))
+                                } else {
+                                    // Check for inline injection
+                                    let inject = output.metadata.get(crate::tools::skill::INJECT_AS_MESSAGE)
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
+                                    let inject_info = if inject { Some((output_str.clone(), skill_name)) } else { None };
+                                    (inject_info, None)
+                                };
+
                                 SpawnedToolResult {
                                     id,
                                     name,
@@ -499,6 +540,7 @@ impl AgentLoop {
                                     success: true,
                                     output: output_str,
                                     inject_info,
+                                    subagent_info,
                                 }
                             }
                             Err(e) => SpawnedToolResult {
@@ -508,6 +550,7 @@ impl AgentLoop {
                                 success: false,
                                 output: format!("Error: {}", e),
                                 inject_info: None,
+                                subagent_info: None,
                             }
                         }
                     });
@@ -945,10 +988,30 @@ impl AgentLoop {
 
     /// Finalize a spawned tool execution result
     ///
-    /// Handles skill injection, truncation, session update, and emits tool_done.
+    /// Handles skill injection, subagent spawning, truncation, session update, and emits tool_done.
     /// Used for tools that were executed in parallel.
     async fn finalize_spawned_tool(&mut self, res: SpawnedToolResult) {
-        // Handle skill message injection
+        // Handle skill subagent spawning (context: fork)
+        if let Some(info) = res.subagent_info {
+            let brief_result = format!(
+                "Skill '{}' delegated to {} subagent.",
+                info.skill_name, info.agent_type
+            );
+
+            self.session.add_tool_result_with_error(&res.id, &brief_result, false);
+            self.emit(SessionOutput::tool_done(&res.id, &res.name, true, brief_result.clone())).await;
+
+            // Add the task as a user message so the LLM sees it needs to be executed
+            // The LLM will then call the Task tool with the appropriate parameters
+            let task_instruction = format!(
+                "Execute this skill in a subagent:\n\n<skill name=\"{}\" agent=\"{}\">\n{}\n</skill>\n\nUse the Task tool with subagent_type=\"{}\" to execute this.",
+                info.skill_name, info.agent_type, info.prompt, info.agent_type
+            );
+            self.session.add_user_message(&task_instruction);
+            return;
+        }
+
+        // Handle skill message injection (inline execution)
         if let Some((content, skill_name)) = res.inject_info {
             let name = skill_name.as_deref().unwrap_or("unknown");
             let brief_result = format!("Skill '{}' loaded. Follow the instructions below.", name);

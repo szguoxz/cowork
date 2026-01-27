@@ -438,6 +438,23 @@ impl Skill for DynamicSkill {
             )
         }
     }
+
+    fn runs_in_subagent(&self) -> bool {
+        // Check if context: fork is set
+        self.frontmatter
+            .context
+            .as_deref()
+            .map(|c| c.eq_ignore_ascii_case("fork"))
+            .unwrap_or(false)
+    }
+
+    fn subagent_type(&self) -> Option<&str> {
+        self.frontmatter.agent.as_deref()
+    }
+
+    fn model_override(&self) -> Option<&str> {
+        self.frontmatter.model.as_deref()
+    }
 }
 
 /// Errors that can occur when loading skills

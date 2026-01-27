@@ -100,6 +100,23 @@ pub trait Skill: Send + Sync {
     fn allowed_tools(&self) -> Option<Vec<&str>> {
         None
     }
+
+    /// Whether this skill should run in a forked subagent context
+    /// Default is false (run inline in main loop)
+    fn runs_in_subagent(&self) -> bool {
+        false
+    }
+
+    /// Get the agent type to use when running in subagent mode
+    /// Returns None to use the default "general-purpose" agent
+    fn subagent_type(&self) -> Option<&str> {
+        None
+    }
+
+    /// Get the model override for this skill (None = use default model)
+    fn model_override(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Registry of available skills
