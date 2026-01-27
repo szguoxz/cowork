@@ -1,29 +1,14 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { Database, AlertTriangle, Trash2, Minimize2 } from 'lucide-react'
+import type { ContextUsage } from '../bindings/LoopOutput'
 
 // Check if we're running in Tauri
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
-interface ContextBreakdown {
-  system_tokens: number
-  conversation_tokens: number
-  tool_tokens: number
-  memory_tokens: number
-}
-
-interface ContextUsage {
-  used_tokens: number
-  limit_tokens: number
-  used_percentage: number
-  remaining_tokens: number
-  should_compact: boolean
-  breakdown: ContextBreakdown
-}
-
 interface ContextIndicatorProps {
   sessionId: string | null
+  contextUsage?: ContextUsage  // Now passed from session context
   onClear?: () => void
 }
 
@@ -39,73 +24,15 @@ const mockUsage: ContextUsage = {
     conversation_tokens: 35000,
     tool_tokens: 3000,
     memory_tokens: 2000,
+    input_tokens: 40000,
+    output_tokens: 5000,
   },
 }
 
-export default function ContextIndicator({ sessionId, onClear }: ContextIndicatorProps) {
-  const [usage, setUsage] = useState<ContextUsage | null>(isTauri ? null : mockUsage)
+export default function ContextIndicator({ sessionId, contextUsage, onClear }: ContextIndicatorProps) {
+  const usage = contextUsage || (isTauri ? null : mockUsage)
   const [isExpanded, setIsExpanded] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  const fetchUsage = useCallback(async () => {
-    if (!isTauri) {
-      // Use mock data in browser
-      setUsage(mockUsage)
-      return
-    }
-
-    if (!sessionId) return
-
-    try {
-      const contextUsage = await invoke<ContextUsage>('get_context_usage', { sessionId })
-      setUsage(contextUsage)
-      setError(null)
-    } catch (err) {
-      console.error('Failed to fetch context usage:', err)
-      setError(String(err))
-    }
-  }, [sessionId])
-
-  // Fetch usage on mount and when sessionId changes
-  useEffect(() => {
-    fetchUsage()
-  }, [fetchUsage])
-
-  // Listen for context events
-  useEffect(() => {
-    if (!isTauri || !sessionId) return
-
-    let unlistenContext: UnlistenFn | null = null
-    let unlistenLoop: UnlistenFn | null = null
-
-    const setupListeners = async () => {
-      unlistenContext = await listen<{ type: string; usage?: ContextUsage }>(
-        `context:${sessionId}`,
-        (event) => {
-          if (event.payload.type === 'usage_updated' && event.payload.usage) {
-            setUsage(event.payload.usage)
-          }
-        }
-      )
-
-      // Also refresh on loop events
-      unlistenLoop = await listen<{ type: string }>(
-        `loop:${sessionId}`,
-        (event) => {
-          if (event.payload.type === 'loop_completed' || event.payload.type === 'iteration_complete') {
-            fetchUsage()
-          }
-        }
-      )
-    }
-
-    setupListeners()
-
-    return () => {
-      unlistenContext?.()
-      unlistenLoop?.()
-    }
-  }, [sessionId, fetchUsage])
 
   const handleClear = async () => {
     if (!isTauri) {

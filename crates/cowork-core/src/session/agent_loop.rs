@@ -428,16 +428,13 @@ impl AgentLoop {
             // Generate message ID
             let msg_id = uuid::Uuid::new_v4().to_string();
 
-            // Emit assistant message
+            // Emit assistant message with context usage
             let content = response.content.clone().unwrap_or_default();
+            let context_usage = self.calculate_context_usage();
             if !content.is_empty() {
-                self.emit(SessionOutput::assistant_message(&msg_id, &content))
+                self.emit(SessionOutput::assistant_message_with_context(&msg_id, &content, context_usage))
                     .await;
             }
-
-            // Emit context usage update
-            let context_usage = self.calculate_context_usage();
-            self.emit(SessionOutput::context_update(context_usage)).await;
 
             // Check for tool calls
             if response.tool_calls.is_empty() {

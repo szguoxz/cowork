@@ -262,9 +262,20 @@ export default function Chat() {
           ) : (
             <span>Ready</span>
           )}
-          {session?.provider && (
-            <span className="ml-auto">{session.provider.type}</span>
-          )}
+          <div className="ml-auto flex items-center gap-3">
+            {/* Context Usage: input/output/total (percentage%) */}
+            {session?.contextUsage && (
+              <span className="font-mono" title="Input / Output / Total context tokens">
+                {Math.round(session.contextUsage.breakdown.input_tokens / 1000)}k/
+                {Math.round(session.contextUsage.breakdown.output_tokens / 1000)}k/
+                {Math.round(session.contextUsage.limit_tokens / 1000)}k
+                ({Math.round(session.contextUsage.used_percentage * 100)}%)
+              </span>
+            )}
+            {session?.provider && (
+              <span>{session.provider.type}</span>
+            )}
+          </div>
         </div>
       )}
 

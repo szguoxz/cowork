@@ -109,7 +109,13 @@ pub enum SessionOutput {
         delta: String,
     },
     /// Assistant message (complete)
-    AssistantMessage { id: String, content: String },
+    AssistantMessage {
+        id: String,
+        content: String,
+        /// Current context usage (tokens used/total)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        context_usage: Option<ContextUsage>,
+    },
     /// Tool execution starting (auto-approved or approved by user)
     ToolStart {
         id: String,
@@ -177,11 +183,6 @@ pub enum SessionOutput {
         /// Path to the plan file (when entering plan mode)
         plan_file: Option<String>,
     },
-    /// Context usage update (tokens used/total)
-    ContextUpdate {
-        /// Current context usage statistics
-        usage: ContextUsage,
-    },
 }
 
 impl SessionOutput {
@@ -223,6 +224,20 @@ impl SessionOutput {
         Self::AssistantMessage {
             id: id.into(),
             content: content.into(),
+            context_usage: None,
+        }
+    }
+
+    /// Create an assistant message with context usage
+    pub fn assistant_message_with_context(
+        id: impl Into<String>,
+        content: impl Into<String>,
+        context_usage: ContextUsage,
+    ) -> Self {
+        Self::AssistantMessage {
+            id: id.into(),
+            content: content.into(),
+            context_usage: Some(context_usage),
         }
     }
 
@@ -302,11 +317,6 @@ impl SessionOutput {
     /// Create a plan mode changed output
     pub fn plan_mode_changed(active: bool, plan_file: Option<String>) -> Self {
         Self::PlanModeChanged { active, plan_file }
-    }
-
-    /// Create a context usage update output
-    pub fn context_update(usage: ContextUsage) -> Self {
-        Self::ContextUpdate { usage }
     }
 
     /// Create a tool call output (persistent message)
@@ -537,7 +547,7 @@ mod tests {
 
         let msg = SessionOutput::assistant_message("msg-1", "Hello!");
         match msg {
-            SessionOutput::AssistantMessage { id, content } => {
+            SessionOutput::AssistantMessage { id, content, .. } => {
                 assert_eq!(id, "msg-1");
                 assert_eq!(content, "Hello!");
             }

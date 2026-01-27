@@ -198,6 +198,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
             type: 'assistant' as const,
             content: output.content,
           }],
+          contextUsage: output.context_usage,
           updatedAt: new Date(),
         }))
         break

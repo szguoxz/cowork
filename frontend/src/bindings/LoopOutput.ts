@@ -10,6 +10,30 @@ export interface DiffLine {
 }
 
 /**
+ * Context usage breakdown by category
+ */
+export interface ContextBreakdown {
+  system_tokens: number
+  conversation_tokens: number
+  tool_tokens: number
+  memory_tokens: number
+  input_tokens: number
+  output_tokens: number
+}
+
+/**
+ * Context usage statistics
+ */
+export interface ContextUsage {
+  used_tokens: number
+  limit_tokens: number
+  used_percentage: number
+  remaining_tokens: number
+  should_compact: boolean
+  breakdown: ContextBreakdown
+}
+
+/**
  * Messages sent from loop to frontend
  * Now includes session_id for multi-session support
  */
@@ -17,7 +41,7 @@ export type LoopOutput =
   | { type: "ready"; session_id: string }
   | { type: "user_message"; session_id: string; id: string; content: string }
   | { type: "thinking"; session_id: string; content: string }
-  | { type: "assistant_message"; session_id: string; id: string; content: string }
+  | { type: "assistant_message"; session_id: string; id: string; content: string; context_usage?: ContextUsage }
   | { type: "tool_start"; session_id: string; id: string; name: string; arguments: Record<string, unknown> }
   | { type: "tool_pending"; session_id: string; id: string; name: string; arguments: Record<string, unknown>; subagent_id?: string }
   | { type: "tool_done"; session_id: string; id: string; name: string; success: boolean; output: string }

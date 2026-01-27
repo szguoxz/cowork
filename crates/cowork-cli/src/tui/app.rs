@@ -381,10 +381,11 @@ impl App {
                     self.ephemeral = Some(delta);
                 }
             }
-            SessionOutput::AssistantMessage { content, .. } => {
+            SessionOutput::AssistantMessage { content, context_usage, .. } => {
                 if !content.is_empty() {
                     self.add_message(Message::assistant(content));
                 }
+                self.context_usage = context_usage;
                 self.status.clear();
                 self.ephemeral = None;
             }
@@ -442,9 +443,6 @@ impl App {
                 } else {
                     self.add_message(Message::system("Plan mode disabled."));
                 }
-            }
-            SessionOutput::ContextUpdate { usage } => {
-                self.context_usage = Some(usage);
             }
         }
     }
