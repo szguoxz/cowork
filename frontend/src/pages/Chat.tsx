@@ -66,9 +66,12 @@ export default function Chat() {
     }
   }
 
+  // Get targetSessionId from modal for subagent routing
+  const targetSessionId = modal?.targetSessionId
+
   const handleApprove = async (toolId: string) => {
     try {
-      await approveTool(toolId)
+      await approveTool(toolId, targetSessionId)
     } catch (err) {
       setError(String(err))
     }
@@ -76,7 +79,7 @@ export default function Chat() {
 
   const handleReject = async (toolId: string) => {
     try {
-      await rejectTool(toolId)
+      await rejectTool(toolId, targetSessionId)
     } catch (err) {
       setError(String(err))
     }
@@ -84,7 +87,7 @@ export default function Chat() {
 
   const handleApproveForSession = async (toolId: string, toolName: string) => {
     try {
-      await approveToolForSession(toolId, toolName)
+      await approveToolForSession(toolId, toolName, targetSessionId)
     } catch (err) {
       setError(String(err))
     }
@@ -92,7 +95,7 @@ export default function Chat() {
 
   const handleApproveAll = async (toolId: string) => {
     try {
-      await approveAllForSession(toolId)
+      await approveAllForSession(toolId, targetSessionId)
     } catch (err) {
       setError(String(err))
     }
@@ -100,7 +103,7 @@ export default function Chat() {
 
   const handleAnswer = async (requestId: string, answers: Record<string, string>) => {
     try {
-      await answerQuestion(requestId, answers)
+      await answerQuestion(requestId, answers, targetSessionId)
     } catch (err) {
       setError(String(err))
     }

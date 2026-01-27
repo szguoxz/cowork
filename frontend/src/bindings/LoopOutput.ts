@@ -19,11 +19,11 @@ export type LoopOutput =
   | { type: "thinking"; session_id: string; content: string }
   | { type: "assistant_message"; session_id: string; id: string; content: string }
   | { type: "tool_start"; session_id: string; id: string; name: string; arguments: Record<string, unknown> }
-  | { type: "tool_pending"; session_id: string; id: string; name: string; arguments: Record<string, unknown> }
+  | { type: "tool_pending"; session_id: string; id: string; name: string; arguments: Record<string, unknown>; subagent_id?: string }
   | { type: "tool_done"; session_id: string; id: string; name: string; success: boolean; output: string }
   | { type: "tool_call"; session_id: string; id: string; name: string; arguments: Record<string, unknown>; formatted: string }
   | { type: "tool_result"; session_id: string; id: string; name: string; success: boolean; output: string; summary: string; diff_preview: DiffLine[] | null }
-  | { type: "question"; session_id: string; request_id: string; questions: Array<{ question: string; header: string | null; options: Array<{ label: string; description: string | null }>; multi_select: boolean }> }
+  | { type: "question"; session_id: string; request_id: string; questions: Array<{ question: string; header: string | null; options: Array<{ label: string; description: string | null }>; multi_select: boolean }>; subagent_id?: string }
   | { type: "idle"; session_id: string }
   | { type: "error"; session_id: string; message: string }
   | { type: "stopped"; session_id: string }

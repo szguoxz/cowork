@@ -214,7 +214,14 @@ export function SessionProvider({ children }: SessionProviderProps) {
       case 'tool_pending':
         updateSession(sessionId, s => ({
           ...s,
-          modal: { type: 'approval', id: output.id, name: output.name, arguments: output.arguments },
+          modal: {
+            type: 'approval',
+            id: output.id,
+            name: output.name,
+            arguments: output.arguments,
+            // If from subagent, route approvals there
+            targetSessionId: output.subagent_id,
+          },
           updatedAt: new Date(),
         }))
         break
@@ -272,7 +279,13 @@ export function SessionProvider({ children }: SessionProviderProps) {
       case 'question':
         updateSession(sessionId, s => ({
           ...s,
-          modal: { type: 'question', request_id: output.request_id, questions: output.questions },
+          modal: {
+            type: 'question',
+            request_id: output.request_id,
+            questions: output.questions,
+            // If from subagent, route answers there
+            targetSessionId: output.subagent_id,
+          },
           updatedAt: new Date(),
         }))
         break

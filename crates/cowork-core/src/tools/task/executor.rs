@@ -364,12 +364,37 @@ pub async fn run_subagent(
             SessionOutput::ToolStart { .. }
             | SessionOutput::ToolCall { .. }
             | SessionOutput::ToolResult { .. }
-            | SessionOutput::Thinking { .. }
-            | SessionOutput::ToolPending { .. }
-            | SessionOutput::Question { .. } => {
-                if let Some(tx) = &config.progress_tx {
-                    // Use subagent's own ID so approvals route back here
-                    let _ = tx.try_send((agent_id.to_string(), output));
+            | SessionOutput::Thinking { .. } => {
+                if let (Some(tx), Some(parent_id)) = (&config.progress_tx, &config.parent_session_id) {
+                    // Forward to parent session for display
+                    let _ = tx.try_send((parent_id.clone(), output));
+                    continue;
+                }
+            }
+            // Approval events need subagent_id for routing responses back
+            SessionOutput::ToolPending { id, name, arguments, description, .. } => {
+                if let (Some(tx), Some(parent_id)) = (&config.progress_tx, &config.parent_session_id) {
+                    // Forward to parent session, but include subagent_id for approval routing
+                    let modified = SessionOutput::ToolPending {
+                        id: id.clone(),
+                        name: name.clone(),
+                        arguments: arguments.clone(),
+                        description: description.clone(),
+                        subagent_id: Some(agent_id.to_string()),
+                    };
+                    let _ = tx.try_send((parent_id.clone(), modified));
+                    continue;
+                }
+            }
+            SessionOutput::Question { request_id, questions, .. } => {
+                if let (Some(tx), Some(parent_id)) = (&config.progress_tx, &config.parent_session_id) {
+                    // Forward to parent session, but include subagent_id for answer routing
+                    let modified = SessionOutput::Question {
+                        request_id: request_id.clone(),
+                        questions: questions.clone(),
+                        subagent_id: Some(agent_id.to_string()),
+                    };
+                    let _ = tx.try_send((parent_id.clone(), modified));
                     continue;
                 }
             }

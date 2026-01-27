@@ -120,6 +120,9 @@ pub enum SessionOutput {
         name: String,
         arguments: serde_json::Value,
         description: Option<String>,
+        /// If this came from a subagent, the subagent's session ID for routing approvals
+        #[serde(skip_serializing_if = "Option::is_none")]
+        subagent_id: Option<String>,
     },
     /// Tool execution completed
     ToolDone {
@@ -158,6 +161,9 @@ pub enum SessionOutput {
     Question {
         request_id: String,
         questions: Vec<QuestionInfo>,
+        /// If this came from a subagent, the subagent's session ID for routing answers
+        #[serde(skip_serializing_if = "Option::is_none")]
+        subagent_id: Option<String>,
     },
     /// Error occurred
     Error { message: String },
@@ -238,6 +244,24 @@ impl SessionOutput {
             name: name.into(),
             arguments,
             description,
+            subagent_id: None,
+        }
+    }
+
+    /// Create a tool pending notification with subagent routing
+    pub fn tool_pending_subagent(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+        description: Option<String>,
+        subagent_id: impl Into<String>,
+    ) -> Self {
+        Self::ToolPending {
+            id: id.into(),
+            name: name.into(),
+            arguments,
+            description,
+            subagent_id: Some(subagent_id.into()),
         }
     }
 

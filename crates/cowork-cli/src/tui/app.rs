@@ -411,7 +411,7 @@ impl App {
                 // Clear ephemeral since we have the result
                 self.ephemeral = None;
             }
-            SessionOutput::Question { request_id, questions } => {
+            SessionOutput::Question { request_id, questions, .. } => {
                 self.modal = Some(Modal::Question(PendingQuestion::new(request_id, questions)));
             }
             SessionOutput::Error { message } => {

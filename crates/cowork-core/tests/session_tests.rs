@@ -256,6 +256,7 @@ mod session_output_tests {
                 name,
                 arguments,
                 description,
+                ..
             } => {
                 assert_eq!(id, "t2");
                 assert_eq!(name, "execute_command");
@@ -340,10 +341,11 @@ mod session_output_tests {
         let output = SessionOutput::Question {
             request_id: "q-123".to_string(),
             questions: vec![question],
+            subagent_id: None,
         };
 
         match output {
-            SessionOutput::Question { request_id, questions } => {
+            SessionOutput::Question { request_id, questions, .. } => {
                 assert_eq!(request_id, "q-123");
                 assert_eq!(questions.len(), 1);
                 assert_eq!(questions[0].question, "Which option do you prefer?");
@@ -382,6 +384,7 @@ mod session_output_tests {
         let output = SessionOutput::Question {
             request_id: "req-1".to_string(),
             questions: vec![question],
+            subagent_id: None,
         };
 
         let json = serde_json::to_string(&output).expect("Serialization failed");
@@ -391,7 +394,7 @@ mod session_output_tests {
 
         let deserialized: SessionOutput = serde_json::from_str(&json).expect("Deserialization failed");
         match deserialized {
-            SessionOutput::Question { request_id, questions } => {
+            SessionOutput::Question { request_id, questions, .. } => {
                 assert_eq!(request_id, "req-1");
                 assert!(questions[0].multi_select);
             }

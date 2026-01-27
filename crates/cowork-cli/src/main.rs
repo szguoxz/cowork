@@ -339,7 +339,7 @@ async fn run_one_shot(
                         .await?;
                 }
             }
-            SessionOutput::Question { request_id, questions } => {
+            SessionOutput::Question { request_id, questions, .. } => {
                 // In one-shot mode, auto-answer questions with first option
                 println!("{}: {} question(s) (auto-answered in one-shot mode)",
                     style("Question").yellow(),

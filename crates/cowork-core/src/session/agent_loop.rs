@@ -529,6 +529,7 @@ impl AgentLoop {
                         self.emit(SessionOutput::Question {
                             request_id: tool_call.id.clone(),
                             questions,
+                            subagent_id: None,
                         }).await;
 
                         // Wait for answer (loop to handle unexpected messages)

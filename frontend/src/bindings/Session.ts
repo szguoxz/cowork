@@ -34,8 +34,8 @@ export interface QuestionData {
 }
 
 export type Modal =
-  | { type: 'approval'; id: string; name: string; arguments: Record<string, unknown> }
-  | { type: 'question'; request_id: string; questions: QuestionData[] }
+  | { type: 'approval'; id: string; name: string; arguments: Record<string, unknown>; targetSessionId?: string }
+  | { type: 'question'; request_id: string; questions: QuestionData[]; targetSessionId?: string }
 
 export interface Session {
   id: string
