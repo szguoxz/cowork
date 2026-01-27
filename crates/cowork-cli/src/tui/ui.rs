@@ -556,20 +556,8 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let time = Local::now().format("%H:%M").to_string();
 
-    // Format context usage if available: in/out/total (percentage%)
-    let context_info = app.context_usage.as_ref().map(|usage| {
-        let input_k = usage.breakdown.input_tokens / 1000;
-        let output_k = usage.breakdown.output_tokens / 1000;
-        let total_k = usage.limit_tokens / 1000;
-        let pct = (usage.used_percentage * 100.0).round() as u32;
-        format!("{}k/{}k/{}k ({}%)", input_k, output_k, total_k, pct)
-    }).unwrap_or_default();
-
-    let right_info = if context_info.is_empty() {
-        format!("cowork {} | {} | {}", app.version, app.provider_info, time)
-    } else {
-        format!("{} | cowork {} | {} | {}", context_info, app.version, app.provider_info, time)
-    };
+    // Context usage is already appended to assistant messages by core
+    let right_info = format!("cowork {} | {} | {}", app.version, app.provider_info, time);
 
     let (left_text, bg_color) = if !app.status.is_empty() {
         (format!("{} {}", app.spinner(), app.status), Color::Blue)

@@ -1,6 +1,5 @@
 //! Application state and types for the TUI
 
-use cowork_core::context::ContextUsage;
 use cowork_core::formatting::{format_ephemeral, truncate_str};
 pub use cowork_core::DiffLine;
 use std::time::Instant;
@@ -235,8 +234,6 @@ pub struct App {
     pub turn_start: Option<Instant>,
     /// Whether plan mode is active
     pub plan_mode: bool,
-    /// Current context usage (tokens used/total)
-    pub context_usage: Option<ContextUsage>,
 }
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -263,7 +260,6 @@ impl App {
             approve_all_session: false,
             turn_start: None,
             plan_mode: false,
-            context_usage: None,
         }
     }
 
@@ -381,23 +377,11 @@ impl App {
                     self.ephemeral = Some(delta);
                 }
             }
-            SessionOutput::AssistantMessage { content, context_usage, input_tokens, output_tokens, .. } => {
+            SessionOutput::AssistantMessage { content, .. } => {
+                // Content already has token usage appended by core (when available)
                 if !content.is_empty() {
-                    // Append token usage to message if available
-                    // Format: [input_k/output_k/context_k (usage%)]
-                    let display_content = match (input_tokens, output_tokens, &context_usage) {
-                        (Some(input), Some(output), Some(usage)) => {
-                            let input_k = input / 1000;
-                            let output_k = output / 1000;
-                            let total_k = usage.limit_tokens / 1000;
-                            let pct = (usage.used_percentage * 100.0).round() as u32;
-                            format!("{} [{}k/{}k/{}k ({}%)]", content, input_k, output_k, total_k, pct)
-                        }
-                        _ => content,
-                    };
-                    self.add_message(Message::assistant(display_content));
+                    self.add_message(Message::assistant(content));
                 }
-                self.context_usage = context_usage;
                 self.status.clear();
                 self.ephemeral = None;
             }
@@ -465,60 +449,31 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cowork_core::context::{ContextBreakdown, ContextUsage};
 
     #[test]
-    fn test_assistant_message_with_token_usage() {
+    fn test_assistant_message_displays_content_as_is() {
         let mut app = App::new("test".to_string(), "0.1.0".to_string());
 
-        let usage = ContextUsage {
-            used_tokens: 45000,
-            limit_tokens: 200000,
-            used_percentage: 0.225,
-            remaining_tokens: 155000,
-            should_compact: false,
-            breakdown: ContextBreakdown {
-                system_tokens: 5000,
-                conversation_tokens: 30000,
-                tool_tokens: 5000,
-                memory_tokens: 5000,
-                input_tokens: 40000,
-                output_tokens: 5000,
-                current_output_tokens: 0,
-            },
-        };
-
-        app.handle_session_output(SessionOutput::AssistantMessage {
-            id: "msg1".to_string(),
-            content: "Hello world".to_string(),
-            context_usage: Some(usage),
-            input_tokens: Some(40000),
-            output_tokens: Some(5000),
-        });
+        // Content comes pre-formatted from core - TUI just displays it
+        app.handle_session_output(SessionOutput::assistant_message(
+            "msg1",
+            "Hello world [40k/5k/200k (23%)]",
+        ));
 
         assert_eq!(app.messages.len(), 2); // Welcome + assistant
         let last_msg = &app.messages[1];
         assert!(matches!(last_msg.message_type, MessageType::Assistant));
-        // Check format: "Hello world [40k/5k/200k (23%)]" (input/output/context)
-        assert!(last_msg.content.contains("Hello world"));
-        assert!(last_msg.content.contains("[40k/5k/200k (23%)]"));
+        assert_eq!(last_msg.content, "Hello world [40k/5k/200k (23%)]");
     }
 
     #[test]
-    fn test_assistant_message_without_token_usage() {
+    fn test_assistant_message_without_token_info() {
         let mut app = App::new("test".to_string(), "0.1.0".to_string());
 
-        app.handle_session_output(SessionOutput::AssistantMessage {
-            id: "msg1".to_string(),
-            content: "Hello world".to_string(),
-            context_usage: None,
-            input_tokens: None,
-            output_tokens: None,
-        });
+        app.handle_session_output(SessionOutput::assistant_message("msg1", "Hello world"));
 
         assert_eq!(app.messages.len(), 2);
         let last_msg = &app.messages[1];
         assert_eq!(last_msg.content, "Hello world");
-        assert!(!last_msg.content.contains("["));
     }
 }

@@ -17,7 +17,28 @@ use genai::WebConfig;
 use genai::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
+
+/// Extract detailed error information from a genai error
+///
+/// Uses Debug format to capture full error details.
+/// Returns (error_message, optional_raw_body)
+fn extract_genai_error_details(e: &genai::Error) -> (String, Option<String>) {
+    // Use Debug format to get all available error information
+    // This is version-agnostic and captures nested error details
+    let error_debug = format!("{:?}", e);
+
+    // Try to extract raw body from the debug output if present
+    // Look for common patterns like `body: "..."` in the debug string
+    let raw_body = if error_debug.contains("body:") {
+        // The body is embedded in the debug output
+        Some(error_debug.clone())
+    } else {
+        None
+    };
+
+    (format!("{}", e), raw_body)
+}
 
 use crate::error::{Error, Result};
 use crate::tools::ToolDefinition;
@@ -498,9 +519,11 @@ impl GenAIProvider {
                 Ok(result)
             }
             Err(e) => {
-                // Use Debug format to get full error chain
-                let error_msg = format!("GenAI error: {:?}", e);
-                // Log failed interaction with request context
+                // Extract detailed error information including raw body when available
+                let (error_details, raw_body) = extract_genai_error_details(&e);
+                let error_msg = format!("GenAI error: {}", error_details);
+
+                // Log failed interaction with request context and raw response
                 log_llm_interaction(LogConfig {
                     model: &self.model,
                     provider: Some("genai"),
@@ -508,16 +531,31 @@ impl GenAIProvider {
                     messages: &messages_for_log,
                     tools: tools_for_log.as_deref(),
                     error: Some(&error_msg),
+                    raw_response: raw_body.as_deref(),
                     ..Default::default()
                 });
-                // Log with tracing for stack context - include request size info
-                tracing::error!(
-                    error = ?e,
-                    model = %self.model,
-                    message_count = messages_for_log.len(),
-                    request_size_chars = request_size_estimate,
-                    "LLM request failed - possible response truncation"
-                );
+
+                // Log with tracing for stack context - include request size info and raw body
+                if let Some(body) = &raw_body {
+                    error!(
+                        error = %error_details,
+                        model = %self.model,
+                        message_count = messages_for_log.len(),
+                        request_size_chars = request_size_estimate,
+                        raw_body_len = body.len(),
+                        raw_body_preview = %if body.len() > 1000 { &body[..1000] } else { body },
+                        "LLM request failed with raw response"
+                    );
+                } else {
+                    error!(
+                        error = %error_details,
+                        model = %self.model,
+                        message_count = messages_for_log.len(),
+                        request_size_chars = request_size_estimate,
+                        "LLM request failed"
+                    );
+                }
+
                 Err(Error::Provider(error_msg))
             }
         }

@@ -18,6 +18,18 @@ use crate::prompt::ComponentRegistry;
 /// Unique identifier for a session
 pub type SessionId = String;
 
+/// Format a token count for display.
+///
+/// Shows actual number when < 1000, otherwise shows as `Nk` (thousands).
+/// Examples: 500 -> "500", 1500 -> "1k", 15000 -> "15k"
+fn format_token_count(tokens: u64) -> String {
+    if tokens < 1000 {
+        tokens.to_string()
+    } else {
+        format!("{}k", tokens / 1000)
+    }
+}
+
 /// Shared registry of session input senders, keyed by session ID.
 ///
 /// Used to route approval/answer inputs to both top-level sessions and subagents.
@@ -237,6 +249,11 @@ impl SessionOutput {
     }
 
     /// Create an assistant message with context usage and token counts
+    ///
+    /// The content will have token usage info appended automatically:
+    /// `[input/output/total (pct%)]`
+    ///
+    /// Token counts are shown as actual numbers when < 1000, otherwise as `Nk`.
     pub fn assistant_message_with_context(
         id: impl Into<String>,
         content: impl Into<String>,
@@ -244,9 +261,23 @@ impl SessionOutput {
         input_tokens: Option<u64>,
         output_tokens: Option<u64>,
     ) -> Self {
+        let base_content = content.into();
+
+        // Format content with token usage appended
+        let display_content = match (input_tokens, output_tokens) {
+            (Some(input), Some(output)) => {
+                let input_str = format_token_count(input);
+                let output_str = format_token_count(output);
+                let total_str = format_token_count(context_usage.limit_tokens as u64);
+                let pct = (context_usage.used_percentage * 100.0).round() as u32;
+                format!("{} [{}/{}/{} ({}%)]", base_content, input_str, output_str, total_str, pct)
+            }
+            _ => base_content,
+        };
+
         Self::AssistantMessage {
             id: id.into(),
-            content: content.into(),
+            content: display_content,
             context_usage: Some(context_usage),
             input_tokens,
             output_tokens,
@@ -433,7 +464,7 @@ impl Default for SessionConfig {
             enable_hooks: None,
             save_session: true,
             session_registry: None,
-            use_rig_provider: true,  // Use Rig provider by default for streaming support
+            use_rig_provider: false,  // Use GenAI provider by default for better error diagnostics
             mcp_manager: None,
         }
     }
