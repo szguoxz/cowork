@@ -22,6 +22,7 @@ use crate::tools::ToolDefinition;
 use super::{ContentBlock, LlmMessage, MessageContent};
 use super::genai_provider::{CompletionResult, PendingToolCall, ProviderType};
 use super::logging::{log_llm_interaction, LogConfig};
+use super::model_listing::get_model_max_output;
 
 /// Event emitted during streaming completion
 #[derive(Debug, Clone)]
@@ -320,7 +321,9 @@ impl RigProvider {
             builder = builder.preamble(system.clone());
         }
 
-        builder = builder.max_tokens(8192);
+        // Use max_output from catalog, default to 8192 if not found
+        let max_output = get_model_max_output(self.provider_type, &self.model).unwrap_or(8192) as u64;
+        builder = builder.max_tokens(max_output);
 
         for msg in history {
             builder = builder.message(msg);
@@ -409,8 +412,9 @@ impl RigProvider {
             builder = builder.preamble(system.clone());
         }
 
-        // Set max tokens
-        builder = builder.max_tokens(8192);
+        // Set max tokens from catalog (default to 8192 if not found)
+        let max_output = get_model_max_output(self.provider_type, &self.model).unwrap_or(8192) as u64;
+        builder = builder.max_tokens(max_output);
 
         // Add chat history
         for msg in history {

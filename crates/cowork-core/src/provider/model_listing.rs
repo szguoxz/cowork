@@ -43,6 +43,27 @@ pub fn get_model_context_limit(provider: ProviderType, model: &str) -> Option<us
     Some(cat_provider.default_model().context)
 }
 
+/// Get max output tokens for a model from the catalog.
+///
+/// Looks up the model in the provider's catalog. If the exact model isn't found,
+/// falls back to the provider's default (balanced tier) max output.
+pub fn get_model_max_output(provider: ProviderType, model: &str) -> Option<usize> {
+    let provider_id = provider.to_string();
+    let cat_provider = catalog::get(&provider_id)?;
+
+    // Check if model matches any of the three tiers
+    for tier in [catalog::ModelTier::Fast, catalog::ModelTier::Balanced, catalog::ModelTier::Powerful] {
+        if let Some(m) = cat_provider.model(tier) {
+            if m.id == model {
+                return Some(m.max_output);
+            }
+        }
+    }
+
+    // Fall back to default (balanced) max output
+    Some(cat_provider.default_model().max_output)
+}
+
 impl ModelInfo {
     pub fn new(id: impl Into<String>) -> Self {
         Self {
@@ -169,6 +190,23 @@ mod tests {
         // MIMO: all same model
         let models = get_known_models(ProviderType::MIMO);
         assert_eq!(models.len(), 1); // just balanced
+    }
+
+    #[test]
+    fn test_get_model_max_output() {
+        // Test Anthropic models have different max_output
+        let opus_max = get_model_max_output(ProviderType::Anthropic, "claude-opus-4-5-20251101");
+        let sonnet_max = get_model_max_output(ProviderType::Anthropic, "claude-sonnet-4-5-20250929");
+        assert_eq!(opus_max, Some(32768)); // Opus: 32k
+        assert_eq!(sonnet_max, Some(65536)); // Sonnet: 64k
+
+        // Test OpenAI models
+        let gpt5_max = get_model_max_output(ProviderType::OpenAI, "gpt-5");
+        assert_eq!(gpt5_max, Some(32768)); // GPT-5: 32k
+
+        // Test fallback for unknown model returns balanced tier
+        let unknown_max = get_model_max_output(ProviderType::Anthropic, "unknown-model");
+        assert_eq!(unknown_max, Some(65536)); // Falls back to balanced (Sonnet 64k)
     }
 
     #[test]

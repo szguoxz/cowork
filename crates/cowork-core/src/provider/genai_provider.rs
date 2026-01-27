@@ -23,6 +23,7 @@ use crate::error::{Error, Result};
 use crate::tools::ToolDefinition;
 use super::catalog;
 use super::logging::{log_llm_interaction, LogConfig};
+use super::model_listing::get_model_max_output;
 
 use super::{ContentBlock, LlmMessage, LlmProvider, LlmRequest, LlmResponse, MessageContent, TokenUsage};
 
@@ -432,10 +433,10 @@ impl GenAIProvider {
             "Sending LLM request"
         );
 
-        // Configure chat options with max_tokens to avoid default limits
-        // DeepSeek default is 4K tokens, max is 8K - we need to set this explicitly
-        // Other providers have higher defaults but setting this doesn't hurt
-        let chat_options = ChatOptions::default().with_max_tokens(8192);
+        // Configure chat options with max_tokens from catalog
+        // Different models have different limits (4K-32K), so use the catalog value
+        let max_output = get_model_max_output(self.provider_type, &self.model).unwrap_or(8192);
+        let chat_options = ChatOptions::default().with_max_tokens(max_output as u32);
 
         // Execute the chat (non-streaming to avoid genai streaming parsing issues)
         // See: https://github.com/jeremychone/rust-genai/issues/XXX
@@ -544,8 +545,9 @@ impl GenAIProvider {
             chat_req = chat_req.append_message(tool_response);
         }
 
-        // Configure chat options with max_tokens
-        let chat_options = ChatOptions::default().with_max_tokens(8192);
+        // Configure chat options with max_tokens from catalog
+        let max_output = get_model_max_output(self.provider_type, &self.model).unwrap_or(8192);
+        let chat_options = ChatOptions::default().with_max_tokens(max_output as u32);
 
         // Execute the chat again (non-streaming)
         let response = self
