@@ -9,6 +9,7 @@
 pub mod filesystem;
 pub mod interaction;
 pub mod lsp;
+pub mod mcp;
 pub mod notebook;
 pub mod planning;
 pub mod process_utils;

@@ -12,6 +12,7 @@ use tracing::info;
 use super::agent_loop::AgentLoop;
 use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
 use crate::error::Result;
+use crate::mcp_manager::McpServerManager;
 use crate::orchestration::SystemPrompt;
 use crate::prompt::TemplateVars;
 use crate::ConfigManager;
@@ -209,6 +210,22 @@ impl SessionManager {
             if let Some(api_key) = provider_config.get_api_key() {
                 session_config = session_config.with_api_key(api_key);
             }
+        }
+
+        // Create MCP server manager from config if servers are configured
+        if !config.mcp_servers.is_empty() {
+            let mcp_manager = Arc::new(McpServerManager::with_configs(config.mcp_servers.clone()));
+
+            // Start enabled servers
+            let results = mcp_manager.start_enabled();
+            for (name, result) in results {
+                match result {
+                    Ok(()) => info!("Started MCP server: {}", name),
+                    Err(e) => tracing::warn!("Failed to start MCP server '{}': {}", name, e),
+                }
+            }
+
+            session_config = session_config.with_mcp_manager(mcp_manager);
         }
 
         session_config

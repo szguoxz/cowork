@@ -9,11 +9,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::config::{ModelTiers, WebSearchConfig};
+use crate::mcp_manager::McpServerManager;
 use crate::provider::ProviderType;
 use crate::session::{SessionOutput, SessionRegistry};
 use crate::tools::filesystem::{EditFile, GlobFiles, GrepFiles, ReadFile, WriteFile};
 use crate::tools::interaction::AskUserQuestion;
 use crate::tools::lsp::LspTool;
+use crate::tools::mcp::create_mcp_tools;
 use crate::tools::notebook::NotebookEdit;
 use crate::tools::planning::{EnterPlanMode, ExitPlanMode, PlanModeState};
 use crate::tools::shell::{ExecuteCommand, KillShell, ShellProcessRegistry};
@@ -51,6 +53,7 @@ pub struct ToolRegistryBuilder {
     include_task: bool,
     include_planning: bool,
     include_interaction: bool,
+    include_mcp: bool,
     tool_scope: Option<ToolScope>,
     skill_registry: Option<Arc<SkillRegistry>>,
     plan_mode_state: Option<Arc<tokio::sync::RwLock<PlanModeState>>>,
@@ -60,6 +63,8 @@ pub struct ToolRegistryBuilder {
     progress_session_id: Option<String>,
     /// Shared session registry for subagent approval routing
     session_registry: Option<SessionRegistry>,
+    /// MCP server manager for external tool integration
+    mcp_manager: Option<Arc<McpServerManager>>,
 }
 
 impl ToolRegistryBuilder {
@@ -79,12 +84,14 @@ impl ToolRegistryBuilder {
             include_task: true,
             include_planning: true,
             include_interaction: true,
+            include_mcp: true,
             tool_scope: None,
             skill_registry: None,
             plan_mode_state: None,
             progress_tx: None,
             progress_session_id: None,
             session_registry: None,
+            mcp_manager: None,
         }
     }
 
@@ -193,6 +200,18 @@ impl ToolRegistryBuilder {
     /// Set the skill registry for the Skill tool
     pub fn with_skill_registry(mut self, registry: Arc<SkillRegistry>) -> Self {
         self.skill_registry = Some(registry);
+        self
+    }
+
+    /// Enable/disable MCP tools
+    pub fn with_mcp(mut self, enabled: bool) -> Self {
+        self.include_mcp = enabled;
+        self
+    }
+
+    /// Set the MCP server manager for external tool integration
+    pub fn with_mcp_manager(mut self, manager: Arc<McpServerManager>) -> Self {
+        self.mcp_manager = Some(manager);
         self
     }
 
@@ -323,6 +342,20 @@ impl ToolRegistryBuilder {
         // Skill tool - when a skill registry is provided
         if let Some(skill_registry) = self.skill_registry {
             registry.register(Arc::new(SkillTool::new(skill_registry, self.workspace.clone())));
+        }
+
+        // MCP tools - when an MCP manager is provided
+        if self.include_mcp {
+            if let Some(ref mcp_manager) = self.mcp_manager {
+                let mcp_tools = create_mcp_tools(mcp_manager.clone());
+                for tool in mcp_tools {
+                    registry.register(tool);
+                }
+                tracing::info!(
+                    tool_count = registry.list().len(),
+                    "Registered MCP tools from server manager"
+                );
+            }
         }
 
         registry

@@ -272,6 +272,11 @@ impl AgentLoop {
             tool_builder = tool_builder.with_session_registry(reg);
         }
 
+        // Add MCP server manager if available
+        if let Some(mcp_manager) = config.mcp_manager.clone() {
+            tool_builder = tool_builder.with_mcp_manager(mcp_manager);
+        }
+
         let tool_registry = tool_builder.build();
 
         let tool_definitions = tool_registry.list();

@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::config::PromptSystemConfig;
 use crate::formatting::DiffLine;
+use crate::mcp_manager::McpServerManager;
 use crate::orchestration::ToolScope;
 use crate::prompt::ComponentRegistry;
 
@@ -379,6 +380,8 @@ pub struct SessionConfig {
     pub session_registry: Option<SessionRegistry>,
     /// Use Rig provider instead of GenAI (better streaming/JSON support)
     pub use_rig_provider: bool,
+    /// MCP server manager for external tool integration
+    pub mcp_manager: Option<Arc<McpServerManager>>,
 }
 
 impl Default for SessionConfig {
@@ -398,6 +401,7 @@ impl Default for SessionConfig {
             save_session: true,
             session_registry: None,
             use_rig_provider: true,  // Use Rig provider by default for streaming support
+            mcp_manager: None,
         }
     }
 }
@@ -486,6 +490,12 @@ impl SessionConfig {
     /// Use Rig provider instead of GenAI (better streaming/JSON support)
     pub fn with_rig_provider(mut self, use_rig: bool) -> Self {
         self.use_rig_provider = use_rig;
+        self
+    }
+
+    /// Set the MCP server manager for external tool integration
+    pub fn with_mcp_manager(mut self, manager: Arc<McpServerManager>) -> Self {
+        self.mcp_manager = Some(manager);
         self
     }
 }
