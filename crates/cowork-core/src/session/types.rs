@@ -115,6 +115,12 @@ pub enum SessionOutput {
         /// Current context usage (tokens used/total)
         #[serde(skip_serializing_if = "Option::is_none")]
         context_usage: Option<ContextUsage>,
+        /// Input tokens for this request (from provider)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        input_tokens: Option<u64>,
+        /// Output tokens for this response (from provider)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output_tokens: Option<u64>,
     },
     /// Tool execution starting (auto-approved or approved by user)
     ToolStart {
@@ -225,19 +231,25 @@ impl SessionOutput {
             id: id.into(),
             content: content.into(),
             context_usage: None,
+            input_tokens: None,
+            output_tokens: None,
         }
     }
 
-    /// Create an assistant message with context usage
+    /// Create an assistant message with context usage and token counts
     pub fn assistant_message_with_context(
         id: impl Into<String>,
         content: impl Into<String>,
         context_usage: ContextUsage,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
     ) -> Self {
         Self::AssistantMessage {
             id: id.into(),
             content: content.into(),
             context_usage: Some(context_usage),
+            input_tokens,
+            output_tokens,
         }
     }
 

@@ -61,8 +61,10 @@ pub struct ContextBreakdown {
     pub memory_tokens: usize,
     /// Input tokens (system + memory + user messages + tool results)
     pub input_tokens: usize,
-    /// Output tokens (assistant messages)
+    /// Output tokens (all assistant messages accumulated)
     pub output_tokens: usize,
+    /// Output tokens for the current response only
+    pub current_output_tokens: usize,
 }
 
 /// Context monitor that tracks token usage and signals when compaction is needed
@@ -203,6 +205,7 @@ impl ContextMonitor {
                 memory_tokens,
                 input_tokens,
                 output_tokens,
+                current_output_tokens: 0,  // Set by caller if known
             },
         }
     }

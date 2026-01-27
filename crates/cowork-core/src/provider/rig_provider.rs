@@ -672,7 +672,12 @@ impl RigProvider {
             );
         }
 
-        Ok(CompletionResult { content, tool_calls })
+        Ok(CompletionResult {
+            content,
+            tool_calls,
+            input_tokens: Some(response.usage.input_tokens),
+            output_tokens: Some(response.usage.output_tokens),
+        })
     }
 
     /// Extract content and tool calls from AssistantContent

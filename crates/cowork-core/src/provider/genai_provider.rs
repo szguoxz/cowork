@@ -152,6 +152,10 @@ pub struct CompletionResult {
     pub content: Option<String>,
     /// Tool calls that need approval before execution
     pub tool_calls: Vec<PendingToolCall>,
+    /// Input tokens used for this request (from provider)
+    pub input_tokens: Option<u64>,
+    /// Output tokens used for this response (from provider)
+    pub output_tokens: Option<u64>,
 }
 
 impl CompletionResult {
@@ -476,6 +480,8 @@ impl GenAIProvider {
                 let result = CompletionResult {
                     content,
                     tool_calls,
+                    input_tokens: None,  // genai doesn't expose usage
+                    output_tokens: None,
                 };
 
                 // Log successful interaction
@@ -588,6 +594,8 @@ impl GenAIProvider {
         Ok(CompletionResult {
             content,
             tool_calls,
+            input_tokens: None,
+            output_tokens: None,
         })
     }
 

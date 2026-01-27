@@ -44,6 +44,10 @@ const MAX_TOOL_RESULT_SIZE: usize = 30_000;
 struct LlmCallResult {
     content: Option<String>,
     tool_calls: Vec<LlmToolCall>,
+    /// Input tokens for this request (from provider)
+    input_tokens: Option<u64>,
+    /// Output tokens for this response (from provider)
+    output_tokens: Option<u64>,
 }
 
 /// Tool call from the LLM
@@ -428,12 +432,17 @@ impl AgentLoop {
             // Generate message ID
             let msg_id = uuid::Uuid::new_v4().to_string();
 
-            // Emit assistant message with context usage
+            // Emit assistant message with context usage and token counts
             let content = response.content.clone().unwrap_or_default();
             let context_usage = self.calculate_context_usage();
             if !content.is_empty() {
-                self.emit(SessionOutput::assistant_message_with_context(&msg_id, &content, context_usage))
-                    .await;
+                self.emit(SessionOutput::assistant_message_with_context(
+                    &msg_id,
+                    &content,
+                    context_usage,
+                    response.input_tokens,
+                    response.output_tokens,
+                )).await;
             }
 
             // Check for tool calls
@@ -741,38 +750,32 @@ impl AgentLoop {
             }
         }
 
-        // Use streaming if available for real-time token output
-        // Set COWORK_NO_STREAMING=1 to disable streaming for debugging (shows full response in llm_log_file)
-        let streaming_disabled = std::env::var("COWORK_NO_STREAMING").is_ok();
-        if streaming_disabled {
-            debug!("Streaming disabled via COWORK_NO_STREAMING env var");
-        }
-
-        if self.provider.supports_streaming() && !streaming_disabled {
-            self.call_llm_streaming(llm_messages, tools).await
-        } else {
-            // Fall back to non-streaming
-            match self.provider.chat(llm_messages, tools).await {
-                Ok(result) => Ok(LlmCallResult {
-                    content: result.content,
-                    tool_calls: result
-                        .tool_calls
-                        .into_iter()
-                        .map(|tc| LlmToolCall {
-                            id: tc.call_id,
-                            name: tc.name,
-                            arguments: tc.arguments,
-                        })
-                        .collect(),
-                }),
-                Err(e) => Err(crate::error::Error::Provider(e.to_string())),
-            }
+        // Use non-streaming for now to get accurate token counts from provider
+        // TODO: Re-enable streaming once we capture usage from Final event
+        match self.provider.chat(llm_messages, tools).await {
+            Ok(result) => Ok(LlmCallResult {
+                content: result.content,
+                tool_calls: result
+                    .tool_calls
+                    .into_iter()
+                    .map(|tc| LlmToolCall {
+                        id: tc.call_id,
+                        name: tc.name,
+                        arguments: tc.arguments,
+                    })
+                    .collect(),
+                input_tokens: result.input_tokens,
+                output_tokens: result.output_tokens,
+            }),
+            Err(e) => Err(crate::error::Error::Provider(e.to_string())),
         }
     }
 
     /// Call the LLM with streaming enabled
     ///
     /// Emits TextDelta events as tokens arrive for real-time display.
+    /// Currently unused - using non-streaming to get accurate token counts.
+    #[allow(dead_code)]
     async fn call_llm_streaming(
         &self,
         messages: Vec<crate::provider::LlmMessage>,
@@ -905,9 +908,12 @@ impl AgentLoop {
         }
 
         // Log the successful streaming interaction
+        // Note: streaming doesn't provide usage info directly, need to get from Final event
         let result = CompletionResult {
             content: if content.is_empty() { None } else { Some(content.clone()) },
             tool_calls: pending_tool_calls,
+            input_tokens: None,  // TODO: capture from streaming Final event
+            output_tokens: None,
         };
         self.provider.log_streaming_interaction(
             &messages_for_log,
@@ -919,6 +925,8 @@ impl AgentLoop {
         Ok(LlmCallResult {
             content: if content.is_empty() { None } else { Some(content) },
             tool_calls,
+            input_tokens: None,  // Streaming doesn't easily expose usage
+            output_tokens: None,
         })
     }
 

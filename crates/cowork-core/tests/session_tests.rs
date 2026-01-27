@@ -220,7 +220,7 @@ mod session_output_tests {
     fn test_assistant_message_creation() {
         let output = SessionOutput::assistant_message("msg-2", "Here's my response");
         match output {
-            SessionOutput::AssistantMessage { id, content, context_usage } => {
+            SessionOutput::AssistantMessage { id, content, context_usage, .. } => {
                 assert_eq!(id, "msg-2");
                 assert_eq!(content, "Here's my response");
                 assert!(context_usage.is_none());

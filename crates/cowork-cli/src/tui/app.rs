@@ -381,17 +381,19 @@ impl App {
                     self.ephemeral = Some(delta);
                 }
             }
-            SessionOutput::AssistantMessage { content, context_usage, .. } => {
+            SessionOutput::AssistantMessage { content, context_usage, input_tokens, output_tokens, .. } => {
                 if !content.is_empty() {
-                    // Append context usage to message if available
-                    let display_content = if let Some(ref usage) = context_usage {
-                        let input_k = usage.breakdown.input_tokens / 1000;
-                        let output_k = usage.breakdown.output_tokens / 1000;
-                        let total_k = usage.limit_tokens / 1000;
-                        let pct = (usage.used_percentage * 100.0).round() as u32;
-                        format!("{} [{}k/{}k/{}k ({}%)]", content, input_k, output_k, total_k, pct)
-                    } else {
-                        content
+                    // Append token usage to message if available
+                    // Format: [input_k/output_k/context_k (usage%)]
+                    let display_content = match (input_tokens, output_tokens, &context_usage) {
+                        (Some(input), Some(output), Some(usage)) => {
+                            let input_k = input / 1000;
+                            let output_k = output / 1000;
+                            let total_k = usage.limit_tokens / 1000;
+                            let pct = (usage.used_percentage * 100.0).round() as u32;
+                            format!("{} [{}k/{}k/{}k ({}%)]", content, input_k, output_k, total_k, pct)
+                        }
+                        _ => content,
                     };
                     self.add_message(Message::assistant(display_content));
                 }
@@ -466,7 +468,7 @@ mod tests {
     use cowork_core::context::{ContextBreakdown, ContextUsage};
 
     #[test]
-    fn test_assistant_message_with_context_usage() {
+    fn test_assistant_message_with_token_usage() {
         let mut app = App::new("test".to_string(), "0.1.0".to_string());
 
         let usage = ContextUsage {
@@ -482,6 +484,7 @@ mod tests {
                 memory_tokens: 5000,
                 input_tokens: 40000,
                 output_tokens: 5000,
+                current_output_tokens: 0,
             },
         };
 
@@ -489,24 +492,28 @@ mod tests {
             id: "msg1".to_string(),
             content: "Hello world".to_string(),
             context_usage: Some(usage),
+            input_tokens: Some(40000),
+            output_tokens: Some(5000),
         });
 
         assert_eq!(app.messages.len(), 2); // Welcome + assistant
         let last_msg = &app.messages[1];
         assert!(matches!(last_msg.message_type, MessageType::Assistant));
-        // Check format: "Hello world [40k/5k/200k (23%)]"
+        // Check format: "Hello world [40k/5k/200k (23%)]" (input/output/context)
         assert!(last_msg.content.contains("Hello world"));
         assert!(last_msg.content.contains("[40k/5k/200k (23%)]"));
     }
 
     #[test]
-    fn test_assistant_message_without_context_usage() {
+    fn test_assistant_message_without_token_usage() {
         let mut app = App::new("test".to_string(), "0.1.0".to_string());
 
         app.handle_session_output(SessionOutput::AssistantMessage {
             id: "msg1".to_string(),
             content: "Hello world".to_string(),
             context_usage: None,
+            input_tokens: None,
+            output_tokens: None,
         });
 
         assert_eq!(app.messages.len(), 2);
