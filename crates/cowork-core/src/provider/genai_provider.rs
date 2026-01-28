@@ -25,6 +25,8 @@ struct RetryConfig {
     empty_response_delay: Duration,
     /// Delay before retrying on rate limit
     rate_limit_delay: Duration,
+    /// Delay before retrying on JSON parse error
+    json_error_delay: Duration,
     /// Maximum retries per error type
     max_retries: u32,
 }
@@ -34,6 +36,7 @@ impl Default for RetryConfig {
         Self {
             empty_response_delay: Duration::from_secs(5),
             rate_limit_delay: Duration::from_secs(60),
+            json_error_delay: Duration::from_secs(5),
             max_retries: 1,
         }
     }
@@ -43,6 +46,18 @@ impl Default for RetryConfig {
 fn is_rate_limit_error(e: &genai::Error) -> bool {
     let error_str = format!("{:?}", e);
     error_str.contains("429") || error_str.to_lowercase().contains("rate limit")
+}
+
+/// Check if an error indicates a JSON parse failure
+/// This happens when the provider returns HTTP 200 but with malformed/truncated JSON
+fn is_json_parse_error(e: &genai::Error) -> bool {
+    let error_str = format!("{:?}", e);
+    // Check for common JSON parse error indicators
+    error_str.contains("expected") && (error_str.contains("line") || error_str.contains("column"))
+        || error_str.to_lowercase().contains("json")
+        || error_str.contains("invalid type")
+        || error_str.contains("missing field")
+        || error_str.contains("EOF while parsing")
 }
 
 /// Extract detailed error information from a genai error
@@ -486,6 +501,7 @@ impl GenAIProvider {
         let retry_config = RetryConfig::default();
         let mut empty_retries = 0u32;
         let mut rate_limit_retries = 0u32;
+        let mut json_error_retries = 0u32;
 
         // Execute with retry logic
         loop {
@@ -496,6 +512,9 @@ impl GenAIProvider {
 
             match chat_res {
                 Ok(response) => {
+                    // Capture raw response debug BEFORE consuming it
+                    let raw_response = format!("{:#?}", response);
+
                     // Extract content
                     let content = response.first_text().map(|s| s.to_string());
 
@@ -545,7 +564,7 @@ impl GenAIProvider {
                         output_tokens: None,
                     };
 
-                    // Log successful interaction
+                    // Log successful interaction with raw response
                     log_llm_interaction(LogConfig {
                         model: &self.model,
                         provider: Some("genai"),
@@ -553,6 +572,7 @@ impl GenAIProvider {
                         messages: &messages_for_log,
                         tools: tools_for_log.as_deref(),
                         result: Some(&result),
+                        raw_response: Some(&raw_response),
                         ..Default::default()
                     });
 
@@ -569,6 +589,21 @@ impl GenAIProvider {
                             "Rate limit hit, retrying"
                         );
                         tokio::time::sleep(retry_config.rate_limit_delay).await;
+                        continue;
+                    }
+
+                    // Check for JSON parse error - retry if configured
+                    // This can happen when provider returns truncated/malformed response
+                    if is_json_parse_error(&e) && json_error_retries < retry_config.max_retries {
+                        json_error_retries += 1;
+                        warn!(
+                            model = %self.model,
+                            retry = json_error_retries,
+                            delay_secs = retry_config.json_error_delay.as_secs(),
+                            error = %e,
+                            "JSON parse error, retrying"
+                        );
+                        tokio::time::sleep(retry_config.json_error_delay).await;
                         continue;
                     }
 
