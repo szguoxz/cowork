@@ -189,11 +189,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
         break
 
       case 'assistant_message': {
-        // Append context usage to message content if available
-        const usage = output.context_usage
-        const displayContent = usage
-          ? `${output.content} [${Math.round(usage.breakdown.input_tokens / 1000)}k/${Math.round(usage.breakdown.output_tokens / 1000)}k/${Math.round(usage.limit_tokens / 1000)}k (${Math.round(usage.used_percentage * 100)}%)]`
-          : output.content
+        // Content already has token usage appended by core (when available)
         updateSession(sessionId, s => ({
           ...s,
           status: '',
@@ -201,7 +197,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
           messages: [...s.messages, {
             id: output.id,
             type: 'assistant' as const,
-            content: displayContent,
+            content: output.content,
           }],
           contextUsage: output.context_usage,
           updatedAt: new Date(),
