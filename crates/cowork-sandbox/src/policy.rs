@@ -39,7 +39,7 @@ fn paranoid_config(root: PathBuf) -> SandboxConfig {
         root: root.clone(),
         network: NetworkPolicy::deny_all(),
         filesystem: FilesystemPolicy {
-            read_paths: [root.clone()].into_iter().collect(),
+            read_paths: [root].into_iter().collect(),
             write_paths: HashSet::new(),
             exec_paths: HashSet::new(),
             blocked_paths: default_blocked_paths(),
@@ -76,7 +76,7 @@ fn strict_config(root: PathBuf) -> SandboxConfig {
         network: NetworkPolicy::deny_all(),
         filesystem: FilesystemPolicy {
             read_paths,
-            write_paths: [root.clone()].into_iter().collect(),
+            write_paths: [root].into_iter().collect(),
             exec_paths,
             blocked_paths: default_blocked_paths(),
         },
@@ -123,7 +123,7 @@ fn standard_config(root: PathBuf) -> SandboxConfig {
         },
         filesystem: FilesystemPolicy {
             read_paths,
-            write_paths: [root.clone()].into_iter().collect(),
+            write_paths: [root].into_iter().collect(),
             exec_paths,
             blocked_paths: default_blocked_paths(),
         },
@@ -137,7 +137,7 @@ fn relaxed_config(root: PathBuf) -> SandboxConfig {
         network: NetworkPolicy::allow_all(),
         filesystem: FilesystemPolicy {
             read_paths: HashSet::new(), // Allow reading anywhere not blocked
-            write_paths: [root.clone()].into_iter().collect(),
+            write_paths: [root].into_iter().collect(),
             exec_paths: HashSet::new(), // Allow executing anywhere not blocked
             blocked_paths: default_blocked_paths(),
         },

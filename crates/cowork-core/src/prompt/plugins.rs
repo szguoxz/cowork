@@ -222,7 +222,7 @@ impl Plugin {
 
     /// Load agent definitions
     fn load_agents(&mut self) -> Result<(), PluginError> {
-        for pattern in &self.manifest.agents.clone() {
+        for pattern in &self.manifest.agents {
             let full_pattern = self.base_path.join(pattern);
             let pattern_str = full_pattern.to_string_lossy();
 
@@ -260,7 +260,7 @@ impl Plugin {
 
     /// Load skill definitions
     fn load_skills(&mut self) -> Result<(), PluginError> {
-        for pattern in &self.manifest.skills.clone() {
+        for pattern in &self.manifest.skills {
             let full_pattern = self.base_path.join(pattern);
             let pattern_str = full_pattern.to_string_lossy();
 
@@ -301,7 +301,7 @@ impl Plugin {
 
     /// Load command definitions
     fn load_commands(&mut self) -> Result<(), PluginError> {
-        for pattern in &self.manifest.commands.clone() {
+        for pattern in &self.manifest.commands {
             let full_pattern = self.base_path.join(pattern);
             let pattern_str = full_pattern.to_string_lossy();
 

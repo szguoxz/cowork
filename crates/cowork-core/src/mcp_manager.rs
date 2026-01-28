@@ -142,7 +142,7 @@ impl McpServerManager {
         let mut servers = manager.servers.lock().unwrap();
         for (name, config) in configs {
             servers.insert(name.clone(), McpServerInstance {
-                name: name.clone(),
+                name,
                 config,
                 status: McpServerStatus::Stopped,
                 connection: None,
