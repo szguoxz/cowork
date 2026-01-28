@@ -411,7 +411,13 @@ impl OnboardingWizard {
         spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
         // Create provider and make test call
-        let provider = GenAIProvider::with_api_key(provider_id, api_key, Some(model));
+        let provider = match GenAIProvider::with_api_key(provider_id, api_key, Some(model)) {
+            Ok(p) => p,
+            Err(e) => {
+                spinner.finish_and_clear();
+                return Err(e.into());
+            }
+        };
 
         let test_messages = vec![cowork_core::provider::ChatMessage::user("Say 'hello' in one word.")];
 

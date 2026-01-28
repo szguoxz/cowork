@@ -39,11 +39,63 @@ impl ExecuteCommand {
     }
 
     fn is_command_blocked(&self, command: &str) -> bool {
+        // Normalize command: collapse whitespace, trim
+        let normalized: String = command
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+
+        // Check for blocked patterns in the normalized command
         for blocked in &self.config.blocked_commands {
-            if command.contains(blocked) {
+            let blocked_lower = blocked.to_lowercase();
+            if normalized.contains(&blocked_lower) {
                 return true;
             }
         }
+
+        // Extract first word as the base command (handles paths like /usr/bin/sudo)
+        if let Some(first_word) = normalized.split_whitespace().next() {
+            let base_cmd = first_word
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(first_word)
+                .strip_suffix(".exe")
+                .or_else(|| first_word.strip_suffix(".cmd"))
+                .or_else(|| first_word.strip_suffix(".bat"))
+                .unwrap_or(first_word);
+
+            // Block sudo/su/doas regardless of how they appear
+            if matches!(base_cmd, "sudo" | "su" | "doas" | "pkexec") {
+                return true;
+            }
+
+            // Block direct invocation of dangerous system commands
+            if matches!(base_cmd, "mkfs" | "fdisk" | "parted" | "dd" | "format" | "bcdedit") {
+                return true;
+            }
+        }
+
+        // Check for dangerous patterns that indicate privilege escalation or system destruction
+        let dangerous_patterns = [
+            // Fork bombs
+            ":(){ :|:&};:",
+            // System directory destruction
+            "rm -rf /",
+            "rm -rf /*",
+            "rm -fr /",
+            "rm -fr /*",
+            "rmdir /s /q c:",
+            "rd /s /q c:",
+            "del /f /s /q c:",
+        ];
+
+        for pattern in dangerous_patterns {
+            if normalized.contains(&pattern.to_lowercase()) {
+                return true;
+            }
+        }
+
         false
     }
 }

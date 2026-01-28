@@ -13,6 +13,7 @@
 //! - open_sessions_folder: Open sessions folder in file manager
 
 use std::collections::HashMap;
+use std::path::Path;
 use tauri::State;
 
 use cowork_core::config::McpServerConfig;
@@ -20,6 +21,35 @@ use cowork_core::session::{SessionInput, SessionOutput};
 use cowork_core::skills::installer::{InstallLocation, SkillInstaller};
 
 use crate::state::AppState;
+
+/// Open a folder in the system's default file manager
+fn open_folder_in_file_manager(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    Ok(())
+}
 
 /// Signal that the frontend is ready to receive events
 ///
@@ -260,13 +290,15 @@ pub async fn add_mcp_server(
     let config = if command.starts_with("http://") || command.starts_with("https://") {
         McpServerConfig::new_http(&command)
     } else {
-        // Parse command string into command + args
-        let parts: Vec<&str> = command.split_whitespace().collect();
+        // Parse command string into command + args using shell-aware parsing
+        // This handles quoted arguments properly (e.g., npx server --path "/path with spaces")
+        let parts = shlex::split(&command)
+            .ok_or_else(|| "Failed to parse command (check for unmatched quotes)".to_string())?;
         if parts.is_empty() {
             return Err("Command cannot be empty".to_string());
         }
-        let cmd = parts[0].to_string();
-        let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+        let cmd = parts[0].clone();
+        let args: Vec<String> = parts[1..].to_vec();
         McpServerConfig::new(cmd).with_args(args)
     };
 
@@ -469,32 +501,7 @@ pub async fn open_sessions_folder() -> Result<String, String> {
         .map_err(|e| format!("Failed to create sessions directory: {}", e))?;
 
     let path_str = sessions_dir.display().to_string();
-
-    // Open in file manager
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&sessions_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(&sessions_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&sessions_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
-    }
-
+    open_folder_in_file_manager(&sessions_dir)?;
     Ok(path_str)
 }
 
@@ -512,7 +519,8 @@ pub async fn open_config_folder() -> Result<String, String> {
     let config_path = cowork_core::config::ConfigManager::default_config_path()
         .map_err(|e| format!("Failed to get config path: {}", e))?;
 
-    let config_dir = config_path.parent()
+    let config_dir = config_path
+        .parent()
         .ok_or_else(|| "Could not determine config directory".to_string())?;
 
     // Create directory if it doesn't exist
@@ -520,31 +528,6 @@ pub async fn open_config_folder() -> Result<String, String> {
         .map_err(|e| format!("Failed to create config directory: {}", e))?;
 
     let path_str = config_dir.display().to_string();
-
-    // Open in file manager
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(config_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(config_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(config_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
-    }
-
+    open_folder_in_file_manager(config_dir)?;
     Ok(path_str)
 }

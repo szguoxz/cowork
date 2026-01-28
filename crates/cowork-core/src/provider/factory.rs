@@ -101,7 +101,7 @@ pub fn create_provider_from_config(
             &api_key,
             Some(model),
             provider_config.base_url.as_deref(),
-        ));
+        )?);
     }
 
     // No config for this provider, try environment variable
@@ -111,7 +111,7 @@ pub fn create_provider_from_config(
                 provider_id,
                 &api_key,
                 model_override,
-            ));
+            )?);
         }
 
     Err(Error::Config(format!(
@@ -130,11 +130,14 @@ pub fn create_provider_from_config(
 ///
 /// # Returns
 /// A configured GenAIProvider instance
+///
+/// # Errors
+/// Returns an error if the provider is not supported
 pub fn create_provider_with_settings(
     provider_id: &str,
     api_key: &str,
     model: &str,
-) -> GenAIProvider {
+) -> Result<GenAIProvider> {
     GenAIProvider::with_api_key(provider_id, api_key, Some(model))
 }
 
@@ -164,12 +167,12 @@ pub fn create_provider_from_provider_config(
         ))
     })?;
 
-    Ok(GenAIProvider::with_config(
+    GenAIProvider::with_config(
         provider_id,
         &api_key,
         Some(&config.model),
         config.base_url.as_deref(),
-    ))
+    )
 }
 
 #[cfg(test)]
@@ -242,7 +245,7 @@ mod tests {
             "anthropic",
             "test-key",
             catalog::default_model("anthropic").unwrap(),
-        );
+        ).unwrap();
         assert_eq!(provider.name(), "anthropic");
     }
 }

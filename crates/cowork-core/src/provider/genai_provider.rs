@@ -61,6 +61,11 @@ fn is_rate_limit_error(e: &genai::Error) -> bool {
 /// This happens when the provider returns HTTP 200 but with malformed/truncated JSON
 fn is_json_parse_error(e: &genai::Error) -> bool {
     match e {
+        // Direct serde JSON errors (e.g., EOF while parsing, truncated response)
+        genai::Error::SerdeJson(_) => true,
+        // Stream parse errors
+        genai::Error::StreamParse { .. } => true,
+        // Web errors with invalid JSON
         genai::Error::WebModelCall { webc_error, .. }
         | genai::Error::WebAdapterCall { webc_error, .. } => matches!(
             webc_error,
@@ -141,9 +146,9 @@ impl GenAIProvider {
     /// Create a new provider with default settings (uses environment variables for auth)
     ///
     /// The provider_id is looked up in the catalog to get the adapter and default model.
-    pub fn new(provider_id: &str, model: Option<&str>) -> Self {
+    pub fn new(provider_id: &str, model: Option<&str>) -> Result<Self> {
         let provider = catalog::get(provider_id)
-            .unwrap_or_else(|| panic!("Unknown provider: {}", provider_id));
+            .ok_or_else(|| Error::Config(format!("Unknown provider: {}", provider_id)))?;
         let adapter = provider.adapter;
 
         // Use model mapper to force the correct adapter for this provider
@@ -154,19 +159,19 @@ impl GenAIProvider {
             })
             .build();
 
-        Self {
+        Ok(Self {
             client,
             provider_id: provider_id.to_string(),
             adapter: provider.adapter,
             model: model.unwrap_or(&provider.default_model().id).to_string(),
             system_prompt: None,
-        }
+        })
     }
 
     /// Create a provider with a specific API key
-    pub fn with_api_key(provider_id: &str, api_key: &str, model: Option<&str>) -> Self {
+    pub fn with_api_key(provider_id: &str, api_key: &str, model: Option<&str>) -> Result<Self> {
         let provider = catalog::get(provider_id)
-            .unwrap_or_else(|| panic!("Unknown provider: {}", provider_id));
+            .ok_or_else(|| Error::Config(format!("Unknown provider: {}", provider_id)))?;
         let adapter = provider.adapter;
 
         let api_key = api_key.to_string();
@@ -185,13 +190,13 @@ impl GenAIProvider {
             })
             .build();
 
-        Self {
+        Ok(Self {
             client,
             provider_id: provider_id.to_string(),
             adapter: provider.adapter,
             model: model.unwrap_or(&provider.default_model().id).to_string(),
             system_prompt: None,
-        }
+        })
     }
 
     /// Create a provider with API key and optional custom base URL
@@ -206,9 +211,9 @@ impl GenAIProvider {
         api_key: &str,
         model: Option<&str>,
         base_url: Option<&str>,
-    ) -> Self {
+    ) -> Result<Self> {
         let provider = catalog::get(provider_id)
-            .unwrap_or_else(|| panic!("Unknown provider: {}", provider_id));
+            .ok_or_else(|| Error::Config(format!("Unknown provider: {}", provider_id)))?;
         let adapter = provider.adapter;
 
         let api_key_owned = api_key.to_string();
@@ -235,13 +240,13 @@ impl GenAIProvider {
             })
             .build();
 
-        Self {
+        Ok(Self {
             client,
             provider_id: provider_id.to_string(),
             adapter: provider.adapter,
             model: model.unwrap_or(&provider.default_model().id).to_string(),
             system_prompt: None,
-        }
+        })
     }
 
     /// Set the system prompt
@@ -547,9 +552,9 @@ pub fn create_provider(
     system_prompt: Option<&str>,
 ) -> Result<GenAIProvider> {
     let provider = if let Some(key) = api_key {
-        GenAIProvider::with_api_key(provider_id, key, model)
+        GenAIProvider::with_api_key(provider_id, key, model)?
     } else {
-        GenAIProvider::new(provider_id, model)
+        GenAIProvider::new(provider_id, model)?
     };
 
     let provider = if let Some(prompt) = system_prompt {

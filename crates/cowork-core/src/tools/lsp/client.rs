@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use tracing::debug;
 
+use crate::tools::filesystem::{percent_decode_path, percent_encode_path};
 use crate::tools::process_utils::std_direct_command;
 
 /// LSP client for communicating with a language server
@@ -48,7 +49,7 @@ fn path_to_uri(path: &Path) -> Result<String, String> {
 
     // Convert to forward slashes and encode special characters
     let path_str = abs_path.to_string_lossy().replace('\\', "/");
-    let encoded = percent_encode_uri_path(&path_str);
+    let encoded = percent_encode_path(&path_str);
 
     // Convert to file:// URI
     #[cfg(windows)]
@@ -71,65 +72,7 @@ fn uri_to_path(uri: &str) -> String {
     #[cfg(windows)]
     let path_part = path_part.strip_prefix('/').unwrap_or(path_part);
 
-    percent_decode_uri_path(path_part)
-}
-
-/// Percent-encode special characters in a path for URI use.
-fn percent_encode_uri_path(path: &str) -> String {
-    let mut result = String::with_capacity(path.len() * 2);
-
-    for c in path.chars() {
-        match c {
-            // Characters that must be encoded in URIs
-            ' ' => result.push_str("%20"),
-            '#' => result.push_str("%23"),
-            '%' => result.push_str("%25"),
-            '?' => result.push_str("%3F"),
-            '[' => result.push_str("%5B"),
-            ']' => result.push_str("%5D"),
-            // Keep these as-is (valid in file URIs)
-            '/' | ':' | '@' | '!' | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '=' => {
-                result.push(c)
-            }
-            // Alphanumeric and safe characters
-            c if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' => {
-                result.push(c)
-            }
-            // Encode everything else
-            c => {
-                for byte in c.to_string().bytes() {
-                    result.push_str(&format!("%{:02X}", byte));
-                }
-            }
-        }
-    }
-
-    result
-}
-
-/// Percent-decode a path from a URI.
-fn percent_decode_uri_path(encoded: &str) -> String {
-    let mut result = String::with_capacity(encoded.len());
-    let mut chars = encoded.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            // Try to decode %XX
-            let hex: String = chars.by_ref().take(2).collect();
-            if hex.len() == 2
-                && let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    result.push(byte as char);
-                    continue;
-                }
-            // Invalid encoding, keep as-is
-            result.push('%');
-            result.push_str(&hex);
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
+    percent_decode_path(path_part)
 }
 
 impl LspClient {

@@ -71,10 +71,16 @@ pub async fn update_settings(
     config.approval.show_dialogs = settings.approval.show_confirmation_dialogs;
 
     // Update web search settings if provided
-    if let Some(web_search) = &settings.web_search
-        && let Some(api_key) = &web_search.api_key {
-            config.web_search.api_key = Some(api_key.clone());
-        }
+    // Handle both setting and clearing the API key
+    if let Some(web_search) = &settings.web_search {
+        // If api_key is Some, use it (even if empty string - we'll filter that)
+        // If api_key is None, clear the config value
+        config.web_search.api_key = web_search
+            .api_key
+            .as_ref()
+            .filter(|k| !k.is_empty())
+            .cloned();
+    }
 
     Ok(())
 }
@@ -124,7 +130,15 @@ pub async fn test_api_connection(
                 .to_string()
         });
 
-    let provider = create_provider_with_settings(&provider_type, &api_key, &model_id);
+    let provider = match create_provider_with_settings(&provider_type, &api_key, &model_id) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(ApiTestResult {
+                success: false,
+                message: format!("Failed to create provider: {}", e),
+            });
+        }
+    };
 
     // Try a simple chat
     let messages = vec![ChatMessage::user("Say 'hello' and nothing else.")];

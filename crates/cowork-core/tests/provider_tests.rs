@@ -23,7 +23,9 @@ async fn validate_anthropic_key() -> bool {
         return false;
     }
 
-    let provider = GenAIProvider::new("anthropic", Some("claude-3-5-haiku-20241022"));
+    let Ok(provider) = GenAIProvider::new("anthropic", Some("claude-3-5-haiku-20241022")) else {
+        return false;
+    };
     let messages = vec![ChatMessage::user("Hi")];
 
     provider.chat(messages, None).await.is_ok()
@@ -35,7 +37,9 @@ async fn validate_openai_key() -> bool {
         return false;
     }
 
-    let provider = GenAIProvider::new("openai", Some("gpt-4.1-nano"));
+    let Ok(provider) = GenAIProvider::new("openai", Some("gpt-4.1-nano")) else {
+        return false;
+    };
     let messages = vec![ChatMessage::user("Hi")];
 
     provider.chat(messages, None).await.is_ok()
@@ -97,27 +101,28 @@ mod provider_creation_tests {
 
     #[test]
     fn test_anthropic_provider_creation() {
-        let provider = GenAIProvider::new("anthropic", None);
+        let provider = GenAIProvider::new("anthropic", None).unwrap();
         assert_eq!(provider.provider_id(), "anthropic");
         assert!(provider.model().contains("claude"));
     }
 
     #[test]
     fn test_openai_provider_creation() {
-        let provider = GenAIProvider::new("openai", None);
+        let provider = GenAIProvider::new("openai", None).unwrap();
         assert_eq!(provider.provider_id(), "openai");
         assert!(provider.model().contains("gpt"));
     }
 
     #[test]
     fn test_provider_with_custom_model() {
-        let provider = GenAIProvider::new("anthropic", Some("claude-opus-4-5-20251101"));
+        let provider = GenAIProvider::new("anthropic", Some("claude-opus-4-5-20251101")).unwrap();
         assert_eq!(provider.model(), "claude-opus-4-5-20251101");
     }
 
     #[test]
     fn test_provider_with_system_prompt() {
         let provider = GenAIProvider::new("anthropic", None)
+            .unwrap()
             .with_system_prompt("You are a helpful assistant.");
         assert_eq!(provider.provider_id(), "anthropic");
     }
@@ -129,8 +134,14 @@ mod provider_creation_tests {
             "anthropic",
             "test-key-not-real",
             None,
-        );
+        ).unwrap();
         assert_eq!(provider.provider_id(), "anthropic");
+    }
+
+    #[test]
+    fn test_unknown_provider_returns_error() {
+        let result = GenAIProvider::new("nonexistent-provider", None);
+        assert!(result.is_err());
     }
 }
 
@@ -155,6 +166,7 @@ mod integration_tests {
         }
 
         let provider = GenAIProvider::new("anthropic", None)
+            .unwrap()
             .with_system_prompt("You are a helpful assistant. Keep responses brief.");
 
         let messages = vec![ChatMessage::user("What is 2 + 2? Reply with just the number.")];
@@ -185,6 +197,7 @@ mod integration_tests {
         }
 
         let provider = GenAIProvider::new("openai", None)
+            .unwrap()
             .with_system_prompt("You are a helpful assistant. Keep responses brief.");
 
         let messages = vec![ChatMessage::user("What is 2 + 2? Reply with just the number.")];
@@ -218,6 +231,7 @@ mod integration_tests {
         use serde_json::json;
 
         let provider = GenAIProvider::new("anthropic", None)
+            .unwrap()
             .with_system_prompt("You are a helpful assistant. Use tools when appropriate.");
 
         // Define a simple tool
@@ -269,6 +283,7 @@ mod integration_tests {
         use serde_json::json;
 
         let provider = GenAIProvider::new("openai", None)
+            .unwrap()
             .with_system_prompt("You are a helpful assistant. Use tools when appropriate.");
 
         // Define a simple tool
@@ -317,6 +332,7 @@ mod integration_tests {
         }
 
         let provider = GenAIProvider::new("anthropic", None)
+            .unwrap()
             .with_system_prompt("You are a helpful assistant. Keep responses very brief.");
 
         // First message
