@@ -1,10 +1,10 @@
 //! Context management tests
 //!
-//! Tests for token counting, summarization, context gathering,
+//! Tests for summarization, context gathering,
 //! memory hierarchy, and context monitoring.
 
 use cowork_core::context::{
-    TokenCounter, ConversationSummarizer, SummarizerConfig, ContextGatherer,
+    ConversationSummarizer, SummarizerConfig, ContextGatherer,
     Message, MessageRole, ContextMonitor, MonitorConfig, CompactConfig, MemoryTier,
 };
 use chrono::Utc;
@@ -73,88 +73,6 @@ tokio = { version = "1", features = ["full"] }
     dir
 }
 
-mod token_counter_tests {
-    use super::*;
-
-    fn create_counter() -> TokenCounter {
-        TokenCounter::new("anthropic")
-    }
-
-    #[test]
-    fn test_count_empty_string() {
-        let counter = create_counter();
-        assert_eq!(counter.count(""), 0);
-    }
-
-    #[test]
-    fn test_count_simple_text() {
-        let counter = create_counter();
-        let count = counter.count("Hello, world!");
-        assert!(count > 0, "Should count tokens in simple text");
-        // Roughly 3-4 tokens for "Hello, world!"
-        assert!((2..=10).contains(&count), "Token count should be reasonable: {}", count);
-    }
-
-    #[test]
-    fn test_count_code() {
-        let counter = create_counter();
-        let code = r#"
-fn main() {
-    println!("Hello, world!");
-}
-"#;
-        let count = counter.count(code);
-        assert!(count > 0);
-        println!("Code token count: {}", count);
-    }
-
-    #[test]
-    fn test_count_long_text() {
-        let counter = create_counter();
-        let long_text = "word ".repeat(1000);
-        let count = counter.count(&long_text);
-        // Each "word " should be roughly 1-2 tokens
-        assert!((500..=3000).contains(&count), "Unexpected count: {}", count);
-    }
-
-    #[test]
-    fn test_count_unicode() {
-        let counter = create_counter();
-        let unicode = "Hello 世界! 🌍 Привет мир";
-        let count = counter.count(unicode);
-        assert!(count > 0, "Should handle unicode");
-    }
-
-    #[test]
-    fn test_count_messages() {
-        let counter = create_counter();
-        let messages = vec![
-            msg(MessageRole::User, "Hello, how are you?"),
-            msg(MessageRole::Assistant, "I'm doing well, thank you!"),
-            msg(MessageRole::User, "Can you help me with code?"),
-        ];
-        let count = counter.count_messages(&messages);
-        assert!(count > 0, "Should count tokens in messages");
-    }
-
-    #[test]
-    fn test_context_limit() {
-        let counter = create_counter();
-        let limit = counter.context_limit();
-        // Anthropic models have large context windows
-        assert!(limit >= 100_000, "Context limit should be large: {}", limit);
-    }
-
-    #[test]
-    fn test_should_summarize() {
-        let counter = create_counter();
-        let threshold = counter.summarization_threshold();
-
-        assert!(!counter.should_summarize(threshold / 2));
-        assert!(counter.should_summarize(threshold + 1000));
-    }
-}
-
 mod summarizer_tests {
     use super::*;
 
@@ -162,29 +80,10 @@ mod summarizer_tests {
         ConversationSummarizer::new(SummarizerConfig::default())
     }
 
-    fn create_counter() -> TokenCounter {
-        TokenCounter::new("anthropic")
-    }
-
     #[test]
     fn test_create_summarizer() {
-        let summarizer = create_summarizer();
-        let counter = create_counter();
-        let messages: Vec<Message> = vec![];
-        // Empty messages should not need summarization
-        assert!(!summarizer.needs_summarization(&messages, &counter));
-    }
-
-    #[test]
-    fn test_needs_summarization_small() {
-        let summarizer = create_summarizer();
-        let counter = create_counter();
-        let messages = vec![
-            msg(MessageRole::User, "Hello"),
-            msg(MessageRole::Assistant, "Hi there!"),
-        ];
-        // Small conversation shouldn't need summarization
-        assert!(!summarizer.needs_summarization(&messages, &counter));
+        let _summarizer = create_summarizer();
+        // Just verify it can be created
     }
 
     #[test]
@@ -283,71 +182,6 @@ mod context_gatherer_tests {
 
         // Should produce some output
         println!("Formatted prompt:\n{}", prompt);
-    }
-}
-
-mod integration_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_full_context_pipeline() {
-        let dir = setup_project_workspace();
-
-        // 1. Gather context
-        let gatherer = ContextGatherer::new(dir.path().to_path_buf());
-        let context = gatherer.gather().await;
-        let prompt = gatherer.format_as_prompt(&context);
-
-        // 2. Count tokens
-        let counter = TokenCounter::new("anthropic");
-        let token_count = counter.count(&prompt);
-        // Token count is usize, so it's always >= 0; just verify it's reasonable
-        assert!(token_count < 1_000_000, "Token count should be reasonable");
-        println!("Context tokens: {}", token_count);
-
-        // 3. Check if summarization needed
-        let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let messages = vec![
-            msg(MessageRole::System, &prompt),
-            msg(MessageRole::User, "Help me with this project"),
-        ];
-        let needs_summary = summarizer.needs_summarization(&messages, &counter);
-        println!("Needs summarization: {}", needs_summary);
-    }
-
-    #[test]
-    fn test_token_budget_calculation() {
-        let counter = TokenCounter::new("anthropic");
-
-        let context_limit = counter.context_limit();
-        let threshold = counter.summarization_threshold();
-
-        // Threshold should be less than limit
-        assert!(threshold < context_limit);
-
-        let sample_message = "This is a typical user message that might be sent.";
-        let tokens_per_message = counter.count(sample_message);
-
-        let estimated_messages = threshold / tokens_per_message.max(1);
-        println!("Estimated messages before summarization: {}", estimated_messages);
-        assert!(estimated_messages > 100, "Should fit many messages before summarization");
-    }
-
-    #[test]
-    fn test_different_providers() {
-        let providers = [
-            "anthropic",
-            "openai",
-            "gemini",
-        ];
-
-        for provider_id in providers {
-            let counter = TokenCounter::new(provider_id);
-            let text = "Hello, world! This is a test.";
-            let count = counter.count(text);
-            println!("{} token count: {}", provider_id, count);
-            assert!(count > 0);
-        }
     }
 }
 
@@ -670,11 +504,10 @@ mod compaction_tests {
     #[tokio::test]
     async fn test_compact_small_conversation() {
         let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let counter = TokenCounter::new("anthropic");
         let config = CompactConfig::default().without_llm();
 
         let messages = generate_conversation(5);
-        let result = summarizer.compact(&messages, &counter, config, None).await.unwrap();
+        let result = summarizer.compact(&messages, config, None).await.unwrap();
 
         // Following Anthropic SDK: all messages are summarized into single user message
         assert_eq!(result.messages_summarized, 5);
@@ -684,14 +517,13 @@ mod compaction_tests {
     #[tokio::test]
     async fn test_compact_large_conversation() {
         let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let counter = TokenCounter::new("anthropic");
         let config = CompactConfig::default().without_llm();
 
         let messages = generate_conversation(50);
-        let result = summarizer.compact(&messages, &counter, config, None).await.unwrap();
+        let result = summarizer.compact(&messages, config, None).await.unwrap();
 
         assert_eq!(result.messages_summarized, 50, "Should summarize all messages");
-        assert!(result.tokens_after <= result.tokens_before, "Should reduce tokens");
+        assert!(result.chars_after <= result.chars_before, "Should reduce size");
         assert!(!result.summary.content.is_empty(), "Should have a summary");
         assert!(result.summary.content.contains("<summary>"), "Should wrap in summary tags");
     }
@@ -699,13 +531,12 @@ mod compaction_tests {
     #[tokio::test]
     async fn test_compact_preserves_instructions() {
         let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let counter = TokenCounter::new("anthropic");
         let config = CompactConfig::default()
             .without_llm()
             .with_instructions("API endpoints");
 
         let messages = generate_conversation(30);
-        let result = summarizer.compact(&messages, &counter, config, None).await.unwrap();
+        let result = summarizer.compact(&messages, config, None).await.unwrap();
 
         // The summary should mention the preserved topic
         // (Note: without LLM, this is best-effort heuristic)
@@ -717,11 +548,10 @@ mod compaction_tests {
     async fn test_compact_returns_user_message() {
         // Following Anthropic SDK: summary is a USER message
         let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let counter = TokenCounter::new("anthropic");
         let config = CompactConfig::default().without_llm();
 
         let messages = generate_conversation(30);
-        let result = summarizer.compact(&messages, &counter, config, None).await.unwrap();
+        let result = summarizer.compact(&messages, config, None).await.unwrap();
 
         assert!(matches!(result.summary.role, MessageRole::User), "Summary should be a USER message");
     }
@@ -770,44 +600,5 @@ mod compaction_tests {
 
         // Check that summary was created
         assert!(!summary.content.is_empty());
-    }
-}
-
-mod tiktoken_tests {
-    use super::*;
-
-    #[test]
-    fn test_tiktoken_status() {
-        let counter = TokenCounter::new("anthropic");
-
-        // This test verifies tiktoken integration
-        let is_using = counter.is_using_tiktoken();
-        println!("Using tiktoken: {}", is_using);
-
-        // Token counting should work regardless
-        let count = counter.count("Hello, world!");
-        assert!(count > 0);
-    }
-
-    #[test]
-    fn test_token_counts_reasonable() {
-        let counter = TokenCounter::new("anthropic");
-
-        // Known examples with expected token ranges
-        let examples = [
-            ("Hello", 1, 3),
-            ("Hello, world!", 2, 6),
-            ("The quick brown fox jumps over the lazy dog.", 8, 15),
-            ("fn main() { println!(\"Hello\"); }", 8, 20),
-        ];
-
-        for (text, min, max) in examples {
-            let count = counter.count(text);
-            assert!(
-                count >= min && count <= max,
-                "Token count for '{}' should be {}-{}, got {}",
-                text, min, max, count
-            );
-        }
     }
 }
