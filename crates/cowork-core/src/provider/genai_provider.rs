@@ -313,7 +313,7 @@ impl GenAIProvider {
                 .with_web_config(Self::default_web_config())
                 .with_auth_resolver(auth_resolver)
                 .with_service_target_resolver_fn(move |mut target: ServiceTarget| {
-                    target.endpoint = endpoint.clone();
+                    target.endpoint = endpoint;
                     Ok(target)
                 })
                 .build()
