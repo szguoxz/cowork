@@ -272,7 +272,7 @@ impl GenAIProvider {
         let api_key = api_key.to_string();
         let auth_resolver = AuthResolver::from_resolver_fn(
             move |_model_iden| -> std::result::Result<Option<AuthData>, genai::resolver::Error> {
-                Ok(Some(AuthData::from_single(api_key.clone())))
+                Ok(Some(AuthData::from_single(api_key)))
             },
         );
 
@@ -303,7 +303,7 @@ impl GenAIProvider {
         let api_key_owned = api_key.to_string();
         let auth_resolver = AuthResolver::from_resolver_fn(
             move |_model_iden| -> std::result::Result<Option<AuthData>, genai::resolver::Error> {
-                Ok(Some(AuthData::from_single(api_key_owned.clone())))
+                Ok(Some(AuthData::from_single(api_key_owned)))
             },
         );
 
