@@ -120,7 +120,9 @@ static CATALOG: LazyLock<HashMap<String, Provider>> = LazyLock::new(|| {
 
 /// Get a provider by ID
 pub fn get(provider_id: &str) -> Option<&'static Provider> {
-    CATALOG.get(provider_id)
+    // Normalize to lowercase for case-insensitive lookup
+    let normalized = provider_id.to_lowercase();
+    CATALOG.get(&normalized)
 }
 
 /// Get all providers
@@ -228,5 +230,21 @@ mod tests {
         assert!(provider.model(ModelTier::Fast).is_some());
         assert!(provider.model(ModelTier::Balanced).is_some());
         assert!(provider.model(ModelTier::Powerful).is_some());
+    }
+
+    #[test]
+    fn test_case_insensitive_lookup() {
+        // Lowercase (canonical)
+        assert!(get("anthropic").is_some());
+        // Uppercase
+        assert!(get("ANTHROPIC").is_some());
+        // Mixed case
+        assert!(get("Anthropic").is_some());
+        assert!(get("OpenAI").is_some());
+        assert!(get("DeepSeek").is_some());
+
+        // Context window should work with any case
+        assert_eq!(context_window("ANTHROPIC"), context_window("anthropic"));
+        assert_eq!(context_window("OpenAI"), context_window("openai"));
     }
 }
