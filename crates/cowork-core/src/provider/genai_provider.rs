@@ -512,9 +512,6 @@ impl GenAIProvider {
 
             match chat_res {
                 Ok(response) => {
-                    // Capture raw response debug BEFORE consuming it
-                    let raw_response = format!("{:#?}", response);
-
                     // Extract token usage BEFORE consuming response
                     let input_tokens = response.usage.prompt_tokens.map(|t| t as u64);
                     let output_tokens = response.usage.completion_tokens.map(|t| t as u64);
@@ -568,7 +565,7 @@ impl GenAIProvider {
                         output_tokens,
                     };
 
-                    // Log successful interaction with raw response
+                    // Log successful interaction (no raw HTTP body available from genai)
                     log_llm_interaction(LogConfig {
                         model: &self.model,
                         provider: Some("genai"),
@@ -576,7 +573,6 @@ impl GenAIProvider {
                         messages: &messages_for_log,
                         tools: tools_for_log.as_deref(),
                         result: Some(&result),
-                        raw_response: Some(&raw_response),
                         ..Default::default()
                     });
 
