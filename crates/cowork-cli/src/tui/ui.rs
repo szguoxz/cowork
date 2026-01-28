@@ -584,26 +584,52 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
     let prompt = "You> ";
     let input_active = app.modal.is_none();
 
-    let (input_text, input_style, border_style) = if input_active {
-        (
-            format!("{}{}", prompt, app.input.value()),
-            Style::default(),
-            Style::default().fg(Color::Cyan),
-        )
-    } else {
-        (
-            format!("{}(waiting...)", prompt),
-            Style::default().fg(Color::DarkGray),
-            Style::default().fg(Color::DarkGray),
-        )
-    };
-
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Input ")
-        .border_style(border_style);
+        .border_style(if input_active {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        });
 
-    let paragraph = Paragraph::new(input_text)
+    // Calculate available width for text (inside borders)
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let prompt_len = prompt.len();
+    let text_width = inner_width.saturating_sub(prompt_len);
+
+    let (display_text, cursor_offset, input_style) = if input_active {
+        let input_value = app.input.value();
+        let cursor_pos = app.input.visual_cursor();
+
+        // Calculate scroll offset to keep cursor visible
+        // Leave some margin so cursor isn't at the very edge
+        let margin = 5.min(text_width / 4);
+        let scroll_offset = if cursor_pos >= text_width.saturating_sub(margin) {
+            cursor_pos.saturating_sub(text_width.saturating_sub(margin))
+        } else {
+            0
+        };
+
+        // Get the visible portion of the input
+        let chars: Vec<char> = input_value.chars().collect();
+        let visible_start = scroll_offset.min(chars.len());
+        let visible_end = (scroll_offset + text_width).min(chars.len());
+        let visible_text: String = chars[visible_start..visible_end].iter().collect();
+
+        // Add scroll indicator if text is scrolled
+        let prefix = if scroll_offset > 0 { "…" } else { "" };
+        let suffix = if visible_end < chars.len() { "…" } else { "" };
+
+        let display = format!("{}{}{}{}", prompt, prefix, visible_text, suffix);
+        let cursor_in_view = cursor_pos.saturating_sub(scroll_offset);
+
+        (display, cursor_in_view + prompt_len + prefix.len(), Style::default())
+    } else {
+        (format!("{}(waiting...)", prompt), 0, Style::default().fg(Color::DarkGray))
+    };
+
+    let paragraph = Paragraph::new(display_text)
         .style(input_style)
         .block(block);
 
@@ -611,7 +637,7 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
 
     // Set cursor position when input is active
     if input_active {
-        let cursor_x = area.x + 1 + prompt.len() as u16 + app.input.visual_cursor() as u16;
+        let cursor_x = area.x + 1 + cursor_offset as u16;
         let cursor_y = area.y + 1;
         frame.set_cursor_position((cursor_x.min(area.x + area.width - 2), cursor_y));
     }
