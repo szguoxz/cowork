@@ -198,8 +198,8 @@ impl AgentLoop {
             config.system_prompt.as_ref().map(|s| s.len()).unwrap_or(0),
         );
         let provider = match config.api_key.as_deref() {
-            Some(key) => GenAIProvider::with_api_key(&config.provider_id, key, config.model.as_deref()),
-            None => GenAIProvider::new(&config.provider_id, config.model.as_deref()),
+            Some(key) => GenAIProvider::with_api_key(&config.provider_id, key, config.model.as_deref())?,
+            None => GenAIProvider::new(&config.provider_id, config.model.as_deref())?,
         };
         let provider = match config.system_prompt.as_deref() {
             Some(prompt) => provider.with_system_prompt(prompt),
@@ -396,12 +396,25 @@ impl AgentLoop {
             // Emit assistant message with token usage appended to content
             let content = response.content.clone().unwrap_or_default();
             if !content.is_empty() {
+                // Calculate context usage for display
+                let messages = self.chat_messages_to_context_messages();
+                let tool_defs_json =
+                    serde_json::to_string(&self.tool_definitions).unwrap_or_default();
+                let ctx_usage = self.context_monitor.calculate_usage(
+                    &messages,
+                    &self.session.system_prompt,
+                    Some(&tool_defs_json),
+                );
+
                 self.emit(SessionOutput::assistant_message_with_tokens(
                     &msg_id,
                     &content,
                     response.input_tokens,
                     response.output_tokens,
-                )).await;
+                    Some(ctx_usage.used_tokens),
+                    Some(ctx_usage.limit_tokens),
+                ))
+                .await;
             }
 
             // Check for tool calls
@@ -464,23 +477,8 @@ impl AgentLoop {
             // Spawn auto-approved tools in parallel
             let mut join_set: JoinSet<SpawnedToolResult> = JoinSet::new();
             for tool_call in &auto_approved {
-                // Format the tool call for display
-                let formatted = format_tool_call(&tool_call.fn_name, &tool_call.fn_arguments);
-
                 // Emit tool_start (ephemeral) and tool_call (persistent) before spawning
-                self.emit(SessionOutput::tool_start(
-                    &tool_call.call_id,
-                    &tool_call.fn_name,
-                    tool_call.fn_arguments.clone(),
-                ))
-                .await;
-                self.emit(SessionOutput::tool_call(
-                    &tool_call.call_id,
-                    &tool_call.fn_name,
-                    tool_call.fn_arguments.clone(),
-                    formatted,
-                ))
-                .await;
+                self.emit_tool_execution_start(tool_call).await;
 
                 if let Some(tool) = self.tool_registry.get(&tool_call.fn_name) {
                     let id = tool_call.call_id.clone();
@@ -743,23 +741,8 @@ impl AgentLoop {
             }
         }
 
-        // Format the tool call for display
-        let formatted = format_tool_call(&tool_call.fn_name, &tool_call.fn_arguments);
-
         // Emit tool start (ephemeral) and tool call (persistent)
-        self.emit(SessionOutput::tool_start(
-            &tool_call.call_id,
-            &tool_call.fn_name,
-            tool_call.fn_arguments.clone(),
-        ))
-        .await;
-        self.emit(SessionOutput::tool_call(
-            &tool_call.call_id,
-            &tool_call.fn_name,
-            tool_call.fn_arguments.clone(),
-            formatted,
-        ))
-        .await;
+        self.emit_tool_execution_start(&tool_call).await;
 
         // Find and execute the tool
         let (result, inject_message) = if let Some(tool) = self.tool_registry.get(&tool_call.fn_name) {
@@ -1253,6 +1236,26 @@ impl AgentLoop {
         {
             error!("Failed to emit output: {}", e);
         }
+    }
+
+    /// Emit tool execution start events (both ephemeral tool_start and persistent tool_call)
+    async fn emit_tool_execution_start(&self, tool_call: &ToolCall) {
+        let formatted = format_tool_call(&tool_call.fn_name, &tool_call.fn_arguments);
+
+        self.emit(SessionOutput::tool_start(
+            &tool_call.call_id,
+            &tool_call.fn_name,
+            tool_call.fn_arguments.clone(),
+        ))
+        .await;
+
+        self.emit(SessionOutput::tool_call(
+            &tool_call.call_id,
+            &tool_call.fn_name,
+            tool_call.fn_arguments.clone(),
+            formatted,
+        ))
+        .await;
     }
 
     /// Save session to disk

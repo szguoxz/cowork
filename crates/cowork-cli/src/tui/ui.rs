@@ -520,18 +520,24 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
         let mut current_line = String::new();
 
         for word in words {
+            // Use character count instead of byte length for proper UTF-8 handling
+            let word_chars: Vec<char> = word.chars().collect();
+            let word_char_len = word_chars.len();
+            let current_char_len = current_line.chars().count();
+
             if current_line.is_empty() {
-                if word.len() > max_width {
-                    let mut remaining = word;
-                    while remaining.len() > max_width {
-                        lines.push(remaining[..max_width].to_string());
-                        remaining = &remaining[max_width..];
+                if word_char_len > max_width {
+                    // Word is longer than max_width, split by characters
+                    let mut char_iter = word_chars.into_iter();
+                    while char_iter.len() > max_width {
+                        let chunk: String = char_iter.by_ref().take(max_width).collect();
+                        lines.push(chunk);
                     }
-                    current_line = remaining.to_string();
+                    current_line = char_iter.collect();
                 } else {
                     current_line = word.to_string();
                 }
-            } else if current_line.len() + 1 + word.len() <= max_width {
+            } else if current_char_len + 1 + word_char_len <= max_width {
                 current_line.push(' ');
                 current_line.push_str(word);
             } else {
@@ -559,8 +565,15 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Context usage is already appended to assistant messages by core
     let right_info = format!("cowork {} | {} | {}", app.version, app.provider_info, time);
 
+    // Build left side: plan mode indicator + status
+    let plan_indicator = if app.plan_mode { "[PLAN] " } else { "" };
     let (left_text, bg_color) = if !app.status.is_empty() {
-        (format!("{} {}", app.spinner(), app.status), Color::Blue)
+        (
+            format!("{}{} {}", plan_indicator, app.spinner(), app.status),
+            if app.plan_mode { Color::Magenta } else { Color::Blue },
+        )
+    } else if app.plan_mode {
+        (plan_indicator.trim().to_string(), Color::Magenta)
     } else {
         (String::new(), Color::DarkGray)
     };

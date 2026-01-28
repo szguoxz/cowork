@@ -73,8 +73,8 @@ impl SessionStorage {
     /// Generate a filename for a session
     fn session_filename(&self, id: &str, created_at: DateTime<Utc>) -> PathBuf {
         let date = created_at.format("%Y-%m-%d");
-        let short_id = &id[..8.min(id.len())];
-        self.sessions_dir.join(format!("{}_{}.json", date, short_id))
+        // Use full session ID to avoid collisions
+        self.sessions_dir.join(format!("{}_{}.json", date, id))
     }
 
     /// Save a session to disk
@@ -97,9 +97,9 @@ impl SessionStorage {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().map(|e| e == "json").unwrap_or(false) {
-                // Check if filename contains the ID
+                // Check if filename ends with the session ID
                 if let Some(filename) = path.file_stem().and_then(|f| f.to_str())
-                    && filename.contains(&id[..8.min(id.len())]) {
+                    && filename.ends_with(id) {
                         return self.load_from_path(&path);
                     }
             }
@@ -167,7 +167,7 @@ impl SessionStorage {
             let path = entry.path();
             if path.extension().map(|e| e == "json").unwrap_or(false)
                 && let Some(filename) = path.file_stem().and_then(|f| f.to_str())
-                    && filename.contains(&id[..8.min(id.len())]) {
+                    && filename.ends_with(id) {
                         return std::fs::remove_file(&path);
                     }
         }
@@ -279,7 +279,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let storage = SessionStorage::with_dir(dir.path().to_path_buf());
 
-        // Create a few sessions with unique IDs (must differ in first 8 chars)
+        // Create a few sessions with unique IDs
         for i in 0..3 {
             let session = SessionData {
                 id: format!("test{:04}-session", i),

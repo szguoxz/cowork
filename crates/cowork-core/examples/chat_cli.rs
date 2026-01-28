@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Create provider
-    let provider = GenAIProvider::new(provider_id, None)
+    let provider = GenAIProvider::new(provider_id, None)?
         .with_system_prompt(SYSTEM_PROMPT);
 
     // Create tool registry

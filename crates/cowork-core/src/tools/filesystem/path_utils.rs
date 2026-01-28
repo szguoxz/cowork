@@ -174,7 +174,7 @@ pub fn uri_to_path(uri: &str) -> Result<PathBuf, ToolError> {
 }
 
 /// Percent-encode special characters in a path for URI use.
-fn percent_encode_path(path: &str) -> String {
+pub fn percent_encode_path(path: &str) -> String {
     let mut result = String::with_capacity(path.len() * 2);
 
     for c in path.chars() {
@@ -207,7 +207,7 @@ fn percent_encode_path(path: &str) -> String {
 }
 
 /// Percent-decode a path from a URI.
-fn percent_decode_path(encoded: &str) -> String {
+pub fn percent_decode_path(encoded: &str) -> String {
     let mut result = String::with_capacity(encoded.len());
     let mut chars = encoded.chars().peekable();
 
