@@ -409,21 +409,20 @@ impl AgentLoop {
             // Emit assistant message with token usage appended to content
             let content = response.content.clone().unwrap_or_default();
             if !content.is_empty() {
-                // Calculate context usage for display
-                let messages = self.chat_messages_to_context_messages();
-                let tool_defs_json =
-                    serde_json::to_string(&self.tool_definitions).unwrap_or_default();
-                let ctx_usage = self.context_monitor.calculate_usage(
-                    &messages,
-                    &self.session.system_prompt,
-                    Some(&tool_defs_json),
-                );
+                // Use LLM-reported tokens for context usage (more accurate than local estimate)
+                // context_used = input + output tokens from this request
+                let context_used = match (response.input_tokens, response.output_tokens) {
+                    (Some(input), Some(output)) => Some((input + output) as usize),
+                    (Some(input), None) => Some(input as usize),
+                    _ => None,
+                };
+                let context_limit = self.context_monitor.context_limit();
 
                 debug!(
                     input_tokens = ?response.input_tokens,
                     output_tokens = ?response.output_tokens,
-                    ctx_used = ctx_usage.used_tokens,
-                    ctx_limit = ctx_usage.limit_tokens,
+                    context_used = ?context_used,
+                    context_limit = context_limit,
                     "Emitting assistant message with tokens"
                 );
 
@@ -432,8 +431,8 @@ impl AgentLoop {
                     &content,
                     response.input_tokens,
                     response.output_tokens,
-                    Some(ctx_usage.used_tokens),
-                    Some(ctx_usage.limit_tokens),
+                    context_used,
+                    Some(context_limit),
                 ))
                 .await;
             }

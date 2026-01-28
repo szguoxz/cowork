@@ -103,6 +103,11 @@ impl ContextMonitor {
         }
     }
 
+    /// Get the context limit for this provider/model
+    pub fn context_limit(&self) -> usize {
+        self.counter.context_limit()
+    }
+
     /// Create a new context monitor with model and custom config
     pub fn with_model_and_config(
         provider_id: impl Into<String>,
