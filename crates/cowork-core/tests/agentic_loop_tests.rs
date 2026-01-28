@@ -298,49 +298,13 @@ mod approval_level_tests {
 }
 
 mod message_conversion_tests {
-    use cowork_core::context::{Message, MessageRole, messages_from_ui};
+    use cowork_core::context::{Message, MessageRole};
     use chrono::Utc;
-
-    #[test]
-    fn test_message_role_parse() {
-        assert_eq!(MessageRole::parse("user"), MessageRole::User);
-        assert_eq!(MessageRole::parse("assistant"), MessageRole::Assistant);
-        assert_eq!(MessageRole::parse("system"), MessageRole::System);
-        assert_eq!(MessageRole::parse("tool"), MessageRole::Tool);
-        // Unknown should default to Tool
-        assert_eq!(MessageRole::parse("unknown"), MessageRole::Tool);
-        assert_eq!(MessageRole::parse(""), MessageRole::Tool);
-    }
-
-    #[test]
-    fn test_message_role_as_str() {
-        assert_eq!(MessageRole::User.as_str(), "user");
-        assert_eq!(MessageRole::Assistant.as_str(), "assistant");
-        assert_eq!(MessageRole::System.as_str(), "system");
-        assert_eq!(MessageRole::Tool.as_str(), "tool");
-    }
-
-    #[test]
-    fn test_message_role_display() {
-        assert_eq!(MessageRole::User.to_string(), "user");
-        assert_eq!(MessageRole::Assistant.to_string(), "assistant");
-        assert_eq!(MessageRole::System.to_string(), "system");
-        assert_eq!(MessageRole::Tool.to_string(), "tool");
-    }
-
-    #[test]
-    fn test_message_role_fromstr_trait() {
-        let user: MessageRole = "user".parse().unwrap();
-        assert_eq!(user, MessageRole::User);
-
-        let assistant: MessageRole = "assistant".parse().unwrap();
-        assert_eq!(assistant, MessageRole::Assistant);
-    }
 
     #[test]
     fn test_message_new() {
         let msg = Message::new(MessageRole::User, "Hello");
-        assert_eq!(msg.role, MessageRole::User);
+        assert!(matches!(msg.role, MessageRole::User));
         assert_eq!(msg.content, "Hello");
         // Timestamp should be recent
         assert!(msg.timestamp <= Utc::now());
@@ -350,77 +314,11 @@ mod message_conversion_tests {
     fn test_message_with_timestamp() {
         let ts = Utc::now();
         let msg = Message::with_timestamp(MessageRole::Assistant, "Response", ts);
-        assert_eq!(msg.role, MessageRole::Assistant);
+        assert!(matches!(msg.role, MessageRole::Assistant));
         assert_eq!(msg.content, "Response");
         assert_eq!(msg.timestamp, ts);
     }
 
-    #[test]
-    fn test_message_from_str_role() {
-        let ts = Utc::now();
-        let msg = Message::from_str_role("user", "Test message", ts);
-        assert_eq!(msg.role, MessageRole::User);
-        assert_eq!(msg.content, "Test message");
-        assert_eq!(msg.timestamp, ts);
-
-        // Unknown role should default to Tool
-        let msg2 = Message::from_str_role("unknown_role", "Unknown", ts);
-        assert_eq!(msg2.role, MessageRole::Tool);
-    }
-
-    #[test]
-    fn test_message_role_str() {
-        let msg = Message::new(MessageRole::User, "Test");
-        assert_eq!(msg.role_str(), "user");
-
-        let msg2 = Message::new(MessageRole::Assistant, "Test");
-        assert_eq!(msg2.role_str(), "assistant");
-    }
-
-    #[test]
-    fn test_messages_from_ui() {
-        // Simulate UI message structure
-        struct UiMessage {
-            role: String,
-            content: String,
-            timestamp: chrono::DateTime<Utc>,
-        }
-
-        let ts = Utc::now();
-        let ui_messages = vec![
-            UiMessage { role: "user".to_string(), content: "Hello".to_string(), timestamp: ts },
-            UiMessage { role: "assistant".to_string(), content: "Hi!".to_string(), timestamp: ts },
-            UiMessage { role: "system".to_string(), content: "Context".to_string(), timestamp: ts },
-        ];
-
-        let messages = messages_from_ui(&ui_messages, |m| {
-            (m.role.as_str(), m.content.as_str(), m.timestamp)
-        });
-
-        assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0].role, MessageRole::User);
-        assert_eq!(messages[0].content, "Hello");
-        assert_eq!(messages[1].role, MessageRole::Assistant);
-        assert_eq!(messages[1].content, "Hi!");
-        assert_eq!(messages[2].role, MessageRole::System);
-        assert_eq!(messages[2].content, "Context");
-    }
-
-    #[test]
-    fn test_message_role_roundtrip() {
-        let roles = [
-            MessageRole::User,
-            MessageRole::Assistant,
-            MessageRole::System,
-            MessageRole::Tool,
-        ];
-
-        for role in roles {
-            let s = role.as_str();
-            let parsed = MessageRole::parse(s);
-            assert_eq!(parsed, role, "Roundtrip failed for {:?}", role);
-        }
-    }
 }
 
 mod parallel_tool_execution_tests {

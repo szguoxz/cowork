@@ -734,7 +734,7 @@ impl AgentLoop {
             };
             // Append as a system reminder on the last user message
             if let Some(last_user) = llm_messages.iter_mut().rev()
-                .find(|m| m.role == crate::provider::Role::User)
+                .find(|m| matches!(m.role, crate::provider::ChatRole::User))
             {
                 let suffix = format!("\n\n<system-reminder>\n{}\n</system-reminder>", reminder);
                 match &mut last_user.content {

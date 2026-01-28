@@ -23,12 +23,12 @@ pub mod update;
 
 pub use approval::{ApprovalLevel, ApprovalPolicy, ApprovalRequest, ToolApprovalConfig};
 pub use config::{defaults, Config, ConfigManager, McpServerConfig, ModelTiers, ProviderConfig};
-pub use context::{messages_from_ui, Context, Message, MessageRole, Workspace};
+pub use context::{Context, Message, MessageRole, Workspace};
 pub use mcp_manager::{McpServerInfo, McpServerManager, McpServerStatus, McpToolInfo};
 pub use error::{Error, Result};
 pub use provider::{
     create_provider_from_config, create_provider_from_provider_config, create_provider_with_settings,
-    get_api_key, get_model_tiers, has_api_key_configured, ProviderType, Role,
+    get_api_key, get_model_tiers, has_api_key_configured, ProviderType, ChatRole,
 };
 pub use skills::{Skill, SkillContext, SkillRegistry, SkillResult};
 pub use tools::{standard_tool_definitions, Tool, ToolDefinition, ToolOutput, ToolRegistry};

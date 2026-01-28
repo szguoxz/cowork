@@ -634,7 +634,7 @@ mod question_types_tests {
 
 mod tool_result_format_tests {
     use cowork_core::orchestration::ChatSession;
-    use cowork_core::provider::{ContentBlock, MessageContent, Role};
+    use cowork_core::provider::{ContentBlock, MessageContent, ChatRole};
 
     /// Test that single tool result creates proper content block format
     #[test]
@@ -662,11 +662,11 @@ mod tool_result_format_tests {
 
         // Find the tool result message
         let tool_result_msg = llm_messages.iter()
-            .find(|m| m.role == Role::User && matches!(&m.content, MessageContent::Blocks(_)))
+            .find(|m| matches!(m.role, ChatRole::User) && matches!(&m.content, MessageContent::Blocks(_)))
             .expect("Should have tool result message");
 
         // Verify it's a USER message with content blocks
-        assert_eq!(tool_result_msg.role, Role::User);
+        assert!(matches!(tool_result_msg.role, ChatRole::User));
         if let MessageContent::Blocks(blocks) = &tool_result_msg.content {
             assert_eq!(blocks.len(), 1);
             match &blocks[0] {
@@ -749,7 +749,7 @@ mod tool_result_format_tests {
         assert_eq!(llm_messages.len(), 3);
 
         let tool_result_msg = &llm_messages[2];
-        assert_eq!(tool_result_msg.role, Role::User);
+        assert!(matches!(tool_result_msg.role, ChatRole::User));
 
         if let MessageContent::Blocks(blocks) = &tool_result_msg.content {
             // Should have 2 tool results in a single message
@@ -847,7 +847,7 @@ mod tool_result_format_tests {
         let llm_messages = session.to_llm_messages();
         let assistant_msg = &llm_messages[1];
 
-        assert_eq!(assistant_msg.role, Role::Assistant);
+        assert!(matches!(assistant_msg.role, ChatRole::Assistant));
 
         if let MessageContent::Blocks(blocks) = &assistant_msg.content {
             // Should have text + tool_use blocks

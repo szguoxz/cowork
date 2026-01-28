@@ -480,13 +480,13 @@ impl GenAIProvider {
         // Convert messages with proper tool call/result handling
         for msg in messages {
             match msg.role {
-                super::Role::User => {
+                genai::chat::ChatRole::User => {
                     chat_req = self.convert_user_message(&msg, chat_req);
                 }
-                super::Role::Assistant => {
+                genai::chat::ChatRole::Assistant => {
                     chat_req = self.convert_assistant_message(&msg, chat_req);
                 }
-                super::Role::Tool => {
+                genai::chat::ChatRole::Tool => {
                     // Tool result message (legacy format, kept for compatibility)
                     if let Some(call_id) = &msg.tool_call_id {
                         let content = msg.content_as_text();
@@ -494,7 +494,7 @@ impl GenAIProvider {
                         chat_req = chat_req.append_message(tool_response);
                     }
                 }
-                super::Role::System => {
+                genai::chat::ChatRole::System => {
                     let content = msg.content_as_text();
                     chat_req = chat_req.append_message(ChatMessage::system(&content));
                 }
@@ -798,7 +798,7 @@ impl LlmProvider for GenAIProvider {
             messages.insert(
                 0,
                 LlmMessage {
-                    role: super::Role::System,
+                    role: genai::chat::ChatRole::System,
                     content: MessageContent::Text(system.clone()),
                     tool_calls: None,
                     tool_call_id: None,

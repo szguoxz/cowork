@@ -301,12 +301,12 @@ impl ChatSession {
 
     /// Convert messages to LLM format
     pub fn to_llm_messages(&self) -> Vec<crate::provider::LlmMessage> {
-        use crate::provider::{LlmMessage, MessageContent, Role};
+        use crate::provider::{LlmMessage, MessageContent, parse_role};
 
         self.messages
             .iter()
             .map(|m| {
-                let role = Role::parse(&m.role);
+                let role = parse_role(&m.role);
 
                 // If message has content_blocks, use them
                 if !m.content_blocks.is_empty() {
@@ -582,7 +582,7 @@ mod tests {
 
     #[test]
     fn test_chat_session_to_llm_messages_text_only() {
-        use crate::provider::Role;
+        use crate::provider::ChatRole;
 
         let mut session = ChatSession::new();
         session.add_user_message("Hello");
@@ -590,13 +590,13 @@ mod tests {
 
         let llm_messages = session.to_llm_messages();
         assert_eq!(llm_messages.len(), 2);
-        assert_eq!(llm_messages[0].role, Role::User);
-        assert_eq!(llm_messages[1].role, Role::Assistant);
+        assert!(matches!(llm_messages[0].role, ChatRole::User));
+        assert!(matches!(llm_messages[1].role, ChatRole::Assistant));
     }
 
     #[test]
     fn test_chat_session_to_llm_messages_with_tool_calls() {
-        use crate::provider::{MessageContent, Role};
+        use crate::provider::{MessageContent, ChatRole};
 
         let mut session = ChatSession::new();
         session.add_user_message("Read file");
@@ -608,10 +608,10 @@ mod tests {
         assert_eq!(llm_messages.len(), 3);
 
         // User message
-        assert_eq!(llm_messages[0].role, Role::User);
+        assert!(matches!(llm_messages[0].role, ChatRole::User));
 
         // Assistant message with tool call
-        assert_eq!(llm_messages[1].role, Role::Assistant);
+        assert!(matches!(llm_messages[1].role, ChatRole::Assistant));
         match &llm_messages[1].content {
             MessageContent::Blocks(blocks) => {
                 assert!(blocks.len() >= 2); // text + tool_use
@@ -620,7 +620,7 @@ mod tests {
         }
 
         // Tool result message
-        assert_eq!(llm_messages[2].role, Role::User);
+        assert!(matches!(llm_messages[2].role, ChatRole::User));
         match &llm_messages[2].content {
             MessageContent::Blocks(blocks) => {
                 assert_eq!(blocks.len(), 1);

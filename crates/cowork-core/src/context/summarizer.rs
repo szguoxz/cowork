@@ -198,7 +198,7 @@ impl ConversationSummarizer {
 
         let request = LlmRequest::new(vec![
             LlmMessage {
-                role: crate::provider::Role::System,
+                role: crate::provider::ChatRole::System,
                 content: crate::provider::MessageContent::Text(
                     "You are a helpful assistant that summarizes conversations accurately and concisely.".to_string()
                 ),
@@ -274,7 +274,7 @@ impl ConversationSummarizer {
                 }
 
             // Extract topic from user messages
-            if msg.role == MessageRole::User && msg.content.len() > 10 {
+            if matches!(msg.role, MessageRole::User) && msg.content.len() > 10 {
                 let topic: String = msg.content.chars().take(100).collect();
                 topics.push(topic);
             }
@@ -452,7 +452,7 @@ impl ConversationSummarizer {
                 }
 
             // Look for key action indicators
-            if msg.role == MessageRole::Assistant {
+            if matches!(msg.role, MessageRole::Assistant) {
                 if (msg.content.contains("created") || msg.content.contains("Created"))
                     && let Some(action) = extract_action_summary(&msg.content, "created") {
                         key_actions.push(action);
@@ -468,7 +468,7 @@ impl ConversationSummarizer {
             }
 
             // Look for decisions/conclusions
-            if msg.role == MessageRole::User && msg.content.len() > 20 {
+            if matches!(msg.role, MessageRole::User) && msg.content.len() > 20 {
                 let topic: String = msg.content.chars().take(80).collect();
                 decisions.push(topic);
             }

@@ -32,26 +32,17 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 use crate::tools::ToolDefinition;
 
-/// Message role for LLM conversations
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    User,
-    Assistant,
-    System,
-    Tool,
-}
+// Re-export ChatRole from genai as our Role type
+pub use genai::chat::ChatRole;
 
-impl Role {
-    /// Parse a role string into Role
-    pub fn parse(s: &str) -> Self {
-        match s {
-            "user" => Role::User,
-            "assistant" => Role::Assistant,
-            "system" => Role::System,
-            "tool" => Role::Tool,
-            _ => Role::User, // Default for unknown roles
-        }
+/// Parse a role string into ChatRole
+pub fn parse_role(s: &str) -> ChatRole {
+    match s {
+        "user" => ChatRole::User,
+        "assistant" => ChatRole::Assistant,
+        "system" => ChatRole::System,
+        "tool" => ChatRole::Tool,
+        _ => ChatRole::User, // Default for unknown roles
     }
 }
 
@@ -164,7 +155,7 @@ impl From<Vec<ContentBlock>> for MessageContent {
 /// Message for LLM consumption
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmMessage {
-    pub role: Role,
+    pub role: ChatRole,
     /// Content can be simple text or array of content blocks
     pub content: MessageContent,
     /// Tool calls made by the assistant (only for role=Assistant)
@@ -180,7 +171,7 @@ impl LlmMessage {
     /// Create a simple user message
     pub fn user(content: impl Into<String>) -> Self {
         Self {
-            role: Role::User,
+            role: ChatRole::User,
             content: MessageContent::Text(content.into()),
             tool_calls: None,
             tool_call_id: None,
@@ -190,7 +181,7 @@ impl LlmMessage {
     /// Create an assistant message
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
-            role: Role::Assistant,
+            role: ChatRole::Assistant,
             content: MessageContent::Text(content.into()),
             tool_calls: None,
             tool_call_id: None,
@@ -208,7 +199,7 @@ impl LlmMessage {
             blocks.push(ContentBlock::tool_use(&tc.id, &tc.name, tc.arguments.clone()));
         }
         Self {
-            role: Role::Assistant,
+            role: ChatRole::Assistant,
             content: MessageContent::Blocks(blocks),
             tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
             tool_call_id: None,
@@ -219,7 +210,7 @@ impl LlmMessage {
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>, is_error: bool) -> Self {
         let id = tool_call_id.into();
         Self {
-            role: Role::User, // Tool results are user messages with content blocks
+            role: ChatRole::User, // Tool results are user messages with content blocks
             content: MessageContent::Blocks(vec![
                 ContentBlock::tool_result(&id, content, is_error)
             ]),
@@ -231,7 +222,7 @@ impl LlmMessage {
     /// Create a message with multiple tool results (batched)
     pub fn tool_results(results: Vec<ContentBlock>) -> Self {
         Self {
-            role: Role::User,
+            role: ChatRole::User,
             content: MessageContent::Blocks(results),
             tool_calls: None,
             tool_call_id: None,
@@ -497,7 +488,7 @@ mod tests {
     #[test]
     fn test_llm_message_user() {
         let msg = LlmMessage::user("Hello");
-        assert_eq!(msg.role, Role::User);
+        assert!(matches!(msg.role, ChatRole::User));
         match msg.content {
             MessageContent::Text(s) => assert_eq!(s, "Hello"),
             _ => panic!("Expected Text content"),
@@ -507,7 +498,7 @@ mod tests {
     #[test]
     fn test_llm_message_tool_result() {
         let msg = LlmMessage::tool_result("call_123", "Result content", false);
-        assert_eq!(msg.role, Role::User);
+        assert!(matches!(msg.role, ChatRole::User));
         assert_eq!(msg.tool_call_id, Some("call_123".to_string()));
         match &msg.content {
             MessageContent::Blocks(blocks) => {
@@ -532,7 +523,7 @@ mod tests {
             ContentBlock::tool_result("call_2", "Result 2", true),
         ];
         let msg = LlmMessage::tool_results(results);
-        assert_eq!(msg.role, Role::User);
+        assert!(matches!(msg.role, ChatRole::User));
         match &msg.content {
             MessageContent::Blocks(blocks) => {
                 assert_eq!(blocks.len(), 2);
@@ -551,7 +542,7 @@ mod tests {
             }
         ];
         let msg = LlmMessage::assistant_with_tools("Let me read that file", tool_calls);
-        assert_eq!(msg.role, Role::Assistant);
+        assert!(matches!(msg.role, ChatRole::Assistant));
         assert!(msg.tool_calls.is_some());
         match &msg.content {
             MessageContent::Blocks(blocks) => {
@@ -568,7 +559,7 @@ mod tests {
         assert_eq!(msg.content_as_text(), "Hello");
 
         let msg_blocks = LlmMessage {
-            role: Role::User,
+            role: ChatRole::User,
             content: MessageContent::Blocks(vec![
                 ContentBlock::text("Hello "),
                 ContentBlock::text("World"),

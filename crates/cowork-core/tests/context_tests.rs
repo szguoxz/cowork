@@ -201,7 +201,7 @@ mod summarizer_tests {
         let (summary, recent) = summarizer.simple_summary(&messages);
 
         // Summary should be a system message
-        assert_eq!(summary.role, MessageRole::System);
+        assert!(matches!(summary.role, MessageRole::System));
         assert!(!summary.content.is_empty());
 
         // Recent messages should be preserved
@@ -725,7 +725,7 @@ mod compaction_tests {
         let messages = generate_conversation(30);
         let result = summarizer.compact::<cowork_core::provider::MockProvider>(&messages, &counter, config, None).await.unwrap();
 
-        assert_eq!(result.summary.role, MessageRole::User, "Summary should be a USER message");
+        assert!(matches!(result.summary.role, MessageRole::User), "Summary should be a USER message");
     }
 
     #[test]
