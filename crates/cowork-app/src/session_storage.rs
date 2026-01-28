@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use cowork_core::ChatMessage;
+use cowork_core::provider::ChatMessage;
 
 /// Serializable session data (without the provider)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,11 +227,14 @@ impl Default for SessionStorage {
 
 /// Generate a title from the first user message
 pub fn generate_title(messages: &[ChatMessage]) -> Option<String> {
+    use cowork_core::provider::ChatRole;
+
     messages
         .iter()
-        .find(|m| m.role == "user")
-        .map(|m| {
-            let content = m.content.trim();
+        .find(|m| matches!(m.role, ChatRole::User))
+        .and_then(|m| m.content.joined_texts())
+        .map(|content| {
+            let content = content.trim();
             if content.len() > 50 {
                 format!("{}...", &content[..47])
             } else {
@@ -253,14 +256,7 @@ mod tests {
         let session = SessionData {
             id: "test-session-123".to_string(),
             title: Some("Test Session".to_string()),
-            messages: vec![ChatMessage {
-                id: "msg-1".to_string(),
-                role: "user".to_string(),
-                content: "Hello".to_string(),
-                content_blocks: vec![],
-                tool_calls: vec![],
-                timestamp: Utc::now(),
-            }],
+            messages: vec![ChatMessage::user("Hello")],
             system_prompt: "Test prompt".to_string(),
             provider_type: "anthropic".to_string(),
             model: "claude-sonnet-4-20250514".to_string(),

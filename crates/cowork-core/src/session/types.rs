@@ -239,7 +239,7 @@ impl SessionOutput {
     /// Create an assistant message with token usage info appended
     ///
     /// The content will have token usage info appended automatically:
-    /// `[input/output/total (pct%)]`
+    /// `[input/output]`
     ///
     /// Token counts are shown as actual numbers when < 1000, otherwise as `Nk`.
     pub fn assistant_message_with_tokens(
@@ -247,8 +247,6 @@ impl SessionOutput {
         content: impl Into<String>,
         input_tokens: Option<u64>,
         output_tokens: Option<u64>,
-        context_limit: usize,
-        context_used_pct: f32,
     ) -> Self {
         let base_content = content.into();
 
@@ -257,9 +255,7 @@ impl SessionOutput {
             (Some(input), Some(output)) => {
                 let input_str = format_token_count(input);
                 let output_str = format_token_count(output);
-                let total_str = format_token_count(context_limit as u64);
-                let pct = (context_used_pct * 100.0).round() as u32;
-                format!("{} [{}/{}/{} ({}%)]", base_content, input_str, output_str, total_str, pct)
+                format!("{} [{}/{}]", base_content, input_str, output_str)
             }
             _ => base_content,
         };

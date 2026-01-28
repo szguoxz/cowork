@@ -633,7 +633,16 @@ mod question_types_tests {
 
 mod tool_result_format_tests {
     use cowork_core::orchestration::ChatSession;
-    use cowork_core::provider::ChatRole;
+    use cowork_core::provider::{ChatRole, ToolCall};
+
+    fn make_tool_call(id: &str, name: &str, args: serde_json::Value) -> ToolCall {
+        ToolCall {
+            call_id: id.to_string(),
+            fn_name: name.to_string(),
+            fn_arguments: args,
+            thought_signatures: None,
+        }
+    }
 
     /// Test that single tool result creates proper content block format
     #[test]
@@ -645,22 +654,18 @@ mod tool_result_format_tests {
 
         // Add assistant message with tool call
         let tool_calls = vec![
-            cowork_core::orchestration::ToolCallInfo::new(
-                "call_123",
-                "Read",
-                serde_json::json!({"file_path": "/test.txt"})
-            )
+            make_tool_call("call_123", "Read", serde_json::json!({"file_path": "/test.txt"}))
         ];
         session.add_assistant_message("I'll read that file", tool_calls);
 
         // Add tool result
-        session.add_tool_result("call_123", "File contents here");
+        session.add_tool_result("call_123", "File contents here", false);
 
-        // Convert to LLM messages
-        let llm_messages = session.to_llm_messages();
+        // Get messages (already in LLM format)
+        let messages = session.get_messages();
 
         // Find the tool result message (role should be Tool)
-        let tool_result_msg = llm_messages.iter()
+        let tool_result_msg = messages.iter()
             .find(|m| matches!(m.role, ChatRole::Tool))
             .expect("Should have tool result message");
 
@@ -678,20 +683,16 @@ mod tool_result_format_tests {
 
         session.add_user_message("Delete the file");
         let tool_calls = vec![
-            cowork_core::orchestration::ToolCallInfo::new(
-                "call_456",
-                "delete_file",
-                serde_json::json!({"path": "/protected.txt"})
-            )
+            make_tool_call("call_456", "delete_file", serde_json::json!({"path": "/protected.txt"}))
         ];
         session.add_assistant_message("I'll delete that file", tool_calls);
 
         // Add tool result with error
-        session.add_tool_result_with_error("call_456", "Permission denied", true);
+        session.add_tool_result("call_456", "Permission denied", true);
 
-        let llm_messages = session.to_llm_messages();
+        let messages = session.get_messages();
 
-        let tool_result_msg = llm_messages.last().expect("Should have messages");
+        let tool_result_msg = messages.last().expect("Should have messages");
         // Verify it's a tool role message with the error content
         assert!(matches!(tool_result_msg.role, ChatRole::Tool));
         let content = cowork_core::provider::message_text_content(tool_result_msg);
@@ -705,16 +706,8 @@ mod tool_result_format_tests {
 
         session.add_user_message("Read two files");
         let tool_calls = vec![
-            cowork_core::orchestration::ToolCallInfo::new(
-                "call_1",
-                "Read",
-                serde_json::json!({"file_path": "/file1.txt"})
-            ),
-            cowork_core::orchestration::ToolCallInfo::new(
-                "call_2",
-                "Read",
-                serde_json::json!({"file_path": "/file2.txt"})
-            ),
+            make_tool_call("call_1", "Read", serde_json::json!({"file_path": "/file1.txt"})),
+            make_tool_call("call_2", "Read", serde_json::json!({"file_path": "/file2.txt"})),
         ];
         session.add_assistant_message("I'll read both files", tool_calls);
 
@@ -724,14 +717,14 @@ mod tool_result_format_tests {
             ("call_2".to_string(), "Contents of file 2".to_string(), false),
         ]);
 
-        let llm_messages = session.to_llm_messages();
+        let messages = session.get_messages();
 
         // Should be 4 messages: user, assistant (with tool calls), 2x tool results
-        assert_eq!(llm_messages.len(), 4);
+        assert_eq!(messages.len(), 4);
 
         // Verify tool results are Tool role messages
-        assert!(matches!(llm_messages[2].role, ChatRole::Tool));
-        assert!(matches!(llm_messages[3].role, ChatRole::Tool));
+        assert!(matches!(messages[2].role, ChatRole::Tool));
+        assert!(matches!(messages[3].role, ChatRole::Tool));
     }
 
     /// Test that batched results can include both success and error
@@ -741,16 +734,8 @@ mod tool_result_format_tests {
 
         session.add_user_message("Try two operations");
         let tool_calls = vec![
-            cowork_core::orchestration::ToolCallInfo::new(
-                "op_1",
-                "Read",
-                serde_json::json!({"file_path": "/exists.txt"})
-            ),
-            cowork_core::orchestration::ToolCallInfo::new(
-                "op_2",
-                "Read",
-                serde_json::json!({"file_path": "/missing.txt"})
-            ),
+            make_tool_call("op_1", "Read", serde_json::json!({"file_path": "/exists.txt"})),
+            make_tool_call("op_2", "Read", serde_json::json!({"file_path": "/missing.txt"})),
         ];
         session.add_assistant_message("Trying both", tool_calls);
 
@@ -760,10 +745,10 @@ mod tool_result_format_tests {
             ("op_2".to_string(), "File not found".to_string(), true), // Error
         ]);
 
-        let llm_messages = session.to_llm_messages();
+        let messages = session.get_messages();
 
         // Find tool result messages (Tool role)
-        let tool_results: Vec<_> = llm_messages.iter()
+        let tool_results: Vec<_> = messages.iter()
             .filter(|m| matches!(m.role, ChatRole::Tool))
             .collect();
         assert_eq!(tool_results.len(), 2);
@@ -776,16 +761,12 @@ mod tool_result_format_tests {
 
         session.add_user_message("Search for foo");
         let tool_calls = vec![
-            cowork_core::orchestration::ToolCallInfo::new(
-                "grep_1",
-                "Grep",
-                serde_json::json!({"pattern": "foo", "path": "."})
-            ),
+            make_tool_call("grep_1", "Grep", serde_json::json!({"pattern": "foo", "path": "."})),
         ];
         session.add_assistant_message("Let me search for that", tool_calls);
 
-        let llm_messages = session.to_llm_messages();
-        let assistant_msg = &llm_messages[1];
+        let messages = session.get_messages();
+        let assistant_msg = &messages[1];
 
         assert!(matches!(assistant_msg.role, ChatRole::Assistant));
         // Content should include both text and tool calls (as ContentParts)

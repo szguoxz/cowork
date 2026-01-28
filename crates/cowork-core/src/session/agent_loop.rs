@@ -22,9 +22,9 @@ use crate::context::{
     CompactConfig, ContextMonitor, ConversationSummarizer, Message, MessageRole, SummarizerConfig,
 };
 use crate::error::Result;
-use crate::orchestration::{ChatMessage, ChatSession, ToolCallInfo, ToolRegistryBuilder};
+use crate::orchestration::{ChatSession, ToolRegistryBuilder};
 use crate::prompt::{ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig};
-use crate::provider::{GenAIProvider, ToolCall};
+use crate::provider::{ChatMessage, GenAIProvider, ToolCall};
 use crate::skills::SkillRegistry;
 use crate::tools::interaction::ASK_QUESTION_TOOL_NAME;
 use crate::tools::planning::PlanModeState;
@@ -74,29 +74,13 @@ struct SpawnedToolResult {
     subagent_info: Option<SubagentSpawnInfo>,
 }
 
-/// Saved message for persistence
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SavedMessage {
-    pub role: String,
-    pub content: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_calls: Vec<SavedToolCall>,
-}
-
-/// Saved tool call for persistence
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SavedToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: serde_json::Value,
-}
-
 /// Saved session state for persistence
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedSession {
     pub id: String,
     pub name: String,
-    pub messages: Vec<SavedMessage>,
+    /// Messages stored using genai's ChatMessage directly
+    pub messages: Vec<ChatMessage>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -424,17 +408,14 @@ impl AgentLoop {
             // Generate message ID
             let msg_id = uuid::Uuid::new_v4().to_string();
 
-            // Emit assistant message with token counts formatted in content
+            // Emit assistant message with token usage appended to content
             let content = response.content.clone().unwrap_or_default();
             if !content.is_empty() {
-                let ctx = self.calculate_context_usage();
                 self.emit(SessionOutput::assistant_message_with_tokens(
                     &msg_id,
                     &content,
                     response.input_tokens,
                     response.output_tokens,
-                    ctx.limit_tokens,
-                    ctx.used_percentage as f32,
                 )).await;
             }
 
@@ -467,14 +448,8 @@ impl AgentLoop {
                 break;
             }
 
-            // Convert to ToolCallInfo
-            let tool_calls: Vec<ToolCallInfo> = response
-                .tool_calls
-                .iter()
-                .map(|tc| ToolCallInfo::new(&tc.call_id, &tc.fn_name, tc.fn_arguments.clone()))
-                .collect();
-
             // Add assistant message with tool calls
+            let tool_calls = response.tool_calls.clone();
             self.session.add_assistant_message(&content, tool_calls.clone());
 
             // Partition: auto-approved vs needs interaction (approval or question)
@@ -483,18 +458,18 @@ impl AgentLoop {
 
             for tc in &tool_calls {
                 // Log warning if tool call has empty or null arguments
-                if tc.arguments.is_null() ||
-                   (tc.arguments.is_object() && tc.arguments.as_object().map(|o| o.is_empty()).unwrap_or(false)) {
+                if tc.fn_arguments.is_null() ||
+                   (tc.fn_arguments.is_object() && tc.fn_arguments.as_object().map(|o| o.is_empty()).unwrap_or(false)) {
                     warn!(
-                        tool_name = %tc.name,
-                        tool_id = %tc.id,
-                        arguments = ?tc.arguments,
+                        tool_name = %tc.fn_name,
+                        tool_id = %tc.call_id,
+                        arguments = ?tc.fn_arguments,
                         "Tool call received with empty or null arguments"
                     );
                 }
-                if tc.name == ASK_QUESTION_TOOL_NAME {
+                if tc.fn_name == ASK_QUESTION_TOOL_NAME {
                     needs_interaction.push(tc);
-                } else if self.approval_config.should_auto_approve_with_args(&tc.name, &tc.arguments) {
+                } else if self.approval_config.should_auto_approve_with_args(&tc.fn_name, &tc.fn_arguments) {
                     auto_approved.push(tc);
                 } else {
                     needs_interaction.push(tc);
@@ -505,27 +480,27 @@ impl AgentLoop {
             let mut join_set: JoinSet<SpawnedToolResult> = JoinSet::new();
             for tool_call in &auto_approved {
                 // Format the tool call for display
-                let formatted = format_tool_call(&tool_call.name, &tool_call.arguments);
+                let formatted = format_tool_call(&tool_call.fn_name, &tool_call.fn_arguments);
 
                 // Emit tool_start (ephemeral) and tool_call (persistent) before spawning
                 self.emit(SessionOutput::tool_start(
-                    &tool_call.id,
-                    &tool_call.name,
-                    tool_call.arguments.clone(),
+                    &tool_call.call_id,
+                    &tool_call.fn_name,
+                    tool_call.fn_arguments.clone(),
                 ))
                 .await;
                 self.emit(SessionOutput::tool_call(
-                    &tool_call.id,
-                    &tool_call.name,
-                    tool_call.arguments.clone(),
+                    &tool_call.call_id,
+                    &tool_call.fn_name,
+                    tool_call.fn_arguments.clone(),
                     formatted,
                 ))
                 .await;
 
-                if let Some(tool) = self.tool_registry.get(&tool_call.name) {
-                    let id = tool_call.id.clone();
-                    let name = tool_call.name.clone();
-                    let arguments = tool_call.arguments.clone();
+                if let Some(tool) = self.tool_registry.get(&tool_call.fn_name) {
+                    let id = tool_call.call_id.clone();
+                    let name = tool_call.fn_name.clone();
+                    let arguments = tool_call.fn_arguments.clone();
 
                     join_set.spawn(async move {
                         match tool.execute(arguments.clone()).await {
@@ -588,9 +563,9 @@ impl AgentLoop {
                     });
                 } else {
                     // Tool not found - handle immediately
-                    let error_msg = format!("Unknown tool: {}", tool_call.name);
-                    self.session.add_tool_result_with_error(&tool_call.id, &error_msg, true);
-                    self.emit(SessionOutput::tool_done(&tool_call.id, &tool_call.name, false, error_msg)).await;
+                    let error_msg = format!("Unknown tool: {}", tool_call.fn_name);
+                    self.session.add_tool_result(&tool_call.call_id, &error_msg, true);
+                    self.emit(SessionOutput::tool_done(&tool_call.call_id, &tool_call.fn_name, false, error_msg)).await;
                 }
             }
 
@@ -599,10 +574,10 @@ impl AgentLoop {
 
             // Process interaction tools (while spawned tasks run in background)
             for (tool_idx, tool_call) in needs_interaction.iter().enumerate() {
-                if tool_call.name == ASK_QUESTION_TOOL_NAME {
-                    if let Some(questions) = self.parse_questions(&tool_call.arguments) {
+                if tool_call.fn_name == ASK_QUESTION_TOOL_NAME {
+                    if let Some(questions) = self.parse_questions(&tool_call.fn_arguments) {
                         self.emit(SessionOutput::Question {
-                            request_id: tool_call.id.clone(),
+                            request_id: tool_call.call_id.clone(),
                             questions,
                             subagent_id: None,
                         }).await;
@@ -612,9 +587,9 @@ impl AgentLoop {
                             match self.answer_rx.recv().await {
                                 Some(SessionInput::AnswerQuestion { answers, .. }) => {
                                     let result = serde_json::json!({ "answered": true, "answers": answers });
-                                    self.session.add_tool_result(&tool_call.id, result.to_string());
-                                    self.emit(SessionOutput::tool_done(&tool_call.id, ASK_QUESTION_TOOL_NAME, true, result.to_string())).await;
-                                    completed_tool_ids.insert(tool_call.id.clone());
+                                    self.session.add_tool_result(&tool_call.call_id, result.to_string(), false);
+                                    self.emit(SessionOutput::tool_done(&tool_call.call_id, ASK_QUESTION_TOOL_NAME, true, result.to_string())).await;
+                                    completed_tool_ids.insert(tool_call.call_id.clone());
                                     break;
                                 }
                                 Some(SessionInput::Cancel) => {
@@ -637,21 +612,21 @@ impl AgentLoop {
                     }
                 } else {
                     // Needs approval
-                    self.emit(SessionOutput::tool_pending(&tool_call.id, &tool_call.name, tool_call.arguments.clone(), None)).await;
+                    self.emit(SessionOutput::tool_pending(&tool_call.call_id, &tool_call.fn_name, tool_call.fn_arguments.clone(), None)).await;
 
                     // Wait for approval/rejection (loop to handle unexpected messages)
                     loop {
                         match self.answer_rx.recv().await {
                             Some(SessionInput::ApproveTool { .. }) => {
                                 self.execute_tool(tool_call).await;
-                                completed_tool_ids.insert(tool_call.id.clone());
+                                completed_tool_ids.insert(tool_call.call_id.clone());
                                 break;
                             }
                             Some(SessionInput::RejectTool { reason, .. }) => {
                                 let reason = reason.unwrap_or_else(|| "Rejected by user".to_string());
-                                self.session.add_tool_result_with_error(&tool_call.id, &reason, true);
-                                self.emit(SessionOutput::tool_done(&tool_call.id, &tool_call.name, false, reason)).await;
-                                completed_tool_ids.insert(tool_call.id.clone());
+                                self.session.add_tool_result(&tool_call.call_id, &reason, true);
+                                self.emit(SessionOutput::tool_done(&tool_call.call_id, &tool_call.fn_name, false, reason)).await;
+                                completed_tool_ids.insert(tool_call.call_id.clone());
                                 break;
                             }
                             Some(SessionInput::Cancel) => {
@@ -694,7 +669,7 @@ impl AgentLoop {
 
     /// Call the LLM and get a response
     async fn call_llm(&self) -> Result<LlmCallResult> {
-        let mut llm_messages = self.session.to_llm_messages();
+        let mut llm_messages = self.session.get_messages().to_vec();
 
         // Check plan mode state — filter tools and inject reminder
         let plan_state = self.plan_mode_state.read().await;
@@ -748,26 +723,26 @@ impl AgentLoop {
     }
 
     /// Execute a single tool
-    async fn execute_tool(&mut self, tool_call: &ToolCallInfo) {
+    async fn execute_tool(&mut self, tool_call: &ToolCall) {
         // Execute PreToolUse hooks
         if self.hooks_enabled {
-            match self.run_pre_tool_hook(&tool_call.name, &tool_call.arguments) {
+            match self.run_pre_tool_hook(&tool_call.fn_name, &tool_call.fn_arguments) {
                 Err(block_reason) => {
                     // Hook blocked the tool execution
-                    warn!("Tool {} blocked by hook: {}", tool_call.name, block_reason);
+                    warn!("Tool {} blocked by hook: {}", tool_call.fn_name, block_reason);
                     let error_msg = format!("Tool blocked: {}", block_reason);
-                    self.session.add_tool_result_with_error(&tool_call.id, &error_msg, true);
+                    self.session.add_tool_result(&tool_call.call_id, &error_msg, true);
                     self.emit(SessionOutput::tool_done(
-                        &tool_call.id,
-                        &tool_call.name,
+                        &tool_call.call_id,
+                        &tool_call.fn_name,
                         false,
                         &error_msg,
                     ))
                     .await;
                     // Also emit tool_result for the blocked case
                     self.emit(SessionOutput::tool_result(
-                        &tool_call.id,
-                        &tool_call.name,
+                        &tool_call.call_id,
+                        &tool_call.fn_name,
                         false,
                         &error_msg,
                         format!("Blocked: {}", block_reason),
@@ -777,33 +752,33 @@ impl AgentLoop {
                     return;
                 }
                 Ok(Some(ctx)) => {
-                    debug!("PreToolUse hook added context for {}: {} chars", tool_call.name, ctx.len());
+                    debug!("PreToolUse hook added context for {}: {} chars", tool_call.fn_name, ctx.len());
                 }
                 Ok(None) => {}
             }
         }
 
         // Format the tool call for display
-        let formatted = format_tool_call(&tool_call.name, &tool_call.arguments);
+        let formatted = format_tool_call(&tool_call.fn_name, &tool_call.fn_arguments);
 
         // Emit tool start (ephemeral) and tool call (persistent)
         self.emit(SessionOutput::tool_start(
-            &tool_call.id,
-            &tool_call.name,
-            tool_call.arguments.clone(),
+            &tool_call.call_id,
+            &tool_call.fn_name,
+            tool_call.fn_arguments.clone(),
         ))
         .await;
         self.emit(SessionOutput::tool_call(
-            &tool_call.id,
-            &tool_call.name,
-            tool_call.arguments.clone(),
+            &tool_call.call_id,
+            &tool_call.fn_name,
+            tool_call.fn_arguments.clone(),
             formatted,
         ))
         .await;
 
         // Find and execute the tool
-        let (result, inject_message) = if let Some(tool) = self.tool_registry.get(&tool_call.name) {
-            match tool.execute(tool_call.arguments.clone()).await {
+        let (result, inject_message) = if let Some(tool) = self.tool_registry.get(&tool_call.fn_name) {
+            match tool.execute(tool_call.fn_arguments.clone()).await {
                 Ok(tool_output) => {
                     let inject = tool_output.metadata.get(crate::tools::skill::INJECT_AS_MESSAGE)
                         .and_then(|v| v.as_bool())
@@ -814,19 +789,19 @@ impl AgentLoop {
                     let output_str = tool_output.content.to_string();
                     debug!(
                         "Tool {} completed: {} chars",
-                        tool_call.name,
+                        tool_call.fn_name,
                         output_str.len()
                     );
                     let inject_info = if inject { Some((output_str.clone(), skill_name)) } else { None };
                     ((true, output_str), inject_info)
                 }
                 Err(e) => {
-                    debug!("Tool {} failed: {}", tool_call.name, e);
+                    debug!("Tool {} failed: {}", tool_call.fn_name, e);
                     ((false, format!("Error: {}", e)), None)
                 }
             }
         } else {
-            ((false, format!("Unknown tool: {}", tool_call.name)), None)
+            ((false, format!("Unknown tool: {}", tool_call.fn_name)), None)
         };
 
         // Handle skill message injection
@@ -834,11 +809,11 @@ impl AgentLoop {
             let name = skill_name.as_deref().unwrap_or("unknown");
             let brief_result = format!("Skill '{}' loaded. Follow the instructions below.", name);
 
-            self.session.add_tool_result_with_error(&tool_call.id, &brief_result, false);
+            self.session.add_tool_result(&tool_call.call_id, &brief_result, false);
 
             self.emit(SessionOutput::tool_done(
-                &tool_call.id,
-                &tool_call.name,
+                &tool_call.call_id,
+                &tool_call.fn_name,
                 true,
                 brief_result,
             ))
@@ -853,7 +828,7 @@ impl AgentLoop {
         // Execute PostToolUse hooks
         let mut final_result = result.clone();
         if self.hooks_enabled
-            && let Some(additional_context) = self.run_post_tool_hook(&tool_call.name, &tool_call.arguments, &result.1)
+            && let Some(additional_context) = self.run_post_tool_hook(&tool_call.fn_name, &tool_call.fn_arguments, &result.1)
         {
             // Append hook context to the tool result
             final_result.1 = format!("{}\n\n<post-tool-hook>\n{}\n</post-tool-hook>", result.1, additional_context);
@@ -864,7 +839,7 @@ impl AgentLoop {
         if truncated_result.len() < final_result.1.len() {
             info!(
                 "Truncated {} result from {} to {} chars",
-                tool_call.name,
+                tool_call.fn_name,
                 final_result.1.len(),
                 truncated_result.len()
             );
@@ -872,20 +847,20 @@ impl AgentLoop {
 
         // Generate summary and diff for tool result
         let (summary, diff_preview) = format_tool_result_summary(
-            &tool_call.name,
+            &tool_call.fn_name,
             final_result.0,
             &truncated_result,
-            &tool_call.arguments,
+            &tool_call.fn_arguments,
         );
 
         // Add tool result to session with proper error flag (truncated to prevent context overflow)
         let is_error = !final_result.0;
-        self.session.add_tool_result_with_error(&tool_call.id, &truncated_result, is_error);
+        self.session.add_tool_result(&tool_call.call_id, &truncated_result, is_error);
 
         // Emit tool done (ephemeral, with truncated result)
         self.emit(SessionOutput::tool_done(
-            &tool_call.id,
-            &tool_call.name,
+            &tool_call.call_id,
+            &tool_call.fn_name,
             final_result.0,
             &truncated_result,
         ))
@@ -893,8 +868,8 @@ impl AgentLoop {
 
         // Emit tool result (persistent message)
         self.emit(SessionOutput::tool_result(
-            &tool_call.id,
-            &tool_call.name,
+            &tool_call.call_id,
+            &tool_call.fn_name,
             final_result.0,
             &truncated_result,
             summary,
@@ -915,7 +890,7 @@ impl AgentLoop {
                 info.skill_name, info.agent_type
             );
 
-            self.session.add_tool_result_with_error(&res.id, &brief_result, false);
+            self.session.add_tool_result(&res.id, &brief_result, false);
             self.emit(SessionOutput::tool_done(&res.id, &res.name, true, brief_result.clone())).await;
 
             // Add the task as a user message so the LLM sees it needs to be executed
@@ -936,7 +911,7 @@ impl AgentLoop {
             let name = skill_name.as_deref().unwrap_or("unknown");
             let brief_result = format!("Skill '{}' loaded. Follow the instructions below.", name);
 
-            self.session.add_tool_result_with_error(&res.id, &brief_result, false);
+            self.session.add_tool_result(&res.id, &brief_result, false);
             self.emit(SessionOutput::tool_done(&res.id, &res.name, true, brief_result)).await;
 
             // Inject skill content as a user message with command-name tag
@@ -968,7 +943,7 @@ impl AgentLoop {
         );
 
         // Update session and emit
-        self.session.add_tool_result_with_error(&res.id, &truncated, !res.success);
+        self.session.add_tool_result(&res.id, &truncated, !res.success);
 
         // Emit tool done (ephemeral)
         self.emit(SessionOutput::tool_done(&res.id, &res.name, res.success, &truncated)).await;
@@ -1025,53 +1000,41 @@ impl AgentLoop {
     // Context Management
     // ========================================================================
 
-    /// Calculate current context usage
-    fn calculate_context_usage(&self) -> crate::context::ContextUsage {
-        let messages = self.chat_messages_to_context_messages();
-        let tool_defs_json = serde_json::to_string(&self.tool_definitions).unwrap_or_default();
-        self.context_monitor.calculate_usage(
-            &messages,
-            &self.session.system_prompt,
-            Some(&tool_defs_json),
-        )
-    }
-
     /// Convert ChatMessages to context Messages for token counting
     ///
-    /// IMPORTANT: This includes content_blocks and tool_calls in the content
+    /// IMPORTANT: This includes tool calls and tool responses in the content
     /// because they contribute significantly to the actual token count sent to the LLM.
     fn chat_messages_to_context_messages(&self) -> Vec<Message> {
+        use crate::provider::ChatRole;
+
         self.session
             .messages
             .iter()
             .map(|cm| {
-                let role = match cm.role.as_str() {
-                    "user" => MessageRole::User,
-                    "assistant" => MessageRole::Assistant,
-                    "system" => MessageRole::System,
-                    _ => MessageRole::Tool,
+                let role = match cm.role {
+                    ChatRole::User => MessageRole::User,
+                    ChatRole::Assistant => MessageRole::Assistant,
+                    ChatRole::System => MessageRole::System,
+                    ChatRole::Tool => MessageRole::Tool,
                 };
 
-                // Build full content including content_blocks and tool_calls
-                let mut full_content = cm.content.clone();
+                // Build full content from MessageContent
+                let mut full_content = cm.content.joined_texts().unwrap_or_default();
 
-                // Add content blocks (tool_result, text, etc.)
-                for block in &cm.content_blocks {
-                    if let Ok(json) = serde_json::to_string(block) {
+                // Add tool calls
+                for tc in cm.content.tool_calls() {
+                    full_content.push_str(&tc.fn_name);
+                    if let Ok(json) = serde_json::to_string(&tc.fn_arguments) {
                         full_content.push_str(&json);
                     }
                 }
 
-                // Add tool calls (tool_use blocks)
-                for tc in &cm.tool_calls {
-                    // Tool calls include name and arguments
-                    full_content.push_str(&tc.name);
-                    if let Ok(json) = serde_json::to_string(&tc.arguments) {
-                        full_content.push_str(&json);
-                    }
+                // Add tool responses
+                for tr in cm.content.tool_responses() {
+                    full_content.push_str(&tr.content);
                 }
 
-                Message::with_timestamp(role, &full_content, cm.timestamp)
+                Message::new(role, &full_content)
             })
             .collect()
     }
@@ -1257,8 +1220,8 @@ impl AgentLoop {
     /// to keep the message history valid for Claude's strict sequencing requirements.
     async fn handle_cancel_cleanup(
         &mut self,
-        all_tool_calls: &[ToolCallInfo],
-        needs_interaction: &[&ToolCallInfo],
+        all_tool_calls: &[ToolCall],
+        needs_interaction: &[&ToolCall],
         current_interaction_idx: usize,
         completed_tool_ids: &mut std::collections::HashSet<String>,
         join_set: &mut JoinSet<SpawnedToolResult>,
@@ -1276,12 +1239,12 @@ impl AgentLoop {
 
         // Add "Cancelled" results for all tools that didn't complete
         for tc in all_tool_calls {
-            if !completed_tool_ids.contains(&tc.id) {
+            if !completed_tool_ids.contains(&tc.call_id) {
                 let cancel_msg = "Cancelled by user";
-                self.session.add_tool_result_with_error(&tc.id, cancel_msg, true);
+                self.session.add_tool_result(&tc.call_id, cancel_msg, true);
                 self.emit(SessionOutput::tool_result(
-                    &tc.id,
-                    &tc.name,
+                    &tc.call_id,
+                    &tc.fn_name,
                     false,
                     cancel_msg.to_string(),
                     "Cancelled".to_string(),
@@ -1292,7 +1255,7 @@ impl AgentLoop {
 
         // Clear the modal state for current and remaining interaction tools
         for tc in needs_interaction.iter().skip(current_interaction_idx) {
-            debug!("Cancelled tool {} before completion", tc.id);
+            debug!("Cancelled tool {} before completion", tc.call_id);
         }
     }
 
@@ -1319,30 +1282,10 @@ impl AgentLoop {
         let sessions_dir = get_sessions_dir()?;
         std::fs::create_dir_all(&sessions_dir)?;
 
-        // Convert ChatMessages to SavedMessages
-        let messages: Vec<SavedMessage> = self
-            .session
-            .messages
-            .iter()
-            .map(|cm| SavedMessage {
-                role: cm.role.clone(),
-                content: cm.content.clone(),
-                tool_calls: cm
-                    .tool_calls
-                    .iter()
-                    .map(|tc| SavedToolCall {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        arguments: tc.arguments.clone(),
-                    })
-                    .collect(),
-            })
-            .collect();
-
         let saved = SavedSession {
             id: self.session_id.clone(),
             name: format!("Session {}", self.session_id),
-            messages,
+            messages: self.session.messages.clone(),
             created_at: self.created_at,
             updated_at: chrono::Utc::now(),
         };

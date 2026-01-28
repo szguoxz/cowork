@@ -54,8 +54,7 @@ mod manager;
 mod types;
 
 pub use agent_loop::{
-    get_sessions_dir, list_saved_sessions, load_session, AgentLoop, SavedMessage, SavedSession,
-    SavedToolCall,
+    get_sessions_dir, list_saved_sessions, load_session, AgentLoop, SavedSession,
 };
 pub use manager::{OutputReceiver, SessionManager};
 pub use types::{

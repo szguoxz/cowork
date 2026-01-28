@@ -18,7 +18,7 @@ pub use formatting::{
     format_glob_result, format_grep_result, format_size, format_status_result, format_tool_result,
     truncate_result,
 };
-pub use session::{ChatMessage, ChatSession, ToolCallInfo, ToolCallStatus};
+pub use session::{ChatSession, ToolCallStatus};
 pub use system_prompt::SystemPrompt;
 pub use tool_registry::{create_standard_tool_registry, ToolRegistryBuilder, ToolScope};
 pub use tool_result::format_tool_result_for_llm;
