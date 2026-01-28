@@ -312,7 +312,9 @@ impl GenAIProvider {
         // Configure chat options with max_tokens from catalog
         // Different models have different limits (4K-32K), so use the catalog value
         let max_output = get_model_max_output(&self.provider_id, &self.model).unwrap_or(8192);
-        let chat_options = ChatOptions::default().with_max_tokens(max_output as u32);
+        let chat_options = ChatOptions::default()
+            .with_max_tokens(max_output as u32)
+            .with_capture_usage(true);
 
         // Retry configuration
         let retry_config = RetryConfig::default();
@@ -399,8 +401,9 @@ impl GenAIProvider {
                         warn!(
                             model = %self.model,
                             retry = rate_limit_retries,
+                            max_retries = retry_config.max_retries,
                             delay_secs = retry_config.rate_limit_delay.as_secs(),
-                            "Rate limit hit, retrying"
+                            "Rate limit hit (HTTP 429), waiting before retry"
                         );
                         tokio::time::sleep(retry_config.rate_limit_delay).await;
                         continue;
@@ -410,13 +413,33 @@ impl GenAIProvider {
                     // This can happen when provider returns truncated/malformed response
                     if is_json_parse_error(&e) && json_error_retries < retry_config.max_retries {
                         json_error_retries += 1;
-                        warn!(
+
+                        // Extract error details for logging (includes full debug output)
+                        let (error_details, error_debug) = extract_genai_error_details(&e);
+
+                        // Log to LLM log file so we have full context
+                        log_llm_interaction(LogConfig {
+                            model: &self.model,
+                            provider: Some("genai"),
+                            system_prompt: self.system_prompt.as_deref(),
+                            messages: &messages_for_log,
+                            tools: tools_for_log.as_deref(),
+                            error: Some(&format!("JSON parse error (retry {}): {}", json_error_retries, error_details)),
+                            raw_response: error_debug.as_deref(),
+                            ..Default::default()
+                        });
+
+                        // Log with tracing so user sees it
+                        error!(
                             model = %self.model,
                             retry = json_error_retries,
+                            max_retries = retry_config.max_retries,
                             delay_secs = retry_config.json_error_delay.as_secs(),
-                            error = %e,
-                            "JSON parse error, retrying"
+                            error = %error_details,
+                            error_debug = ?error_debug,
+                            "JSON parse error from provider, retrying request"
                         );
+
                         tokio::time::sleep(retry_config.json_error_delay).await;
                         continue;
                     }
@@ -483,7 +506,9 @@ impl GenAIProvider {
 
         // Configure chat options with max_tokens from catalog
         let max_output = get_model_max_output(&self.provider_id, &self.model).unwrap_or(8192);
-        let chat_options = ChatOptions::default().with_max_tokens(max_output as u32);
+        let chat_options = ChatOptions::default()
+            .with_max_tokens(max_output as u32)
+            .with_capture_usage(true);
 
         // Execute the chat again (non-streaming)
         // Note: The client's model_mapper will ensure the correct adapter is used
