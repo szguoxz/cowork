@@ -24,7 +24,6 @@ use crate::orchestration::ToolScope;
 use crate::prompt::{
     builtin, parse_frontmatter, AgentDefinition, ComponentRegistry, ModelPreference,
 };
-use crate::provider::ProviderType;
 use crate::session::{AgentLoop, SessionConfig, SessionInput, SessionOutput, SessionRegistry};
 
 /// Maximum result size for subagent output (to prevent context bloat)
@@ -37,8 +36,8 @@ use super::{AgentInstanceRegistry, AgentStatus, AgentType, ModelTier};
 pub struct AgentExecutionConfig {
     /// Workspace root directory
     pub workspace: PathBuf,
-    /// LLM provider type
-    pub provider_type: ProviderType,
+    /// Provider ID (e.g., "anthropic", "openai")
+    pub provider_id: String,
     /// Optional API key (uses environment variable if None)
     pub api_key: Option<String>,
     /// Maximum number of agentic turns before stopping
@@ -59,7 +58,7 @@ impl AgentExecutionConfig {
     pub fn new(workspace: PathBuf) -> Self {
         Self {
             workspace,
-            provider_type: ProviderType::Anthropic,
+            provider_id: "anthropic".to_string(),
             api_key: None,
             max_turns: 50,
             model_tiers: ModelTiers::for_provider("anthropic"),
@@ -70,10 +69,11 @@ impl AgentExecutionConfig {
         }
     }
 
-    pub fn with_provider(mut self, provider_type: ProviderType) -> Self {
-        self.provider_type = provider_type;
+    pub fn with_provider(mut self, provider_id: impl Into<String>) -> Self {
+        let provider_id = provider_id.into();
         // Update model tiers to match provider defaults
-        self.model_tiers = ModelTiers::for_provider(&provider_type.to_string());
+        self.model_tiers = ModelTiers::for_provider(&provider_id);
+        self.provider_id = provider_id;
         self
     }
 
@@ -314,7 +314,7 @@ pub async fn run_subagent(
     // Build SessionConfig: scoped tools, no hooks, no save
     // Use default approval config so Bash commands get parsed for safety
     let session_config = SessionConfig::new(config.workspace.clone())
-        .with_provider(config.provider_type)
+        .with_provider(&config.provider_id)
         .with_model(model_str)
         .with_system_prompt(system_prompt)
         .with_approval_config(ToolApprovalConfig::default())
@@ -669,12 +669,12 @@ mod tests {
     #[test]
     fn test_agent_execution_config() {
         let config = AgentExecutionConfig::new(PathBuf::from("/workspace"))
-            .with_provider(ProviderType::OpenAI)
+            .with_provider("openai")
             .with_api_key("test-key".to_string())
             .with_max_turns(100);
 
         assert_eq!(config.workspace, PathBuf::from("/workspace"));
-        assert_eq!(config.provider_type, ProviderType::OpenAI);
+        assert_eq!(config.provider_id, "openai");
         assert_eq!(config.api_key, Some("test-key".to_string()));
         assert_eq!(config.max_turns, 100);
         assert!(config.registry.is_none());

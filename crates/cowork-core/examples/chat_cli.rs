@@ -9,7 +9,7 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use cowork_core::provider::{GenAIProvider, LlmMessage, ProviderType};
+use cowork_core::provider::{GenAIProvider, LlmMessage};
 use cowork_core::tools::ToolRegistry;
 use cowork_core::tools::filesystem::{ReadFile, WriteFile, GlobFiles, GrepFiles};
 use cowork_core::tools::shell::ExecuteCommand;
@@ -18,28 +18,28 @@ use cowork_core::tools::shell::ExecuteCommand;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse args
     let args: Vec<String> = std::env::args().collect();
-    let provider_type = if args.iter().any(|a| a == "--provider") {
+    let provider_id = if args.iter().any(|a| a == "--provider") {
         let idx = args.iter().position(|a| a == "--provider").unwrap();
         match args.get(idx + 1).map(|s| s.as_str()) {
-            Some("openai") => ProviderType::OpenAI,
-            Some("anthropic") | None => ProviderType::Anthropic,
+            Some("openai") => "openai",
+            Some("anthropic") | None => "anthropic",
             Some(other) => {
                 eprintln!("Unknown provider: {}. Using Anthropic.", other);
-                ProviderType::Anthropic
+                "anthropic"
             }
         }
     } else {
-        ProviderType::Anthropic
+        "anthropic"
     };
 
     println!("=== Cowork CLI Chat ===");
-    println!("Provider: {:?}", provider_type);
+    println!("Provider: {}", provider_id);
     println!("Type 'quit' or 'exit' to quit");
     println!("Type '/help' for available commands");
     println!();
 
     // Create provider
-    let provider = GenAIProvider::new(provider_type, None)
+    let provider = GenAIProvider::new(provider_id, None)
         .with_system_prompt(SYSTEM_PROMPT);
 
     // Create tool registry

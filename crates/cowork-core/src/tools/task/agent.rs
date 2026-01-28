@@ -15,7 +15,6 @@ use crate::session::{SessionOutput, SessionRegistry};
 
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::provider::ProviderType;
 use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 use super::executor::{self, AgentExecutionConfig};
@@ -179,7 +178,8 @@ impl AgentInstanceRegistry {
 pub struct TaskTool {
     registry: Arc<AgentInstanceRegistry>,
     workspace: PathBuf,
-    provider_type: ProviderType,
+    /// Provider ID (e.g., "anthropic", "openai")
+    provider_id: String,
     api_key: Option<String>,
     model_tiers: Option<crate::config::ModelTiers>,
     /// Parent session's output channel for forwarding subagent activity
@@ -196,7 +196,7 @@ impl TaskTool {
         Self {
             registry,
             workspace,
-            provider_type: ProviderType::Anthropic,
+            provider_id: "anthropic".to_string(),
             api_key: None,
             model_tiers: None,
             progress_tx: None,
@@ -222,9 +222,9 @@ impl TaskTool {
         self
     }
 
-    /// Set the provider type for subagent execution
-    pub fn with_provider(mut self, provider_type: ProviderType) -> Self {
-        self.provider_type = provider_type;
+    /// Set the provider ID for subagent execution
+    pub fn with_provider(mut self, provider_id: impl Into<String>) -> Self {
+        self.provider_id = provider_id.into();
         self
     }
 
@@ -365,7 +365,7 @@ impl Tool for TaskTool {
 
         // Create execution config
         let mut config = AgentExecutionConfig::new(self.workspace.clone())
-            .with_provider(self.provider_type)
+            .with_provider(&self.provider_id)
             .with_max_turns(_max_turns);
 
         if let Some(ref key) = self.api_key {

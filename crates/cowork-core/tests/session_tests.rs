@@ -7,7 +7,6 @@
 //! - Session configuration
 
 use cowork_core::approval::ToolApprovalConfig;
-use cowork_core::provider::ProviderType;
 use cowork_core::session::{SessionConfig, SessionInput, SessionManager, SessionOutput};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -18,7 +17,7 @@ fn test_config() -> SessionConfig {
         workspace_path: std::env::current_dir().unwrap(),
         approval_config: ToolApprovalConfig::trust_all(),
         system_prompt: Some("You are a test assistant.".to_string()),
-        provider_type: ProviderType::Anthropic,
+        provider_id: "anthropic".to_string(),
         model: None,
         api_key: None,
         web_search_config: None,
@@ -436,7 +435,7 @@ mod session_config_tests {
         assert!(config.system_prompt.is_none());
         assert!(config.model.is_none());
         assert!(config.api_key.is_none());
-        assert_eq!(config.provider_type, ProviderType::Anthropic);
+        assert_eq!(config.provider_id, "anthropic");
     }
 
     #[test]
@@ -451,13 +450,13 @@ mod session_config_tests {
     #[test]
     fn test_config_builder_chain() {
         let config = SessionConfig::new("/workspace")
-            .with_provider(ProviderType::OpenAI)
+            .with_provider("openai")
             .with_model("gpt-4")
             .with_api_key("sk-test-key")
             .with_system_prompt("Custom system prompt")
             .with_approval_config(ToolApprovalConfig::trust_all());
 
-        assert_eq!(config.provider_type, ProviderType::OpenAI);
+        assert_eq!(config.provider_id, "openai");
         assert_eq!(config.model, Some("gpt-4".to_string()));
         assert_eq!(config.api_key, Some("sk-test-key".to_string()));
         assert_eq!(
@@ -469,13 +468,13 @@ mod session_config_tests {
     #[test]
     fn test_config_clone() {
         let config1 = SessionConfig::new("/workspace")
-            .with_provider(ProviderType::DeepSeek)
+            .with_provider("deepseek")
             .with_model("deepseek-chat");
 
         let config2 = config1.clone();
 
         assert_eq!(config1.workspace_path, config2.workspace_path);
-        assert_eq!(config1.provider_type, config2.provider_type);
+        assert_eq!(config1.provider_id, config2.provider_id);
         assert_eq!(config1.model, config2.model);
     }
 }

@@ -5,7 +5,6 @@
 use serde::{Deserialize, Serialize};
 
 use super::catalog;
-use super::ProviderType;
 
 /// Information about an available model
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,9 +25,8 @@ pub struct ModelInfo {
 ///
 /// Looks up the model in the provider's catalog. If the exact model isn't found,
 /// falls back to the provider's default (balanced tier) context window.
-pub fn get_model_context_limit(provider: ProviderType, model: &str) -> Option<usize> {
-    let provider_id = provider.to_string();
-    let cat_provider = catalog::get(&provider_id)?;
+pub fn get_model_context_limit(provider_id: &str, model: &str) -> Option<usize> {
+    let cat_provider = catalog::get(provider_id)?;
 
     // Check if model matches any of the three tiers
     for tier in [catalog::ModelTier::Fast, catalog::ModelTier::Balanced, catalog::ModelTier::Powerful] {
@@ -46,9 +44,8 @@ pub fn get_model_context_limit(provider: ProviderType, model: &str) -> Option<us
 ///
 /// Looks up the model in the provider's catalog. If the exact model isn't found,
 /// falls back to the provider's default (balanced tier) max output.
-pub fn get_model_max_output(provider: ProviderType, model: &str) -> Option<usize> {
-    let provider_id = provider.to_string();
-    let cat_provider = catalog::get(&provider_id)?;
+pub fn get_model_max_output(provider_id: &str, model: &str) -> Option<usize> {
+    let cat_provider = catalog::get(provider_id)?;
 
     // Check if model matches any of the three tiers
     for tier in [catalog::ModelTier::Fast, catalog::ModelTier::Balanced, catalog::ModelTier::Powerful] {
@@ -103,11 +100,9 @@ impl ModelInfo {
 ///
 /// Returns deduplicated entries (fast/balanced/powerful tiers) as `Vec<ModelInfo>`.
 /// The balanced tier is marked as recommended.
-pub fn get_known_models(provider: ProviderType) -> Vec<ModelInfo> {
-    let provider_id = provider.to_string();
-
+pub fn get_known_models(provider_id: &str) -> Vec<ModelInfo> {
     // Get provider from catalog, return empty if not found
-    let Some(cat_provider) = catalog::get(&provider_id) else {
+    let Some(cat_provider) = catalog::get(provider_id) else {
         return Vec::new();
     };
 
@@ -170,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_get_known_models_anthropic() {
-        let models = get_known_models(ProviderType::Anthropic);
+        let models = get_known_models("anthropic");
         // Anthropic has 3 distinct models
         assert_eq!(models.len(), 3);
         // Balanced should be recommended
@@ -181,27 +176,27 @@ mod tests {
     #[test]
     fn test_get_known_models_deduplicates() {
         // DeepSeek: fast == balanced, so should deduplicate
-        let models = get_known_models(ProviderType::DeepSeek);
+        let models = get_known_models("deepseek");
         assert_eq!(models.len(), 2); // balanced + powerful
         // MIMO: all same model
-        let models = get_known_models(ProviderType::MIMO);
+        let models = get_known_models("mimo");
         assert_eq!(models.len(), 1); // just balanced
     }
 
     #[test]
     fn test_get_model_max_output() {
         // Test Anthropic models have different max_output
-        let opus_max = get_model_max_output(ProviderType::Anthropic, "claude-opus-4-5-20251101");
-        let sonnet_max = get_model_max_output(ProviderType::Anthropic, "claude-sonnet-4-5-20250929");
+        let opus_max = get_model_max_output("anthropic", "claude-opus-4-5-20251101");
+        let sonnet_max = get_model_max_output("anthropic", "claude-sonnet-4-5-20250929");
         assert_eq!(opus_max, Some(32768)); // Opus: 32k
         assert_eq!(sonnet_max, Some(64000)); // Sonnet: 64k
 
         // Test OpenAI models
-        let gpt5_max = get_model_max_output(ProviderType::OpenAI, "gpt-5");
+        let gpt5_max = get_model_max_output("openai", "gpt-5");
         assert_eq!(gpt5_max, Some(32768)); // GPT-5: 32k
 
         // Test fallback for unknown model returns balanced tier
-        let unknown_max = get_model_max_output(ProviderType::Anthropic, "unknown-model");
+        let unknown_max = get_model_max_output("anthropic", "unknown-model");
         assert_eq!(unknown_max, Some(64000)); // Falls back to balanced (Sonnet 64k)
     }
 
@@ -209,26 +204,26 @@ mod tests {
     fn test_get_known_models_all_providers() {
         // Ensure no panics for any provider
         let providers = [
-            ProviderType::Anthropic,
-            ProviderType::OpenAI,
-            ProviderType::Gemini,
-            ProviderType::DeepSeek,
-            ProviderType::Groq,
-            ProviderType::XAI,
-            ProviderType::Cohere,
-            ProviderType::Perplexity,
-            ProviderType::Together,
-            ProviderType::Fireworks,
-            ProviderType::Zai,
-            ProviderType::Nebius,
-            ProviderType::MIMO,
-            ProviderType::BigModel,
-            ProviderType::Ollama,
+            "anthropic",
+            "openai",
+            "gemini",
+            "deepseek",
+            "groq",
+            "xai",
+            "cohere",
+            "perplexity",
+            "together",
+            "fireworks",
+            "zai",
+            "nebius",
+            "mimo",
+            "bigmodel",
+            "ollama",
         ];
-        for provider in providers {
-            let models = get_known_models(provider);
-            assert!(!models.is_empty(), "Provider {:?} returned no models", provider);
-            assert!(models.iter().any(|m| m.recommended), "Provider {:?} has no recommended model", provider);
+        for provider_id in providers {
+            let models = get_known_models(provider_id);
+            assert!(!models.is_empty(), "Provider {} returned no models", provider_id);
+            assert!(models.iter().any(|m| m.recommended), "Provider {} has no recommended model", provider_id);
         }
     }
 }

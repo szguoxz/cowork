@@ -7,7 +7,6 @@ use cowork_core::context::{
     TokenCounter, ConversationSummarizer, SummarizerConfig, ContextGatherer,
     Message, MessageRole, ContextMonitor, MonitorConfig, CompactConfig, MemoryTier,
 };
-use cowork_core::provider::ProviderType;
 use chrono::Utc;
 use tempfile::TempDir;
 use std::fs;
@@ -78,7 +77,7 @@ mod token_counter_tests {
     use super::*;
 
     fn create_counter() -> TokenCounter {
-        TokenCounter::new(ProviderType::Anthropic)
+        TokenCounter::new("anthropic")
     }
 
     #[test]
@@ -164,7 +163,7 @@ mod summarizer_tests {
     }
 
     fn create_counter() -> TokenCounter {
-        TokenCounter::new(ProviderType::Anthropic)
+        TokenCounter::new("anthropic")
     }
 
     #[test]
@@ -300,7 +299,7 @@ mod integration_tests {
         let prompt = gatherer.format_as_prompt(&context);
 
         // 2. Count tokens
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
         let token_count = counter.count(&prompt);
         // Token count is usize, so it's always >= 0; just verify it's reasonable
         assert!(token_count < 1_000_000, "Token count should be reasonable");
@@ -318,7 +317,7 @@ mod integration_tests {
 
     #[test]
     fn test_token_budget_calculation() {
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
 
         let context_limit = counter.context_limit();
         let threshold = counter.summarization_threshold();
@@ -337,16 +336,16 @@ mod integration_tests {
     #[test]
     fn test_different_providers() {
         let providers = [
-            ProviderType::Anthropic,
-            ProviderType::OpenAI,
-            ProviderType::Gemini,
+            "anthropic",
+            "openai",
+            "gemini",
         ];
 
-        for provider in providers {
-            let counter = TokenCounter::new(provider);
+        for provider_id in providers {
+            let counter = TokenCounter::new(provider_id);
             let text = "Hello, world! This is a test.";
             let count = counter.count(text);
-            println!("{:?} token count: {}", provider, count);
+            println!("{} token count: {}", provider_id, count);
             assert!(count > 0);
         }
     }
@@ -357,7 +356,7 @@ mod context_monitor_tests {
 
     #[test]
     fn test_monitor_default_config() {
-        let monitor = ContextMonitor::new(ProviderType::Anthropic);
+        let monitor = ContextMonitor::new("anthropic");
         let config = monitor.config();
 
         assert!(config.auto_compact_threshold > 0.0);
@@ -373,7 +372,7 @@ mod context_monitor_tests {
             min_remaining_tokens: 10_000,
             check_interval: 3,
         };
-        let monitor = ContextMonitor::with_config(ProviderType::Anthropic, config);
+        let monitor = ContextMonitor::with_config("anthropic", config);
 
         assert_eq!(monitor.config().auto_compact_threshold, 0.5);
         assert_eq!(monitor.config().min_remaining_tokens, 10_000);
@@ -382,7 +381,7 @@ mod context_monitor_tests {
 
     #[test]
     fn test_calculate_usage_empty() {
-        let monitor = ContextMonitor::new(ProviderType::Anthropic);
+        let monitor = ContextMonitor::new("anthropic");
         let usage = monitor.calculate_usage(&[], "System prompt", None);
 
         assert!(usage.used_tokens > 0, "System prompt should use tokens");
@@ -396,7 +395,7 @@ mod context_monitor_tests {
 
     #[test]
     fn test_calculate_usage_with_messages() {
-        let monitor = ContextMonitor::new(ProviderType::Anthropic);
+        let monitor = ContextMonitor::new("anthropic");
         let messages = vec![
             msg(MessageRole::User, "Hello, how are you?"),
             msg(MessageRole::Assistant, "I'm doing well, thank you!"),
@@ -411,7 +410,7 @@ mod context_monitor_tests {
 
     #[test]
     fn test_calculate_usage_with_memory() {
-        let monitor = ContextMonitor::new(ProviderType::Anthropic);
+        let monitor = ContextMonitor::new("anthropic");
         let memory = "# Project\nThis is the CLAUDE.md file content.";
 
         let usage = monitor.calculate_usage(&[], "System", Some(memory));
@@ -421,7 +420,7 @@ mod context_monitor_tests {
 
     #[test]
     fn test_should_check_interval() {
-        let mut monitor = ContextMonitor::new(ProviderType::Anthropic);
+        let mut monitor = ContextMonitor::new("anthropic");
 
         // Default interval is 5
         for i in 1..=10 {
@@ -436,7 +435,7 @@ mod context_monitor_tests {
 
     #[test]
     fn test_format_usage() {
-        let monitor = ContextMonitor::new(ProviderType::Anthropic);
+        let monitor = ContextMonitor::new("anthropic");
         let usage = monitor.calculate_usage(&[], "System prompt", None);
         let formatted = monitor.format_usage(&usage);
 
@@ -455,7 +454,7 @@ mod context_monitor_tests {
             min_remaining_tokens: 199_000, // Almost full
             check_interval: 1,
         };
-        let monitor = ContextMonitor::with_config(ProviderType::Anthropic, config);
+        let monitor = ContextMonitor::with_config("anthropic", config);
 
         // Create enough messages to trigger compaction
         let messages: Vec<_> = (0..100)
@@ -672,7 +671,7 @@ mod compaction_tests {
     #[tokio::test]
     async fn test_compact_small_conversation() {
         let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
         let config = CompactConfig::default().without_llm();
 
         let messages = generate_conversation(5);
@@ -686,7 +685,7 @@ mod compaction_tests {
     #[tokio::test]
     async fn test_compact_large_conversation() {
         let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
         let config = CompactConfig::default().without_llm();
 
         let messages = generate_conversation(50);
@@ -701,7 +700,7 @@ mod compaction_tests {
     #[tokio::test]
     async fn test_compact_preserves_instructions() {
         let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
         let config = CompactConfig::default()
             .without_llm()
             .with_instructions("API endpoints");
@@ -719,7 +718,7 @@ mod compaction_tests {
     async fn test_compact_returns_user_message() {
         // Following Anthropic SDK: summary is a USER message
         let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
         let config = CompactConfig::default().without_llm();
 
         let messages = generate_conversation(30);
@@ -780,7 +779,7 @@ mod tiktoken_tests {
 
     #[test]
     fn test_tiktoken_status() {
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
 
         // This test verifies tiktoken integration
         let is_using = counter.is_using_tiktoken();
@@ -793,7 +792,7 @@ mod tiktoken_tests {
 
     #[test]
     fn test_token_counts_reasonable() {
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
 
         // Known examples with expected token ranges
         let examples = [

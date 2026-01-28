@@ -225,13 +225,13 @@ impl AgentLoop {
         // Create the provider
         debug!(
             "AgentLoop config: provider={:?}, model={:?}, system_prompt_len={}",
-            config.provider_type,
+            config.provider_id,
             config.model,
             config.system_prompt.as_ref().map(|s| s.len()).unwrap_or(0),
         );
         let provider = match config.api_key.as_deref() {
-            Some(key) => GenAIProvider::with_api_key(config.provider_type, key, config.model.as_deref()),
-            None => GenAIProvider::new(config.provider_type, config.model.as_deref()),
+            Some(key) => GenAIProvider::with_api_key(&config.provider_id, key, config.model.as_deref()),
+            None => GenAIProvider::new(&config.provider_id, config.model.as_deref()),
         };
         let provider = match config.system_prompt.as_deref() {
             Some(prompt) => provider.with_system_prompt(prompt),
@@ -249,7 +249,7 @@ impl AgentLoop {
 
         // Create tool registry (plan_mode_state was created above before dispatcher)
         let mut tool_builder = ToolRegistryBuilder::new(config.workspace_path.clone())
-            .with_provider(config.provider_type)
+            .with_provider(&config.provider_id)
             .with_skill_registry(skill_registry)
             .with_plan_mode_state(plan_mode_state.clone());
 
@@ -286,8 +286,8 @@ impl AgentLoop {
 
         // Initialize context monitor with provider and model for accurate limits
         let context_monitor = match &config.model {
-            Some(model) => ContextMonitor::with_model(config.provider_type, model),
-            None => ContextMonitor::new(config.provider_type),
+            Some(model) => ContextMonitor::with_model(&config.provider_id, model),
+            None => ContextMonitor::new(&config.provider_id),
         };
 
         // Initialize summarizer with default config

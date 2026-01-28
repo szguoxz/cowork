@@ -408,8 +408,8 @@ pub struct SessionConfig {
     pub approval_config: crate::approval::ToolApprovalConfig,
     /// Optional custom system prompt
     pub system_prompt: Option<String>,
-    /// Provider type to use
-    pub provider_type: crate::provider::ProviderType,
+    /// Provider ID (e.g., "anthropic", "openai", "together")
+    pub provider_id: String,
     /// Optional model override
     pub model: Option<String>,
     /// Optional API key (if not using env var)
@@ -438,7 +438,7 @@ impl Default for SessionConfig {
             workspace_path: std::env::current_dir().unwrap_or_default(),
             approval_config: crate::approval::ToolApprovalConfig::default(),
             system_prompt: None,
-            provider_type: crate::provider::ProviderType::Anthropic,
+            provider_id: "anthropic".to_string(),
             model: None,
             api_key: None,
             web_search_config: None,
@@ -462,9 +462,9 @@ impl SessionConfig {
         }
     }
 
-    /// Set the provider type
-    pub fn with_provider(mut self, provider_type: crate::provider::ProviderType) -> Self {
-        self.provider_type = provider_type;
+    /// Set the provider ID
+    pub fn with_provider(mut self, provider_id: impl Into<String>) -> Self {
+        self.provider_id = provider_id.into();
         self
     }
 
@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn test_session_config_builder() {
         let config = SessionConfig::new("/tmp/workspace")
-            .with_provider(crate::provider::ProviderType::OpenAI)
+            .with_provider("openai")
             .with_model("gpt-4")
             .with_system_prompt("Custom prompt");
 
@@ -624,7 +624,7 @@ mod tests {
             config.workspace_path,
             std::path::PathBuf::from("/tmp/workspace")
         );
-        assert_eq!(config.provider_type, crate::provider::ProviderType::OpenAI);
+        assert_eq!(config.provider_id, "openai");
         assert_eq!(config.model, Some("gpt-4".to_string()));
         assert_eq!(config.system_prompt, Some("Custom prompt".to_string()));
     }

@@ -200,12 +200,7 @@ impl SessionManager {
             .with_system_prompt(system_prompt);
 
         if let Some(provider_config) = default_provider {
-            let provider_type: crate::provider::ProviderType = provider_config
-                .provider_type
-                .parse()
-                .unwrap_or(crate::provider::ProviderType::Anthropic);
-
-            session_config = session_config.with_provider(provider_type);
+            session_config = session_config.with_provider(&provider_config.provider_type);
             session_config = session_config.with_model(&provider_config.model);
             if let Some(api_key) = provider_config.get_api_key() {
                 session_config = session_config.with_api_key(api_key);

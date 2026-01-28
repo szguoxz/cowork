@@ -7,14 +7,13 @@ use console::style;
 use dialoguer::{theme::ColorfulTheme, Confirm, Password, Select};
 
 use cowork_core::config::{ConfigManager, ProviderConfig, WebSearchConfig};
-use cowork_core::provider::{catalog, GenAIProvider, ProviderType};
+use cowork_core::provider::{catalog, GenAIProvider};
 use cowork_core::tools::web::supports_native_search;
 
-/// Provider information for display
+/// Provider information for configuration and display
 pub struct ProviderInfo {
     pub name: &'static str,
     pub display_name: &'static str,
-    pub description: &'static str,
     pub signup_url: &'static str,
     pub env_var: &'static str,
     /// Default model ID (balanced tier from catalog)
@@ -23,153 +22,134 @@ pub struct ProviderInfo {
     pub base_url: &'static str,
 }
 
-/// Get provider info for a provider type
-pub fn get_provider_info(provider_type: ProviderType) -> ProviderInfo {
-    match provider_type {
-        ProviderType::Anthropic => ProviderInfo {
-            name: "anthropic",
-            display_name: "Anthropic (Claude)",
-            description: "Best for code, writing, and reasoning",
-            signup_url: "https://console.anthropic.com/",
-            env_var: "ANTHROPIC_API_KEY",
-            default_model: catalog::default_model("anthropic").unwrap_or(""),
-            base_url: catalog::base_url("anthropic").unwrap_or(""),
-        },
-        ProviderType::OpenAI => ProviderInfo {
-            name: "openai",
-            display_name: "OpenAI (GPT-5)",
-            description: "Versatile and widely supported",
-            signup_url: "https://platform.openai.com/",
-            env_var: "OPENAI_API_KEY",
-            default_model: catalog::default_model("openai").unwrap_or(""),
-            base_url: catalog::base_url("openai").unwrap_or(""),
-        },
-        ProviderType::Gemini => ProviderInfo {
-            name: "gemini",
-            display_name: "Google Gemini",
-            description: "Large context window (1M tokens)",
-            signup_url: "https://aistudio.google.com/",
-            env_var: "GEMINI_API_KEY",
-            default_model: catalog::default_model("gemini").unwrap_or(""),
-            base_url: catalog::base_url("gemini").unwrap_or(""),
-        },
-        ProviderType::Groq => ProviderInfo {
-            name: "groq",
-            display_name: "Groq",
-            description: "Ultra-fast inference",
-            signup_url: "https://console.groq.com/",
-            env_var: "GROQ_API_KEY",
-            default_model: catalog::default_model("groq").unwrap_or(""),
-            base_url: catalog::base_url("groq").unwrap_or(""),
-        },
-        ProviderType::DeepSeek => ProviderInfo {
-            name: "deepseek",
-            display_name: "DeepSeek",
-            description: "Cost-effective reasoning",
-            signup_url: "https://platform.deepseek.com/",
-            env_var: "DEEPSEEK_API_KEY",
-            default_model: catalog::default_model("deepseek").unwrap_or(""),
-            base_url: catalog::base_url("deepseek").unwrap_or(""),
-        },
-        ProviderType::XAI => ProviderInfo {
-            name: "xai",
-            display_name: "xAI (Grok)",
-            description: "Latest Grok models",
-            signup_url: "https://x.ai/api",
-            env_var: "XAI_API_KEY",
-            default_model: catalog::default_model("xai").unwrap_or(""),
-            base_url: catalog::base_url("xai").unwrap_or(""),
-        },
-        ProviderType::Together => ProviderInfo {
-            name: "together",
-            display_name: "Together AI",
-            description: "200+ open source models",
-            signup_url: "https://api.together.xyz/",
-            env_var: "TOGETHER_API_KEY",
-            default_model: catalog::default_model("together").unwrap_or(""),
-            base_url: catalog::base_url("together").unwrap_or(""),
-        },
-        ProviderType::Fireworks => ProviderInfo {
-            name: "fireworks",
-            display_name: "Fireworks AI",
-            description: "Fast open source model inference",
-            signup_url: "https://fireworks.ai/",
-            env_var: "FIREWORKS_API_KEY",
-            default_model: catalog::default_model("fireworks").unwrap_or(""),
-            base_url: catalog::base_url("fireworks").unwrap_or(""),
-        },
-        ProviderType::Zai => ProviderInfo {
-            name: "zai",
-            display_name: "Zai (Zhipu AI)",
-            description: "GLM-4 models from China",
-            signup_url: "https://z.ai/",
-            env_var: "ZAI_API_KEY",
-            default_model: catalog::default_model("zai").unwrap_or(""),
-            base_url: catalog::base_url("zai").unwrap_or(""),
-        },
-        ProviderType::Nebius => ProviderInfo {
-            name: "nebius",
-            display_name: "Nebius AI Studio",
-            description: "30+ open source models",
-            signup_url: "https://studio.nebius.ai/",
-            env_var: "NEBIUS_API_KEY",
-            default_model: catalog::default_model("nebius").unwrap_or(""),
-            base_url: catalog::base_url("nebius").unwrap_or(""),
-        },
-        ProviderType::MIMO => ProviderInfo {
-            name: "mimo",
-            display_name: "MIMO (Xiaomi)",
-            description: "Xiaomi's MIMO models",
-            signup_url: "https://xiaomimimo.com/",
-            env_var: "MIMO_API_KEY",
-            default_model: catalog::default_model("mimo").unwrap_or(""),
-            base_url: catalog::base_url("mimo").unwrap_or(""),
-        },
-        ProviderType::BigModel => ProviderInfo {
-            name: "bigmodel",
-            display_name: "BigModel.cn",
-            description: "Zhipu AI China platform",
-            signup_url: "https://open.bigmodel.cn/",
-            env_var: "BIGMODEL_API_KEY",
-            default_model: catalog::default_model("bigmodel").unwrap_or(""),
-            base_url: catalog::base_url("bigmodel").unwrap_or(""),
-        },
-        ProviderType::Ollama => ProviderInfo {
-            name: "ollama",
-            display_name: "Ollama (Local)",
-            description: "Run models locally, no API key needed",
-            signup_url: "https://ollama.ai/",
-            env_var: "",
-            default_model: catalog::default_model("ollama").unwrap_or(""),
-            base_url: catalog::base_url("ollama").unwrap_or(""),
-        },
-        _ => ProviderInfo {
-            name: "unknown",
+/// Provider display metadata for onboarding UI
+struct ProviderDisplay {
+    id: &'static str,
+    display_name: &'static str,
+    description: &'static str,
+    signup_url: &'static str,
+}
+
+/// Display metadata for providers shown in onboarding
+const PROVIDER_DISPLAYS: &[ProviderDisplay] = &[
+    ProviderDisplay {
+        id: "anthropic",
+        display_name: "Anthropic (Claude)",
+        description: "Best for code, writing, and reasoning",
+        signup_url: "https://console.anthropic.com/",
+    },
+    ProviderDisplay {
+        id: "openai",
+        display_name: "OpenAI (GPT-5)",
+        description: "Versatile and widely supported",
+        signup_url: "https://platform.openai.com/",
+    },
+    ProviderDisplay {
+        id: "gemini",
+        display_name: "Google Gemini",
+        description: "Large context window (1M tokens)",
+        signup_url: "https://aistudio.google.com/",
+    },
+    ProviderDisplay {
+        id: "groq",
+        display_name: "Groq",
+        description: "Ultra-fast inference",
+        signup_url: "https://console.groq.com/",
+    },
+    ProviderDisplay {
+        id: "deepseek",
+        display_name: "DeepSeek",
+        description: "Cost-effective reasoning",
+        signup_url: "https://platform.deepseek.com/",
+    },
+    ProviderDisplay {
+        id: "xai",
+        display_name: "xAI (Grok)",
+        description: "Latest Grok models",
+        signup_url: "https://x.ai/api",
+    },
+    ProviderDisplay {
+        id: "together",
+        display_name: "Together AI",
+        description: "200+ open source models",
+        signup_url: "https://api.together.xyz/",
+    },
+    ProviderDisplay {
+        id: "fireworks",
+        display_name: "Fireworks AI",
+        description: "Fast open source model inference",
+        signup_url: "https://fireworks.ai/",
+    },
+    ProviderDisplay {
+        id: "zai",
+        display_name: "Zai (Zhipu AI)",
+        description: "GLM-4 models from China",
+        signup_url: "https://z.ai/",
+    },
+    ProviderDisplay {
+        id: "nebius",
+        display_name: "Nebius AI Studio",
+        description: "30+ open source models",
+        signup_url: "https://studio.nebius.ai/",
+    },
+    ProviderDisplay {
+        id: "mimo",
+        display_name: "MIMO (Xiaomi)",
+        description: "Xiaomi's MIMO models",
+        signup_url: "https://xiaomimimo.com/",
+    },
+    ProviderDisplay {
+        id: "bigmodel",
+        display_name: "BigModel.cn",
+        description: "Zhipu AI China platform",
+        signup_url: "https://open.bigmodel.cn/",
+    },
+    ProviderDisplay {
+        id: "ollama",
+        display_name: "Ollama (Local)",
+        description: "Run models locally, no API key needed",
+        signup_url: "https://ollama.ai/",
+    },
+];
+
+/// Get provider info for a provider ID
+pub fn get_provider_info(provider_id: &str) -> ProviderInfo {
+    // Find display metadata
+    let display = PROVIDER_DISPLAYS
+        .iter()
+        .find(|p| p.id == provider_id)
+        .unwrap_or(&ProviderDisplay {
+            id: "unknown",
             display_name: "Unknown Provider",
             description: "Custom provider configuration",
             signup_url: "",
-            env_var: "API_KEY",
-            default_model: "",
-            base_url: "",
-        },
+        });
+
+    ProviderInfo {
+        name: display.id,
+        display_name: display.display_name,
+        signup_url: display.signup_url,
+        env_var: catalog::api_key_env(provider_id).unwrap_or("API_KEY"),
+        default_model: catalog::default_model(provider_id).unwrap_or(""),
+        base_url: catalog::base_url(provider_id).unwrap_or(""),
     }
 }
 
-/// All supported providers for onboarding
-const ONBOARDING_PROVIDERS: &[ProviderType] = &[
-    ProviderType::Anthropic,
-    ProviderType::OpenAI,
-    ProviderType::Gemini,
-    ProviderType::Groq,
-    ProviderType::DeepSeek,
-    ProviderType::XAI,
-    ProviderType::Together,
-    ProviderType::Fireworks,
-    ProviderType::Zai,
-    ProviderType::Nebius,
-    ProviderType::MIMO,
-    ProviderType::BigModel,
-    ProviderType::Ollama,
+/// All supported provider IDs for onboarding (order matches PROVIDER_DISPLAYS)
+const ONBOARDING_PROVIDERS: &[&str] = &[
+    "anthropic",
+    "openai",
+    "gemini",
+    "groq",
+    "deepseek",
+    "xai",
+    "together",
+    "fireworks",
+    "zai",
+    "nebius",
+    "mimo",
+    "bigmodel",
+    "ollama",
 ];
 
 /// Onboarding wizard for first-run setup
@@ -204,14 +184,14 @@ impl OnboardingWizard {
         self.show_welcome();
 
         // Step 1: Provider selection
-        let provider_type = self.select_provider()?;
-        let provider_info = get_provider_info(provider_type);
+        let provider_id = self.select_provider()?;
+        let provider_info = get_provider_info(provider_id);
         let model = provider_info.default_model;
 
         // Loop for API key retry
         loop {
             // Step 2: API key input (skip for Ollama)
-            let api_key = if provider_type == ProviderType::Ollama {
+            let api_key = if provider_id == "ollama" {
                 None
             } else {
                 Some(self.input_api_key(&provider_info)?)
@@ -219,7 +199,7 @@ impl OnboardingWizard {
 
             // Step 3: Connection test (skip for Ollama)
             if let Some(ref key) = api_key
-                && !self.test_connection(provider_type, key, model).await? {
+                && !self.test_connection(provider_id, key, model).await? {
                     // User chose to try again - loop back to step 2
                     println!("{}", style("Let's try again...").dim());
                     println!();
@@ -227,7 +207,7 @@ impl OnboardingWizard {
                 }
 
             // Save configuration
-            self.save_config(provider_type, &provider_info, api_key.as_deref())?;
+            self.save_config(&provider_info, api_key.as_deref())?;
 
             // Optional: SerpAPI key for providers without native web search
             if !supports_native_search(provider_info.name) {
@@ -349,7 +329,7 @@ impl OnboardingWizard {
         println!();
     }
 
-    fn select_provider(&self) -> anyhow::Result<ProviderType> {
+    fn select_provider(&self) -> anyhow::Result<&'static str> {
         println!(
             "{} {}",
             style("Step 1 of 3:").bold().cyan(),
@@ -357,14 +337,13 @@ impl OnboardingWizard {
         );
         println!();
 
-        let items: Vec<String> = ONBOARDING_PROVIDERS
+        let items: Vec<String> = PROVIDER_DISPLAYS
             .iter()
-            .map(|pt| {
-                let info = get_provider_info(*pt);
+            .map(|p| {
                 format!(
                     "{:<25} {}",
-                    info.display_name,
-                    style(info.description).dim()
+                    p.display_name,
+                    style(p.description).dim()
                 )
             })
             .collect();
@@ -411,7 +390,7 @@ impl OnboardingWizard {
 
     async fn test_connection(
         &self,
-        provider_type: ProviderType,
+        provider_id: &str,
         api_key: &str,
         model: &str,
     ) -> anyhow::Result<bool> {
@@ -432,7 +411,7 @@ impl OnboardingWizard {
         spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
         // Create provider and make test call
-        let provider = GenAIProvider::with_api_key(provider_type, api_key, Some(model));
+        let provider = GenAIProvider::with_api_key(provider_id, api_key, Some(model));
 
         let test_messages = vec![cowork_core::provider::LlmMessage::user("Say 'hello' in one word.")];
 
@@ -493,7 +472,6 @@ impl OnboardingWizard {
 
     fn save_config(
         &mut self,
-        _provider_type: ProviderType,
         provider_info: &ProviderInfo,
         api_key: Option<&str>,
     ) -> anyhow::Result<()> {
@@ -623,7 +601,7 @@ mod tests {
 
     #[test]
     fn test_provider_info() {
-        let info = get_provider_info(ProviderType::Anthropic);
+        let info = get_provider_info("anthropic");
         assert_eq!(info.name, "anthropic");
         assert_eq!(info.env_var, "ANTHROPIC_API_KEY");
     }

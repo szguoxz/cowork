@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use super::tokens::TokenCounter;
 use super::Message;
-use crate::provider::ProviderType;
 
 /// Configuration for the context monitor
 #[derive(Debug, Clone)]
@@ -76,9 +75,9 @@ pub struct ContextMonitor {
 
 impl ContextMonitor {
     /// Create a new context monitor for a provider
-    pub fn new(provider: ProviderType) -> Self {
+    pub fn new(provider_id: impl Into<String>) -> Self {
         Self {
-            counter: TokenCounter::new(provider),
+            counter: TokenCounter::new(provider_id),
             config: MonitorConfig::default(),
             iteration_count: 0,
         }
@@ -87,18 +86,18 @@ impl ContextMonitor {
     /// Create a new context monitor with a specific model
     ///
     /// This provides more accurate context limits based on the model name.
-    pub fn with_model(provider: ProviderType, model: impl Into<String>) -> Self {
+    pub fn with_model(provider_id: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
-            counter: TokenCounter::with_model(provider, model),
+            counter: TokenCounter::with_model(provider_id, model),
             config: MonitorConfig::default(),
             iteration_count: 0,
         }
     }
 
     /// Create a new context monitor with custom config
-    pub fn with_config(provider: ProviderType, config: MonitorConfig) -> Self {
+    pub fn with_config(provider_id: impl Into<String>, config: MonitorConfig) -> Self {
         Self {
-            counter: TokenCounter::new(provider),
+            counter: TokenCounter::new(provider_id),
             config,
             iteration_count: 0,
         }
@@ -106,12 +105,12 @@ impl ContextMonitor {
 
     /// Create a new context monitor with model and custom config
     pub fn with_model_and_config(
-        provider: ProviderType,
+        provider_id: impl Into<String>,
         model: impl Into<String>,
         config: MonitorConfig,
     ) -> Self {
         Self {
-            counter: TokenCounter::with_model(provider, model),
+            counter: TokenCounter::with_model(provider_id, model),
             config,
             iteration_count: 0,
         }
@@ -276,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_calculate_usage_empty() {
-        let monitor = ContextMonitor::new(ProviderType::Anthropic);
+        let monitor = ContextMonitor::new("anthropic");
         let usage = monitor.calculate_usage(&[], "You are a helpful assistant.", None);
 
         assert!(usage.used_tokens > 0);
@@ -286,7 +285,7 @@ mod tests {
 
     #[test]
     fn test_calculate_usage_with_messages() {
-        let monitor = ContextMonitor::new(ProviderType::Anthropic);
+        let monitor = ContextMonitor::new("anthropic");
         let messages = vec![
             create_test_message(MessageRole::User, "Hello, how are you?"),
             create_test_message(MessageRole::Assistant, "I'm doing well, thank you!"),
@@ -301,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_calculate_usage_with_memory() {
-        let monitor = ContextMonitor::new(ProviderType::Anthropic);
+        let monitor = ContextMonitor::new("anthropic");
         let memory = "# Project\nThis is a Rust project using Tokio.";
 
         let usage = monitor.calculate_usage(&[], "System prompt", Some(memory));
@@ -319,7 +318,7 @@ mod tests {
             check_interval: 5,
         };
 
-        let monitor = ContextMonitor::with_config(ProviderType::Anthropic, config);
+        let monitor = ContextMonitor::with_config("anthropic", config);
 
         // Any messages should trigger compaction due to low threshold
         let messages = vec![
@@ -339,7 +338,7 @@ mod tests {
 
     #[test]
     fn test_should_check_interval() {
-        let mut monitor = ContextMonitor::new(ProviderType::Anthropic);
+        let mut monitor = ContextMonitor::new("anthropic");
 
         // Default interval is 5
         assert!(!monitor.should_check()); // 1
@@ -357,7 +356,7 @@ mod tests {
 
     #[test]
     fn test_format_usage() {
-        let monitor = ContextMonitor::new(ProviderType::Anthropic);
+        let monitor = ContextMonitor::new("anthropic");
         let usage = monitor.calculate_usage(&[], "System", None);
         let formatted = monitor.format_usage(&usage);
 

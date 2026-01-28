@@ -22,7 +22,7 @@ pub use factory::{
     create_provider_with_settings, get_api_key, get_model_tiers, has_api_key_configured,
 };
 pub use genai_provider::{
-    create_provider, CompletionResult, GenAIProvider, PendingToolCall, ProviderType,
+    create_provider, CompletionResult, GenAIProvider, PendingToolCall,
 };
 
 pub use model_listing::{get_known_models, get_model_context_limit, ModelInfo};
@@ -328,7 +328,8 @@ pub trait LlmProvider: Send + Sync {
 /// Provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
-    pub provider_type: ProviderType,
+    /// Provider ID (e.g., "anthropic", "openai", "together")
+    pub provider_id: String,
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub model: String,
@@ -338,7 +339,7 @@ pub struct ProviderConfig {
 impl Default for ProviderConfig {
     fn default() -> Self {
         Self {
-            provider_type: ProviderType::Anthropic,
+            provider_id: "anthropic".to_string(),
             api_key: None,
             base_url: None,
             model: catalog::default_model("anthropic").unwrap_or("claude-sonnet-4-5-20250929").to_string(),

@@ -468,14 +468,13 @@ mod tool_restrictions_tests {
 mod session_config_tests {
     use super::*;
     use cowork_core::session::SessionConfig;
-    use cowork_core::provider::ProviderType;
 
     #[test]
     fn test_session_config_with_prompt_system() {
         let registry = Arc::new(ComponentRegistry::with_builtins());
 
         let config = SessionConfig::new("/test/workspace")
-            .with_provider(ProviderType::Anthropic)
+            .with_provider("anthropic")
             .with_prompt_config(PromptSystemConfig {
                 enable_hooks: true,
                 enable_plugins: true,

@@ -3,15 +3,15 @@
 //! Provides token counting for various LLM providers.
 //! Uses tiktoken when available, falls back to heuristics otherwise.
 
-use crate::provider::ProviderType;
+use crate::provider::catalog;
 
 #[cfg(feature = "tiktoken")]
 use tiktoken_rs::{cl100k_base, CoreBPE};
 
 /// Token counter for estimating context usage
 pub struct TokenCounter {
-    /// Provider type for model-specific counting
-    provider: ProviderType,
+    /// Provider ID (e.g., "anthropic", "openai")
+    provider_id: String,
     /// Model name for precise context limits
     model: Option<String>,
     /// Tiktoken encoder (when feature is enabled)
@@ -20,13 +20,13 @@ pub struct TokenCounter {
 }
 
 impl TokenCounter {
-    pub fn new(provider: ProviderType) -> Self {
+    pub fn new(provider_id: impl Into<String>) -> Self {
         #[cfg(feature = "tiktoken")]
         {
             // Use cl100k_base encoding (used by GPT-4, Claude, etc.)
             let encoder = cl100k_base().ok();
             Self {
-                provider,
+                provider_id: provider_id.into(),
                 model: None,
                 encoder,
             }
@@ -35,19 +35,19 @@ impl TokenCounter {
         #[cfg(not(feature = "tiktoken"))]
         {
             Self {
-                provider,
+                provider_id: provider_id.into(),
                 model: None,
             }
         }
     }
 
     /// Create a token counter with a specific model
-    pub fn with_model(provider: ProviderType, model: impl Into<String>) -> Self {
+    pub fn with_model(provider_id: impl Into<String>, model: impl Into<String>) -> Self {
         #[cfg(feature = "tiktoken")]
         {
             let encoder = cl100k_base().ok();
             Self {
-                provider,
+                provider_id: provider_id.into(),
                 model: Some(model.into()),
                 encoder,
             }
@@ -56,7 +56,7 @@ impl TokenCounter {
         #[cfg(not(feature = "tiktoken"))]
         {
             Self {
-                provider,
+                provider_id: provider_id.into(),
                 model: Some(model.into()),
             }
         }
@@ -125,9 +125,9 @@ impl TokenCounter {
 
         for msg in messages {
             // Add overhead for message structure (role, separators, etc.)
-            let overhead = match self.provider {
-                ProviderType::Anthropic => 4, // Claude message overhead
-                ProviderType::OpenAI => 3,    // GPT message overhead
+            let overhead = match self.provider_id.as_str() {
+                "anthropic" => 4, // Claude message overhead
+                "openai" => 3,    // GPT message overhead
                 _ => 3,
             };
 
@@ -146,33 +146,12 @@ impl TokenCounter {
 
         // Check model-specific limits first using centralized function
         if let Some(ref model) = self.model
-            && let Some(limit) = get_model_context_limit(self.provider, model) {
+            && let Some(limit) = get_model_context_limit(&self.provider_id, model) {
                 return limit;
             }
 
-        // Fall back to provider defaults
-        Self::provider_default_limit(self.provider)
-    }
-
-    /// Get default context limit for a provider (when model is unknown)
-    fn provider_default_limit(provider: ProviderType) -> usize {
-        match provider {
-            ProviderType::Anthropic => 200_000,  // Claude 4.5/Sonnet 4 default
-            ProviderType::OpenAI => 400_000,     // GPT-5 default
-            ProviderType::Gemini => 1_000_000,   // Gemini 2.x
-            ProviderType::Cohere => 128_000,     // Command R+
-            ProviderType::Groq => 128_000,       // Llama 3
-            ProviderType::DeepSeek => 131_072,   // DeepSeek V3
-            ProviderType::XAI => 131_072,        // Grok 2
-            ProviderType::Perplexity => 128_000, // Sonar
-            ProviderType::Together => 128_000,   // Varies by model
-            ProviderType::Fireworks => 128_000,  // Varies by model
-            ProviderType::Zai => 128_000,        // GLM-4
-            ProviderType::Nebius => 128_000,     // Varies by model
-            ProviderType::MIMO => 32_000,        // MIMO
-            ProviderType::BigModel => 128_000,   // GLM-4
-            ProviderType::Ollama => 32_000,      // Default for local models
-        }
+        // Fall back to provider defaults from catalog
+        catalog::context_window(&self.provider_id).unwrap_or(128_000)
     }
 
     /// Get recommended trigger threshold for summarization
@@ -206,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_count_text() {
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
 
         // Simple text
         let text = "Hello, this is a simple test message.";
@@ -219,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_count_code() {
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
 
         // Code-heavy content
         let code = "fn main() { let x = 1 + 2; println!(\"{}\", x); }";
@@ -231,32 +210,32 @@ mod tests {
 
     #[test]
     fn test_count_empty() {
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
         assert_eq!(counter.count(""), 0);
     }
 
     #[test]
     fn test_context_limits() {
-        let anthropic = TokenCounter::new(ProviderType::Anthropic);
+        let anthropic = TokenCounter::new("anthropic");
         assert_eq!(anthropic.context_limit(), 200_000);
 
-        let openai = TokenCounter::new(ProviderType::OpenAI);
-        assert_eq!(openai.context_limit(), 400_000); // GPT-5 default
+        let openai = TokenCounter::new("openai");
+        assert_eq!(openai.context_limit(), 1_000_000); // GPT-5 default from catalog
 
-        let gemini = TokenCounter::new(ProviderType::Gemini);
+        let gemini = TokenCounter::new("gemini");
         assert_eq!(gemini.context_limit(), 1_000_000);
     }
 
     #[test]
     fn test_summarization_threshold() {
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
         // 80% of 200,000 = 160,000
         assert_eq!(counter.summarization_threshold(), 160_000);
     }
 
     #[test]
     fn test_should_summarize() {
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
 
         assert!(!counter.should_summarize(100_000)); // Below threshold
         assert!(counter.should_summarize(160_000)); // At threshold
@@ -266,47 +245,44 @@ mod tests {
     #[cfg(feature = "tiktoken")]
     #[test]
     fn test_tiktoken_available() {
-        let counter = TokenCounter::new(ProviderType::Anthropic);
+        let counter = TokenCounter::new("anthropic");
         // When tiktoken feature is enabled, it should be available
         assert!(counter.is_using_tiktoken());
     }
 
     #[test]
     fn test_model_specific_limits() {
-        use crate::provider::catalog;
-
         // Models in the catalog return their exact context
         let anthropic_ctx = catalog::context_window("anthropic").unwrap();
-        let claude = TokenCounter::with_model(ProviderType::Anthropic, catalog::default_model("anthropic").unwrap());
+        let claude = TokenCounter::with_model("anthropic", catalog::default_model("anthropic").unwrap());
         assert_eq!(claude.context_limit(), anthropic_ctx);
 
         let openai_ctx = catalog::context_window("openai").unwrap();
-        let gpt = TokenCounter::with_model(ProviderType::OpenAI, catalog::default_model("openai").unwrap());
+        let gpt = TokenCounter::with_model("openai", catalog::default_model("openai").unwrap());
         assert_eq!(gpt.context_limit(), openai_ctx);
 
         let deepseek_ctx = catalog::context_window("deepseek").unwrap();
-        let deepseek = TokenCounter::with_model(ProviderType::DeepSeek, catalog::default_model("deepseek").unwrap());
+        let deepseek = TokenCounter::with_model("deepseek", catalog::default_model("deepseek").unwrap());
         assert_eq!(deepseek.context_limit(), deepseek_ctx);
 
         // Unknown models fall back to provider default
-        let unknown = TokenCounter::with_model(ProviderType::OpenAI, "some-unknown-model");
+        let unknown = TokenCounter::with_model("openai", "some-unknown-model");
         assert_eq!(unknown.context_limit(), openai_ctx);
     }
 
     #[test]
     fn test_model_limit_via_provider_module() {
-        use crate::provider::catalog;
         use crate::provider::model_listing::get_model_context_limit;
 
         // Known models return their catalog context
         let anthropic_ctx = catalog::context_window("anthropic").unwrap();
-        assert_eq!(get_model_context_limit(ProviderType::Anthropic, catalog::default_model("anthropic").unwrap()), Some(anthropic_ctx));
+        assert_eq!(get_model_context_limit("anthropic", catalog::default_model("anthropic").unwrap()), Some(anthropic_ctx));
 
         let deepseek_ctx = catalog::context_window("deepseek").unwrap();
-        assert_eq!(get_model_context_limit(ProviderType::DeepSeek, "deepseek-chat"), Some(deepseek_ctx));
+        assert_eq!(get_model_context_limit("deepseek", "deepseek-chat"), Some(deepseek_ctx));
 
         // Unknown models fall back to provider default
         let openai_ctx = catalog::context_window("openai").unwrap();
-        assert_eq!(get_model_context_limit(ProviderType::OpenAI, "unknown-model"), Some(openai_ctx));
+        assert_eq!(get_model_context_limit("openai", "unknown-model"), Some(openai_ctx));
     }
 }

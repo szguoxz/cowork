@@ -5,27 +5,26 @@
 
 use crate::config::{ConfigManager, ModelTiers};
 use crate::error::{Error, Result};
-use super::genai_provider::{GenAIProvider, ProviderType};
+use super::catalog;
+use super::genai_provider::GenAIProvider;
 
 /// Get API key for a provider, checking config then environment variables
 ///
 /// # Arguments
 /// * `config_manager` - The configuration manager
-/// * `provider_type` - The provider type to get the API key for
+/// * `provider_id` - The provider ID (e.g., "anthropic", "openai")
 ///
 /// # Returns
 /// The API key if found, None otherwise
-pub fn get_api_key(config_manager: &ConfigManager, provider_type: ProviderType) -> Option<String> {
-    let provider_name = provider_type.to_string();
-
+pub fn get_api_key(config_manager: &ConfigManager, provider_id: &str) -> Option<String> {
     // Try config first
-    if let Some(provider_config) = config_manager.config().providers.get(&provider_name)
+    if let Some(provider_config) = config_manager.config().providers.get(provider_id)
         && let Some(key) = provider_config.get_api_key() {
             return Some(key);
         }
 
     // Fall back to environment variable
-    if let Some(env_var) = provider_type.api_key_env()
+    if let Some(env_var) = catalog::api_key_env(provider_id)
         && let Ok(key) = std::env::var(env_var) {
             return Some(key);
         }
@@ -37,39 +36,37 @@ pub fn get_api_key(config_manager: &ConfigManager, provider_type: ProviderType) 
 ///
 /// # Arguments
 /// * `config_manager` - The configuration manager
-/// * `provider_type` - The provider type to get model tiers for
+/// * `provider_id` - The provider ID (e.g., "anthropic", "openai")
 ///
 /// # Returns
 /// The configured model tiers, or provider defaults if not configured
-pub fn get_model_tiers(config_manager: &ConfigManager, provider_type: ProviderType) -> ModelTiers {
-    let provider_name = provider_type.to_string();
-
+pub fn get_model_tiers(config_manager: &ConfigManager, provider_id: &str) -> ModelTiers {
     // Check config for custom model_tiers
-    if let Some(provider_config) = config_manager.config().providers.get(&provider_name) {
+    if let Some(provider_config) = config_manager.config().providers.get(provider_id) {
         return provider_config.get_model_tiers();
     }
 
     // Fall back to provider defaults
-    ModelTiers::for_provider(&provider_name)
+    ModelTiers::for_provider(provider_id)
 }
 
 /// Check if an API key is configured for the given provider
 ///
 /// # Arguments
 /// * `config_manager` - The configuration manager
-/// * `provider_type` - The provider type to check
+/// * `provider_id` - The provider ID (e.g., "anthropic", "openai")
 ///
 /// # Returns
 /// true if an API key is available (from config or environment), false otherwise
-pub fn has_api_key_configured(config_manager: &ConfigManager, provider_type: ProviderType) -> bool {
-    get_api_key(config_manager, provider_type).is_some()
+pub fn has_api_key_configured(config_manager: &ConfigManager, provider_id: &str) -> bool {
+    get_api_key(config_manager, provider_id).is_some()
 }
 
 /// Create a provider from config, falling back to environment variables
 ///
 /// # Arguments
 /// * `config_manager` - The configuration manager
-/// * `provider_type` - The provider type to create
+/// * `provider_id` - The provider ID (e.g., "anthropic", "openai")
 /// * `model_override` - Optional model name to override the configured model
 ///
 /// # Returns
@@ -79,19 +76,19 @@ pub fn has_api_key_configured(config_manager: &ConfigManager, provider_type: Pro
 /// Returns an error if no API key is configured
 pub fn create_provider_from_config(
     config_manager: &ConfigManager,
-    provider_type: ProviderType,
+    provider_id: &str,
     model_override: Option<&str>,
 ) -> Result<GenAIProvider> {
-    let provider_name = provider_type.to_string();
+    let env_var = catalog::api_key_env(provider_id);
 
     // Try to get provider config from config file
-    if let Some(provider_config) = config_manager.config().providers.get(&provider_name) {
+    if let Some(provider_config) = config_manager.config().providers.get(provider_id) {
         // Get API key from config or environment
         let api_key = provider_config.get_api_key().ok_or_else(|| {
             Error::Config(format!(
                 "No API key configured for {}. Set it in config or via {}",
-                provider_name,
-                provider_type.api_key_env().unwrap_or("environment variable")
+                provider_id,
+                env_var.unwrap_or("environment variable")
             ))
         })?;
 
@@ -100,7 +97,7 @@ pub fn create_provider_from_config(
 
         // Create provider with config (supports custom base_url)
         return Ok(GenAIProvider::with_config(
-            provider_type,
+            provider_id,
             &api_key,
             Some(model),
             provider_config.base_url.as_deref(),
@@ -108,10 +105,10 @@ pub fn create_provider_from_config(
     }
 
     // No config for this provider, try environment variable
-    if let Some(env_var) = provider_type.api_key_env()
-        && let Ok(api_key) = std::env::var(env_var) {
+    if let Some(ev) = env_var
+        && let Ok(api_key) = std::env::var(ev) {
             return Ok(GenAIProvider::with_api_key(
-                provider_type,
+                provider_id,
                 &api_key,
                 model_override,
             ));
@@ -119,26 +116,26 @@ pub fn create_provider_from_config(
 
     Err(Error::Config(format!(
         "No configuration found for provider '{}'. Add it to config file or set {}",
-        provider_name,
-        provider_type.api_key_env().unwrap_or("API key")
+        provider_id,
+        env_var.unwrap_or("API key")
     )))
 }
 
 /// Create a provider with direct settings (for UI use)
 ///
 /// # Arguments
-/// * `provider_type` - The provider type to create
+/// * `provider_id` - The provider ID (e.g., "anthropic", "openai")
 /// * `api_key` - The API key
 /// * `model` - The model name
 ///
 /// # Returns
 /// A configured GenAIProvider instance
 pub fn create_provider_with_settings(
-    provider_type: ProviderType,
+    provider_id: &str,
     api_key: &str,
     model: &str,
 ) -> GenAIProvider {
-    GenAIProvider::with_api_key(provider_type, api_key, Some(model))
+    GenAIProvider::with_api_key(provider_id, api_key, Some(model))
 }
 
 /// Create a provider directly from a ProviderConfig
@@ -156,21 +153,19 @@ pub fn create_provider_with_settings(
 pub fn create_provider_from_provider_config(
     config: &crate::config::ProviderConfig,
 ) -> Result<GenAIProvider> {
-    let provider_type: ProviderType = config
-        .provider_type
-        .parse()
-        .map_err(|e: String| Error::Config(e))?;
+    let provider_id = &config.provider_type;
+    let env_var = catalog::api_key_env(provider_id);
 
     let api_key = config.get_api_key().ok_or_else(|| {
         Error::Config(format!(
             "No API key configured for {}. Set it in config or via {}",
-            config.provider_type,
-            provider_type.api_key_env().unwrap_or("environment variable")
+            provider_id,
+            env_var.unwrap_or("environment variable")
         ))
     })?;
 
     Ok(GenAIProvider::with_config(
-        provider_type,
+        provider_id,
         &api_key,
         Some(&config.model),
         config.base_url.as_deref(),
@@ -180,7 +175,6 @@ pub fn create_provider_from_provider_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::catalog;
     use crate::provider::LlmProvider;
     use tempfile::tempdir;
 
@@ -205,7 +199,7 @@ mod tests {
         // SAFETY: Test runs in isolation, no concurrent access to this env var
         unsafe { std::env::set_var("ANTHROPIC_API_KEY", "test-key-from-env") };
 
-        let api_key = get_api_key(&config_manager, ProviderType::Anthropic);
+        let api_key = get_api_key(&config_manager, "anthropic");
         assert_eq!(api_key, Some("test-key-from-env".to_string()));
 
         // Clean up
@@ -225,7 +219,7 @@ mod tests {
         // SAFETY: Test runs in isolation, no concurrent access to this env var
         unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
 
-        assert!(!has_api_key_configured(&config_manager, ProviderType::Anthropic));
+        assert!(!has_api_key_configured(&config_manager, "anthropic"));
     }
 
     #[test]
@@ -236,7 +230,7 @@ mod tests {
 
         let config_manager = ConfigManager::with_path(config_path).unwrap();
 
-        let tiers = get_model_tiers(&config_manager, ProviderType::Anthropic);
+        let tiers = get_model_tiers(&config_manager, "anthropic");
         assert_eq!(tiers.fast, catalog::model_id("anthropic", catalog::ModelTier::Fast).unwrap());
         assert_eq!(tiers.balanced, catalog::default_model("anthropic").unwrap());
         assert_eq!(tiers.powerful, catalog::model_id("anthropic", catalog::ModelTier::Powerful).unwrap());
@@ -245,7 +239,7 @@ mod tests {
     #[test]
     fn test_create_provider_with_settings() {
         let provider = create_provider_with_settings(
-            ProviderType::Anthropic,
+            "anthropic",
             "test-key",
             catalog::default_model("anthropic").unwrap(),
         );

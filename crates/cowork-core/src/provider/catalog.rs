@@ -2,6 +2,7 @@
 //!
 //! Loads provider data from embedded JSON at compile time.
 
+use genai::adapter::AdapterKind;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -37,6 +38,7 @@ fn default_max_output() -> usize {
 pub struct Provider {
     pub id: String,
     pub name: String,
+    pub adapter: AdapterKind,
     pub base_url: String,
     pub api_key_env: Option<String>,
     pub native_web_search: bool,
@@ -75,6 +77,7 @@ struct RawCatalog {
 #[derive(Deserialize)]
 struct RawProvider {
     name: String,
+    adapter: AdapterKind,
     base_url: String,
     api_key_env: Option<String>,
     native_web_search: bool,
@@ -104,6 +107,7 @@ static CATALOG: LazyLock<HashMap<String, Provider>> = LazyLock::new(|| {
             let provider = Provider {
                 id: id.clone(),
                 name: raw.name,
+                adapter: raw.adapter,
                 base_url: raw.base_url,
                 api_key_env: raw.api_key_env,
                 native_web_search: raw.native_web_search,
@@ -132,6 +136,11 @@ pub fn ids() -> impl Iterator<Item = &'static str> {
 /// Check if a provider has native web search
 pub fn has_native_search(provider_id: &str) -> bool {
     get(provider_id).map(|p| p.native_web_search).unwrap_or(false)
+}
+
+/// Get the genai AdapterKind for a provider
+pub fn adapter(provider_id: &str) -> Option<AdapterKind> {
+    get(provider_id).map(|p| p.adapter)
 }
 
 /// Get base URL for a provider

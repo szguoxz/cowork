@@ -9,7 +9,7 @@ use cowork_core::prompt::{
     AgentInfo, CommandInfo, ComponentRegistry, PluginInfo, RegistrySummary, SkillInfo,
 };
 use cowork_core::provider::{
-    catalog, create_provider_with_settings, LlmProvider, LlmRequest, ProviderType,
+    catalog, create_provider_with_settings, LlmProvider, LlmRequest,
 };
 use cowork_core::ApprovalLevel;
 
@@ -109,26 +109,24 @@ pub async fn test_api_connection(
     api_key: String,
     model: Option<String>,
 ) -> Result<ApiTestResult, String> {
-    let ptype: ProviderType = match provider_type.parse() {
-        Ok(p) => p,
-        Err(e) => {
-            return Ok(ApiTestResult {
-                success: false,
-                message: e,
-            });
-        }
-    };
+    // Validate provider exists in catalog
+    if catalog::get(&provider_type).is_none() {
+        return Ok(ApiTestResult {
+            success: false,
+            message: format!("Unknown provider: {}", provider_type),
+        });
+    }
 
     // Use provided model or fall back to provider's default
     let model_id = model
         .filter(|m| !m.is_empty())
         .unwrap_or_else(|| {
-            cowork_core::provider::catalog::default_model(&provider_type)
+            catalog::default_model(&provider_type)
                 .unwrap_or("gpt-4o")
                 .to_string()
         });
 
-    let provider = create_provider_with_settings(ptype, &api_key, &model_id);
+    let provider = create_provider_with_settings(&provider_type, &api_key, &model_id);
 
     // Try a simple completion
     let request = LlmRequest::new(vec![cowork_core::provider::LlmMessage::user(
@@ -181,11 +179,8 @@ pub struct ModelInfo {
 /// Fetch available models for a provider
 #[tauri::command]
 pub async fn fetch_provider_models(provider_type: String) -> Result<Vec<ModelInfo>, String> {
-    let ptype: ProviderType = provider_type.parse().map_err(|e: String| e)?;
-    let provider_id = ptype.to_string();
-
-    // Get provider from catalog
-    let Some(provider) = catalog::get(&provider_id) else {
+    // Get provider from catalog directly using the string
+    let Some(provider) = catalog::get(&provider_type) else {
         return Ok(vec![]);
     };
 

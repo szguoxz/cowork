@@ -11,12 +11,13 @@
 //!
 //! Example: `LLM_LOG_FILE=/tmp/llm.log cowork`
 
+use genai::adapter::AdapterKind;
 use genai::chat::{ChatMessage, ChatOptions, ChatRequest, Tool, ToolCall, ToolResponse};
 use genai::resolver::{AuthData, AuthResolver, Endpoint};
+use genai::ModelIden;
 use genai::ServiceTarget;
 use genai::WebConfig;
 use genai::Client;
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{debug, error, warn};
 
@@ -90,107 +91,9 @@ use super::catalog;
 use super::logging::{log_llm_interaction, LogConfig};
 use super::model_listing::get_model_max_output;
 
+use serde::{Deserialize, Serialize};
+
 use super::{ContentBlock, LlmMessage, LlmProvider, LlmRequest, LlmResponse, MessageContent, TokenUsage};
-
-/// Supported LLM provider types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ProviderType {
-    /// OpenAI (GPT-4, GPT-4o, GPT-3.5, etc.)
-    OpenAI,
-    /// Anthropic (Claude 3.5, Claude 3, etc.)
-    Anthropic,
-    /// Google Gemini
-    Gemini,
-    /// Cohere (Command R, etc.)
-    Cohere,
-    /// Perplexity
-    Perplexity,
-    /// Groq (fast inference)
-    Groq,
-    /// xAI (Grok)
-    XAI,
-    /// DeepSeek
-    DeepSeek,
-    /// Together AI
-    Together,
-    /// Fireworks AI
-    Fireworks,
-    /// Zai (Zhipu AI) - GLM models
-    Zai,
-    /// Nebius AI Studio
-    Nebius,
-    /// MIMO (Xiaomi)
-    MIMO,
-    /// BigModel.cn (Zhipu AI China)
-    BigModel,
-    /// Ollama (local)
-    Ollama,
-}
-
-impl std::fmt::Display for ProviderType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for ProviderType {
-    type Err = String;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "openai" => Ok(ProviderType::OpenAI),
-            "anthropic" => Ok(ProviderType::Anthropic),
-            "gemini" | "google" => Ok(ProviderType::Gemini),
-            "cohere" => Ok(ProviderType::Cohere),
-            "perplexity" => Ok(ProviderType::Perplexity),
-            "groq" => Ok(ProviderType::Groq),
-            "xai" | "grok" => Ok(ProviderType::XAI),
-            "deepseek" => Ok(ProviderType::DeepSeek),
-            "together" => Ok(ProviderType::Together),
-            "fireworks" => Ok(ProviderType::Fireworks),
-            "zai" | "zhipu" => Ok(ProviderType::Zai),
-            "nebius" => Ok(ProviderType::Nebius),
-            "mimo" => Ok(ProviderType::MIMO),
-            "bigmodel" => Ok(ProviderType::BigModel),
-            "ollama" => Ok(ProviderType::Ollama),
-            _ => Err(format!("Unknown provider: {}", s)),
-        }
-    }
-}
-
-impl ProviderType {
-    /// Get the default model for this provider
-    pub fn default_model(&self) -> &'static str {
-        catalog::default_model(self.as_str()).unwrap_or("unknown")
-    }
-
-    /// Get the environment variable name for API key
-    pub fn api_key_env(&self) -> Option<&'static str> {
-        catalog::api_key_env(self.as_str())
-    }
-
-    /// Get the provider type as a string
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ProviderType::OpenAI => "openai",
-            ProviderType::Anthropic => "anthropic",
-            ProviderType::Gemini => "gemini",
-            ProviderType::Cohere => "cohere",
-            ProviderType::Perplexity => "perplexity",
-            ProviderType::Groq => "groq",
-            ProviderType::XAI => "xai",
-            ProviderType::DeepSeek => "deepseek",
-            ProviderType::Together => "together",
-            ProviderType::Fireworks => "fireworks",
-            ProviderType::Zai => "zai",
-            ProviderType::Nebius => "nebius",
-            ProviderType::MIMO => "mimo",
-            ProviderType::BigModel => "bigmodel",
-            ProviderType::Ollama => "ollama",
-        }
-    }
-}
 
 /// Tool call from the LLM that needs approval
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,7 +141,10 @@ impl CompletionResult {
 /// A provider implementation using genai
 pub struct GenAIProvider {
     client: Client,
-    provider_type: ProviderType,
+    /// Provider ID (e.g., "anthropic", "together")
+    provider_id: String,
+    /// The genai adapter to use
+    adapter: AdapterKind,
     model: String,
     system_prompt: Option<String>,
 }
@@ -255,20 +161,36 @@ impl GenAIProvider {
     }
 
     /// Create a new provider with default settings (uses environment variables for auth)
-    pub fn new(provider_type: ProviderType, model: Option<&str>) -> Self {
+    ///
+    /// The provider_id is looked up in the catalog to get the adapter and default model.
+    pub fn new(provider_id: &str, model: Option<&str>) -> Self {
+        let provider = catalog::get(provider_id)
+            .unwrap_or_else(|| panic!("Unknown provider: {}", provider_id));
+        let adapter = provider.adapter;
+
+        // Use model mapper to force the correct adapter for this provider
         let client = Client::builder()
             .with_web_config(Self::default_web_config())
+            .with_model_mapper_fn(move |model_iden: ModelIden| -> std::result::Result<ModelIden, genai::resolver::Error> {
+                Ok(ModelIden::new(adapter, model_iden.model_name.clone()))
+            })
             .build();
+
         Self {
             client,
-            provider_type,
-            model: model.unwrap_or(provider_type.default_model()).to_string(),
+            provider_id: provider_id.to_string(),
+            adapter: provider.adapter,
+            model: model.unwrap_or(&provider.default_model().id).to_string(),
             system_prompt: None,
         }
     }
 
     /// Create a provider with a specific API key
-    pub fn with_api_key(provider_type: ProviderType, api_key: &str, model: Option<&str>) -> Self {
+    pub fn with_api_key(provider_id: &str, api_key: &str, model: Option<&str>) -> Self {
+        let provider = catalog::get(provider_id)
+            .unwrap_or_else(|| panic!("Unknown provider: {}", provider_id));
+        let adapter = provider.adapter;
+
         let api_key = api_key.to_string();
         let auth_resolver = AuthResolver::from_resolver_fn(
             move |_model_iden| -> std::result::Result<Option<AuthData>, genai::resolver::Error> {
@@ -276,15 +198,20 @@ impl GenAIProvider {
             },
         );
 
+        // Use model mapper to force the correct adapter for this provider
         let client = Client::builder()
             .with_web_config(Self::default_web_config())
             .with_auth_resolver(auth_resolver)
+            .with_model_mapper_fn(move |model_iden: ModelIden| -> std::result::Result<ModelIden, genai::resolver::Error> {
+                Ok(ModelIden::new(adapter, model_iden.model_name.clone()))
+            })
             .build();
 
         Self {
             client,
-            provider_type,
-            model: model.unwrap_or(provider_type.default_model()).to_string(),
+            provider_id: provider_id.to_string(),
+            adapter: provider.adapter,
+            model: model.unwrap_or(&provider.default_model().id).to_string(),
             system_prompt: None,
         }
     }
@@ -294,12 +221,18 @@ impl GenAIProvider {
     /// The `base_url` should be the API endpoint prefix. For example:
     /// - Anthropic: `https://api.anthropic.com/v1/` (genai appends `messages`)
     /// - OpenAI: `https://api.openai.com/v1/` (genai appends `chat/completions`)
+    ///
+    /// If `base_url` is None, uses the default from the catalog.
     pub fn with_config(
-        provider_type: ProviderType,
+        provider_id: &str,
         api_key: &str,
         model: Option<&str>,
         base_url: Option<&str>,
     ) -> Self {
+        let provider = catalog::get(provider_id)
+            .unwrap_or_else(|| panic!("Unknown provider: {}", provider_id));
+        let adapter = provider.adapter;
+
         let api_key_owned = api_key.to_string();
         let auth_resolver = AuthResolver::from_resolver_fn(
             move |_model_iden| -> std::result::Result<Option<AuthData>, genai::resolver::Error> {
@@ -307,27 +240,28 @@ impl GenAIProvider {
             },
         );
 
-        let client = if let Some(url) = base_url {
-            let endpoint = Endpoint::from_owned(url.to_string());
-            Client::builder()
-                .with_web_config(Self::default_web_config())
-                .with_auth_resolver(auth_resolver)
-                .with_service_target_resolver_fn(move |mut target: ServiceTarget| {
-                    target.endpoint = endpoint;
-                    Ok(target)
-                })
-                .build()
-        } else {
-            Client::builder()
-                .with_web_config(Self::default_web_config())
-                .with_auth_resolver(auth_resolver)
-                .build()
-        };
+        // Use provided base_url or fall back to catalog default
+        let effective_url = base_url.unwrap_or(&provider.base_url);
+        let endpoint = Endpoint::from_owned(effective_url.to_string());
+
+        // Use model mapper to force the correct adapter for this provider
+        let client = Client::builder()
+            .with_web_config(Self::default_web_config())
+            .with_auth_resolver(auth_resolver)
+            .with_model_mapper_fn(move |model_iden: ModelIden| -> std::result::Result<ModelIden, genai::resolver::Error> {
+                Ok(ModelIden::new(adapter, model_iden.model_name.clone()))
+            })
+            .with_service_target_resolver_fn(move |mut target: ServiceTarget| {
+                target.endpoint = endpoint;
+                Ok(target)
+            })
+            .build();
 
         Self {
             client,
-            provider_type,
-            model: model.unwrap_or(provider_type.default_model()).to_string(),
+            provider_id: provider_id.to_string(),
+            adapter: provider.adapter,
+            model: model.unwrap_or(&provider.default_model().id).to_string(),
             system_prompt: None,
         }
     }
@@ -338,9 +272,14 @@ impl GenAIProvider {
         self
     }
 
-    /// Get the provider type
-    pub fn provider_type(&self) -> ProviderType {
-        self.provider_type
+    /// Get the provider ID (e.g., "anthropic", "together")
+    pub fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
+    /// Get the genai adapter kind
+    pub fn adapter(&self) -> AdapterKind {
+        self.adapter
     }
 
     /// Get the model name
@@ -528,7 +467,7 @@ impl GenAIProvider {
 
         // Configure chat options with max_tokens from catalog
         // Different models have different limits (4K-32K), so use the catalog value
-        let max_output = get_model_max_output(self.provider_type, &self.model).unwrap_or(8192);
+        let max_output = get_model_max_output(&self.provider_id, &self.model).unwrap_or(8192);
         let chat_options = ChatOptions::default().with_max_tokens(max_output as u32);
 
         // Retry configuration
@@ -538,6 +477,7 @@ impl GenAIProvider {
         let mut json_error_retries = 0u32;
 
         // Execute with retry logic
+        // Note: The client's model_mapper will ensure the correct adapter is used
         loop {
             let chat_res = self
                 .client
@@ -713,10 +653,11 @@ impl GenAIProvider {
         }
 
         // Configure chat options with max_tokens from catalog
-        let max_output = get_model_max_output(self.provider_type, &self.model).unwrap_or(8192);
+        let max_output = get_model_max_output(&self.provider_id, &self.model).unwrap_or(8192);
         let chat_options = ChatOptions::default().with_max_tokens(max_output as u32);
 
         // Execute the chat again (non-streaming)
+        // Note: The client's model_mapper will ensure the correct adapter is used
         let response = self
             .client
             .exec_chat(&self.model, chat_req, Some(&chat_options))
@@ -765,23 +706,7 @@ impl GenAIProvider {
 // Implement LlmProvider trait for compatibility with existing code
 impl LlmProvider for GenAIProvider {
     fn name(&self) -> &str {
-        match self.provider_type {
-            ProviderType::OpenAI => "openai",
-            ProviderType::Anthropic => "anthropic",
-            ProviderType::Gemini => "gemini",
-            ProviderType::Cohere => "cohere",
-            ProviderType::Perplexity => "perplexity",
-            ProviderType::Groq => "groq",
-            ProviderType::XAI => "xai",
-            ProviderType::DeepSeek => "deepseek",
-            ProviderType::Together => "together",
-            ProviderType::Fireworks => "fireworks",
-            ProviderType::Zai => "zai",
-            ProviderType::Nebius => "nebius",
-            ProviderType::MIMO => "mimo",
-            ProviderType::BigModel => "bigmodel",
-            ProviderType::Ollama => "ollama",
-        }
+        &self.provider_id
     }
 
     async fn complete(&self, request: LlmRequest) -> Result<LlmResponse> {
@@ -842,15 +767,15 @@ impl LlmProvider for GenAIProvider {
 
 /// Create a provider from configuration
 pub fn create_provider(
-    provider_type: ProviderType,
+    provider_id: &str,
     api_key: Option<&str>,
     model: Option<&str>,
     system_prompt: Option<&str>,
 ) -> Result<GenAIProvider> {
     let provider = if let Some(key) = api_key {
-        GenAIProvider::with_api_key(provider_type, key, model)
+        GenAIProvider::with_api_key(provider_id, key, model)
     } else {
-        GenAIProvider::new(provider_type, model)
+        GenAIProvider::new(provider_id, model)
     };
 
     let provider = if let Some(prompt) = system_prompt {

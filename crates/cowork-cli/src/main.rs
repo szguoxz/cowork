@@ -14,7 +14,7 @@ use console::style;
 use onboarding::OnboardingWizard;
 
 use cowork_core::config::ConfigManager;
-use cowork_core::provider::{has_api_key_configured, ProviderType};
+use cowork_core::provider::{catalog, has_api_key_configured};
 use cowork_core::orchestration::SystemPrompt;
 use cowork_core::prompt::{ComponentRegistry, TemplateVars, substitute_commands};
 use cowork_core::session::{SessionConfig, SessionInput, SessionManager, SessionOutput};
@@ -135,12 +135,14 @@ enum ComponentCommands {
     All,
 }
 
-/// Parse provider name string to ProviderType
-fn parse_provider_type(provider_str: &str) -> ProviderType {
-    provider_str.parse::<ProviderType>().unwrap_or_else(|_| {
-        eprintln!("Warning: Unknown provider '{}', defaulting to Anthropic", provider_str);
-        ProviderType::Anthropic
-    })
+/// Validate provider name, defaulting to "anthropic" if unknown
+fn validate_provider_id(provider_str: &str) -> &str {
+    if catalog::get(provider_str).is_some() {
+        provider_str
+    } else {
+        eprintln!("Warning: Unknown provider '{}', defaulting to anthropic", provider_str);
+        "anthropic"
+    }
 }
 
 #[tokio::main]
@@ -182,12 +184,12 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|| "anthropic".to_string())
     });
 
-    // Parse provider type
-    let provider_type = parse_provider_type(&provider_str);
+    // Validate provider ID
+    let provider_id = validate_provider_id(&provider_str);
 
     // Handle one-shot mode
     if let Some(prompt) = cli.one_shot {
-        return run_one_shot(&workspace, provider_type, cli.model.as_deref(), &prompt, cli.auto_approve).await;
+        return run_one_shot(&workspace, provider_id, cli.model.as_deref(), &prompt, cli.auto_approve).await;
     }
 
     // Apply staged update if available (skip if user is running `update`)
@@ -204,13 +206,13 @@ async fn main() -> anyhow::Result<()> {
     };
 
     match cli.command {
-        Some(Commands::Chat) => run_chat(&workspace, provider_type, cli.model.as_deref(), cli.auto_approve).await?,
+        Some(Commands::Chat) => run_chat(&workspace, provider_id, cli.model.as_deref(), cli.auto_approve).await?,
         Some(Commands::Tools) => show_tools(),
         Some(Commands::Config) => show_config(&workspace),
         Some(Commands::Update { check }) => update::run_update(check).await?,
         Some(Commands::Plugin(cmd)) => handle_plugin_command(&workspace, cmd)?,
         Some(Commands::Components(cmd)) => handle_component_command(&workspace, cmd)?,
-        None => run_chat(&workspace, provider_type, cli.model.as_deref(), cli.auto_approve).await?,
+        None => run_chat(&workspace, provider_id, cli.model.as_deref(), cli.auto_approve).await?,
     }
 
     Ok(())
@@ -265,14 +267,14 @@ fn build_system_prompt(workspace: &Path, model_info: Option<&str>) -> String {
 /// Run a single prompt non-interactively (for scripting/testing)
 async fn run_one_shot(
     workspace: &Path,
-    provider_type: ProviderType,
+    provider_id: &str,
     model: Option<&str>,
     prompt: &str,
     auto_approve: bool,
 ) -> anyhow::Result<()> {
     // Load config
     let config_manager = ConfigManager::new()?;
-    let api_key = cowork_core::provider::get_api_key(&config_manager, provider_type);
+    let api_key = cowork_core::provider::get_api_key(&config_manager, provider_id);
 
     // Create session config
     let workspace = workspace.to_path_buf();
@@ -288,7 +290,7 @@ async fn run_one_shot(
 
     // Create session config
     let mut session_config = SessionConfig::new(workspace.clone())
-        .with_provider(provider_type)
+        .with_provider(provider_id)
         .with_approval_config(approval_config.clone())
         .with_system_prompt(system_prompt)
         .with_web_search_config(config_manager.config().web_search.clone());
@@ -385,7 +387,7 @@ async fn run_one_shot(
 
 async fn run_chat(
     workspace: &Path,
-    cli_provider_type: ProviderType,
+    cli_provider_id: &str,
     model: Option<&str>,
     auto_approve: bool,
 ) -> anyhow::Result<()> {
@@ -401,22 +403,22 @@ async fn run_chat(
     config_manager = wizard.into_config_manager();
 
     // After wizard, re-read provider from config (wizard may have changed it)
-    let provider_type = if ran_wizard {
+    let provider_id = if ran_wizard {
         // Use the provider that was just configured
-        parse_provider_type(config_manager.default_provider())
+        config_manager.default_provider()
     } else {
         // Use CLI argument or config default
-        cli_provider_type
+        cli_provider_id
     };
 
     // Check if API key is configured - show setup instructions if not
-    if !has_api_key_configured(&config_manager, provider_type) {
-        show_setup_instructions(provider_type);
+    if !has_api_key_configured(&config_manager, provider_id) {
+        show_setup_instructions(provider_id);
         return Ok(());
     }
 
     // Get API key for session config
-    let api_key = cowork_core::provider::get_api_key(&config_manager, provider_type);
+    let api_key = cowork_core::provider::get_api_key(&config_manager, provider_id);
 
     // Create session config
     let workspace_path = workspace.to_path_buf();
@@ -432,7 +434,7 @@ async fn run_chat(
 
     // Create session config
     let mut session_config = SessionConfig::new(workspace_path.clone())
-        .with_provider(provider_type)
+        .with_provider(provider_id)
         .with_approval_config(approval_config.clone())
         .with_system_prompt(system_prompt)
         .with_web_search_config(config_manager.config().web_search.clone());
@@ -451,7 +453,7 @@ async fn run_chat(
         &workspace_path,
         session_manager,
         output_rx,
-        provider_type,
+        provider_id,
         auto_approve,
     ).await
 }
@@ -461,7 +463,7 @@ async fn run_chat_tui(
     workspace: &Path,
     session_manager: SessionManager,
     output_rx: cowork_core::session::OutputReceiver,
-    provider_type: ProviderType,
+    provider_id: &str,
     auto_approve: bool,
 ) -> anyhow::Result<()> {
     // Setup terminal
@@ -472,7 +474,7 @@ async fn run_chat_tui(
     let mut terminal = Terminal::new(backend)?;
 
     // Create app state
-    let provider_info = format!("{:?}", provider_type);
+    let provider_info = provider_id.to_string();
     let version = env!("CARGO_PKG_VERSION").to_string();
     let mut app = App::new(provider_info, version);
 
@@ -1151,19 +1153,14 @@ fn handle_component_command(workspace: &Path, cmd: ComponentCommands) -> anyhow:
 }
 
 /// Show setup instructions when no API key is configured
-fn show_setup_instructions(provider_type: ProviderType) {
+fn show_setup_instructions(provider_id: &str) {
     println!("{}", style("Welcome to Cowork!").bold().cyan());
     println!();
     println!("{}", style("Setup Required").bold().yellow());
     println!("No API key configured. Please set one up before using Cowork.");
     println!();
 
-    let (env_var, _signup_url) = match provider_type {
-        ProviderType::Anthropic => ("ANTHROPIC_API_KEY", "https://console.anthropic.com/"),
-        ProviderType::OpenAI => ("OPENAI_API_KEY", "https://platform.openai.com/"),
-        ProviderType::Gemini => ("GOOGLE_API_KEY", "https://aistudio.google.com/"),
-        _ => ("API_KEY", "your provider's website"),
-    };
+    let env_var = catalog::api_key_env(provider_id).unwrap_or("API_KEY");
 
     println!("{}", style("Option 1: Environment Variable (Quick)").bold());
     println!("  export {}=\"your-api-key-here\"", style(env_var).cyan());

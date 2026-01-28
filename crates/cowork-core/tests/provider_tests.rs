@@ -5,7 +5,7 @@
 //! - ANTHROPIC_API_KEY
 //! - OPENAI_API_KEY
 
-use cowork_core::provider::{GenAIProvider, LlmMessage, ProviderType};
+use cowork_core::provider::{GenAIProvider, LlmMessage, catalog};
 
 /// Helper to check if Anthropic API key is available
 fn has_anthropic_key() -> bool {
@@ -23,7 +23,7 @@ async fn validate_anthropic_key() -> bool {
         return false;
     }
 
-    let provider = GenAIProvider::new(ProviderType::Anthropic, Some("claude-3-5-haiku-20241022"));
+    let provider = GenAIProvider::new("anthropic", Some("claude-3-5-haiku-20241022"));
     let messages = vec![LlmMessage::user("Hi")];
 
     provider.chat(messages, None).await.is_ok()
@@ -35,29 +35,29 @@ async fn validate_openai_key() -> bool {
         return false;
     }
 
-    let provider = GenAIProvider::new(ProviderType::OpenAI, Some("gpt-4.1-nano"));
+    let provider = GenAIProvider::new("openai", Some("gpt-4.1-nano"));
     let messages = vec![LlmMessage::user("Hi")];
 
     provider.chat(messages, None).await.is_ok()
 }
 
-mod provider_type_tests {
+mod catalog_tests {
     use super::*;
 
     #[test]
-    fn test_provider_types() {
+    fn test_provider_catalog() {
         let providers = [
-            ProviderType::Anthropic,
-            ProviderType::OpenAI,
-            ProviderType::Gemini,
-            ProviderType::Cohere,
-            ProviderType::Groq,
-            ProviderType::DeepSeek,
+            "anthropic",
+            "openai",
+            "gemini",
+            "cohere",
+            "groq",
+            "deepseek",
         ];
 
-        for provider_type in providers {
-            println!("Testing provider: {:?}", provider_type);
-            let model = provider_type.default_model();
+        for provider_id in providers {
+            println!("Testing provider: {}", provider_id);
+            let model = catalog::default_model(provider_id).expect("Provider should be in catalog");
             println!("  Default model: {}", model);
             assert!(!model.is_empty());
         }
@@ -65,63 +65,30 @@ mod provider_type_tests {
 
     #[test]
     fn test_api_key_env_vars() {
-        assert_eq!(ProviderType::Anthropic.api_key_env(), Some("ANTHROPIC_API_KEY"));
-        assert_eq!(ProviderType::OpenAI.api_key_env(), Some("OPENAI_API_KEY"));
-        assert_eq!(ProviderType::Gemini.api_key_env(), Some("GEMINI_API_KEY"));
+        assert_eq!(catalog::api_key_env("anthropic"), Some("ANTHROPIC_API_KEY"));
+        assert_eq!(catalog::api_key_env("openai"), Some("OPENAI_API_KEY"));
+        assert_eq!(catalog::api_key_env("gemini"), Some("GEMINI_API_KEY"));
     }
 
     #[test]
     fn test_default_models() {
-        assert!(ProviderType::Anthropic.default_model().contains("claude"));
-        assert!(ProviderType::OpenAI.default_model().contains("gpt"));
-        assert!(ProviderType::Gemini.default_model().contains("gemini"));
+        assert!(catalog::default_model("anthropic").unwrap().contains("claude"));
+        assert!(catalog::default_model("openai").unwrap().contains("gpt"));
+        assert!(catalog::default_model("gemini").unwrap().contains("gemini"));
     }
 
     #[test]
-    fn test_provider_type_from_str() {
-        // Test standard provider names
-        assert_eq!("anthropic".parse::<ProviderType>().unwrap(), ProviderType::Anthropic);
-        assert_eq!("openai".parse::<ProviderType>().unwrap(), ProviderType::OpenAI);
-        assert_eq!("gemini".parse::<ProviderType>().unwrap(), ProviderType::Gemini);
-        assert_eq!("groq".parse::<ProviderType>().unwrap(), ProviderType::Groq);
-        assert_eq!("deepseek".parse::<ProviderType>().unwrap(), ProviderType::DeepSeek);
-        assert_eq!("xai".parse::<ProviderType>().unwrap(), ProviderType::XAI);
-        assert_eq!("together".parse::<ProviderType>().unwrap(), ProviderType::Together);
-        assert_eq!("fireworks".parse::<ProviderType>().unwrap(), ProviderType::Fireworks);
-        assert_eq!("ollama".parse::<ProviderType>().unwrap(), ProviderType::Ollama);
-
-        // Test case insensitivity
-        assert_eq!("ANTHROPIC".parse::<ProviderType>().unwrap(), ProviderType::Anthropic);
-        assert_eq!("OpenAI".parse::<ProviderType>().unwrap(), ProviderType::OpenAI);
-
-        // Test aliases
-        assert_eq!("google".parse::<ProviderType>().unwrap(), ProviderType::Gemini);
-        assert_eq!("grok".parse::<ProviderType>().unwrap(), ProviderType::XAI);
-        assert_eq!("zhipu".parse::<ProviderType>().unwrap(), ProviderType::Zai);
-
-        // Test unknown provider
-        assert!("unknown_provider".parse::<ProviderType>().is_err());
-    }
-
-    #[test]
-    fn test_provider_type_display_roundtrip() {
-        let providers = [
-            ProviderType::Anthropic,
-            ProviderType::OpenAI,
-            ProviderType::Gemini,
-            ProviderType::Groq,
-            ProviderType::DeepSeek,
-            ProviderType::XAI,
-            ProviderType::Together,
-            ProviderType::Fireworks,
-            ProviderType::Ollama,
-        ];
-
-        for provider in providers {
-            let s = provider.to_string();
-            let parsed: ProviderType = s.parse().unwrap();
-            assert_eq!(parsed, provider, "Roundtrip failed for {:?}", provider);
-        }
+    fn test_catalog_ids() {
+        let known_ids: Vec<&str> = catalog::ids().collect();
+        assert!(known_ids.contains(&"anthropic"));
+        assert!(known_ids.contains(&"openai"));
+        assert!(known_ids.contains(&"gemini"));
+        assert!(known_ids.contains(&"groq"));
+        assert!(known_ids.contains(&"deepseek"));
+        assert!(known_ids.contains(&"xai"));
+        assert!(known_ids.contains(&"together"));
+        assert!(known_ids.contains(&"fireworks"));
+        assert!(known_ids.contains(&"ollama"));
     }
 }
 
@@ -130,40 +97,40 @@ mod provider_creation_tests {
 
     #[test]
     fn test_anthropic_provider_creation() {
-        let provider = GenAIProvider::new(ProviderType::Anthropic, None);
-        assert_eq!(provider.provider_type(), ProviderType::Anthropic);
+        let provider = GenAIProvider::new("anthropic", None);
+        assert_eq!(provider.provider_id(), "anthropic");
         assert!(provider.model().contains("claude"));
     }
 
     #[test]
     fn test_openai_provider_creation() {
-        let provider = GenAIProvider::new(ProviderType::OpenAI, None);
-        assert_eq!(provider.provider_type(), ProviderType::OpenAI);
+        let provider = GenAIProvider::new("openai", None);
+        assert_eq!(provider.provider_id(), "openai");
         assert!(provider.model().contains("gpt"));
     }
 
     #[test]
     fn test_provider_with_custom_model() {
-        let provider = GenAIProvider::new(ProviderType::Anthropic, Some("claude-opus-4-5-20251101"));
+        let provider = GenAIProvider::new("anthropic", Some("claude-opus-4-5-20251101"));
         assert_eq!(provider.model(), "claude-opus-4-5-20251101");
     }
 
     #[test]
     fn test_provider_with_system_prompt() {
-        let provider = GenAIProvider::new(ProviderType::Anthropic, None)
+        let provider = GenAIProvider::new("anthropic", None)
             .with_system_prompt("You are a helpful assistant.");
-        assert_eq!(provider.provider_type(), ProviderType::Anthropic);
+        assert_eq!(provider.provider_id(), "anthropic");
     }
 
     #[test]
     fn test_provider_with_api_key() {
         // This test just verifies the constructor works
         let provider = GenAIProvider::with_api_key(
-            ProviderType::Anthropic,
+            "anthropic",
             "test-key-not-real",
             None,
         );
-        assert_eq!(provider.provider_type(), ProviderType::Anthropic);
+        assert_eq!(provider.provider_id(), "anthropic");
     }
 }
 
@@ -187,7 +154,7 @@ mod integration_tests {
             return;
         }
 
-        let provider = GenAIProvider::new(ProviderType::Anthropic, None)
+        let provider = GenAIProvider::new("anthropic", None)
             .with_system_prompt("You are a helpful assistant. Keep responses brief.");
 
         let messages = vec![LlmMessage::user("What is 2 + 2? Reply with just the number.")];
@@ -217,7 +184,7 @@ mod integration_tests {
             return;
         }
 
-        let provider = GenAIProvider::new(ProviderType::OpenAI, None)
+        let provider = GenAIProvider::new("openai", None)
             .with_system_prompt("You are a helpful assistant. Keep responses brief.");
 
         let messages = vec![LlmMessage::user("What is 2 + 2? Reply with just the number.")];
@@ -250,7 +217,7 @@ mod integration_tests {
         use cowork_core::tools::ToolDefinition;
         use serde_json::json;
 
-        let provider = GenAIProvider::new(ProviderType::Anthropic, None)
+        let provider = GenAIProvider::new("anthropic", None)
             .with_system_prompt("You are a helpful assistant. Use tools when appropriate.");
 
         // Define a simple tool
@@ -303,7 +270,7 @@ mod integration_tests {
         use cowork_core::tools::ToolDefinition;
         use serde_json::json;
 
-        let provider = GenAIProvider::new(ProviderType::OpenAI, None)
+        let provider = GenAIProvider::new("openai", None)
             .with_system_prompt("You are a helpful assistant. Use tools when appropriate.");
 
         // Define a simple tool
@@ -353,7 +320,7 @@ mod integration_tests {
             return;
         }
 
-        let provider = GenAIProvider::new(ProviderType::Anthropic, None)
+        let provider = GenAIProvider::new("anthropic", None)
             .with_system_prompt("You are a helpful assistant. Keep responses very brief.");
 
         // First message
@@ -388,7 +355,6 @@ mod integration_tests {
 
 mod subagent_tests {
     use std::sync::Arc;
-    use cowork_core::provider::ProviderType;
     use cowork_core::tools::task::{AgentExecutionConfig, AgentInstanceRegistry, AgentType, ModelTier};
     use cowork_core::tools::task::executor::run_subagent;
 
@@ -408,7 +374,7 @@ mod subagent_tests {
         let registry = Arc::new(AgentInstanceRegistry::new());
 
         let config = AgentExecutionConfig::new(workspace)
-            .with_provider(ProviderType::Anthropic)
+            .with_provider("anthropic")
             .with_max_turns(3);
 
         let result = run_subagent(

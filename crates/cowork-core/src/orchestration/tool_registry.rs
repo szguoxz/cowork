@@ -10,7 +10,6 @@ use tokio::sync::mpsc;
 
 use crate::config::{ModelTiers, WebSearchConfig};
 use crate::mcp_manager::McpServerManager;
-use crate::provider::ProviderType;
 use crate::session::{SessionOutput, SessionRegistry};
 use crate::tools::filesystem::{EditFile, GlobFiles, GrepFiles, ReadFile, WriteFile};
 use crate::tools::interaction::AskUserQuestion;
@@ -41,7 +40,8 @@ pub enum ToolScope {
 /// Builder for creating a tool registry with customizable options
 pub struct ToolRegistryBuilder {
     workspace: PathBuf,
-    provider_type: Option<ProviderType>,
+    /// Provider ID (e.g., "anthropic", "openai")
+    provider_id: Option<String>,
     api_key: Option<String>,
     model_tiers: Option<ModelTiers>,
     web_search_config: Option<WebSearchConfig>,
@@ -72,7 +72,7 @@ impl ToolRegistryBuilder {
     pub fn new(workspace: PathBuf) -> Self {
         Self {
             workspace,
-            provider_type: None,
+            provider_id: None,
             api_key: None,
             model_tiers: None,
             web_search_config: None,
@@ -125,9 +125,9 @@ impl ToolRegistryBuilder {
         self
     }
 
-    /// Set the provider type (required for task tools)
-    pub fn with_provider(mut self, provider_type: ProviderType) -> Self {
-        self.provider_type = Some(provider_type);
+    /// Set the provider ID (required for task tools)
+    pub fn with_provider(mut self, provider_id: impl Into<String>) -> Self {
+        self.provider_id = Some(provider_id.into());
         self
     }
 
@@ -248,9 +248,9 @@ impl ToolRegistryBuilder {
 
             // Check if provider has built-in web search
             let provider_has_native = self
-                .provider_type
+                .provider_id
                 .as_ref()
-                .map(|p| supports_native_search(p.as_str()))
+                .map(|p| supports_native_search(p))
                 .unwrap_or(false);
 
             // Only register WebSearch (SerpAPI) if:
@@ -314,13 +314,13 @@ impl ToolRegistryBuilder {
             registry.register(Arc::new(ExitPlanMode::new(plan_mode_state)));
         }
 
-        // Agent/Task tools - require provider_type for full functionality
+        // Agent/Task tools - require provider_id for full functionality
         if self.include_task
-            && let Some(provider_type) = self.provider_type {
+            && let Some(provider_id) = self.provider_id {
                 let agent_registry = Arc::new(AgentInstanceRegistry::new());
                 let mut task_tool =
                     TaskTool::new(agent_registry.clone(), self.workspace.clone())
-                        .with_provider(provider_type);
+                        .with_provider(provider_id);
 
                 if let Some(key) = self.api_key {
                     task_tool = task_tool.with_api_key(key);
@@ -441,7 +441,7 @@ impl ToolRegistryBuilder {
 /// This is equivalent to:
 /// ```ignore
 /// ToolRegistryBuilder::new(workspace.to_path_buf())
-///     .with_provider(provider_type)
+///     .with_provider(provider_id)
 ///     .with_api_key(api_key.unwrap_or_default())
 ///     .with_model_tiers(model_tiers.unwrap_or_default())
 ///     .with_web_search_config(web_search_config.unwrap_or_default())
@@ -449,13 +449,13 @@ impl ToolRegistryBuilder {
 /// ```
 pub fn create_standard_tool_registry(
     workspace: &Path,
-    provider_type: ProviderType,
+    provider_id: &str,
     api_key: Option<&str>,
     model_tiers: Option<ModelTiers>,
     web_search_config: Option<WebSearchConfig>,
 ) -> ToolRegistry {
     let mut builder = ToolRegistryBuilder::new(workspace.to_path_buf())
-        .with_provider(provider_type);
+        .with_provider(provider_id);
 
     if let Some(key) = api_key {
         builder = builder.with_api_key(key.to_string());
@@ -530,7 +530,7 @@ mod tests {
 
         // Anthropic has native web search, so WebSearch fallback shouldn't be registered
         let registry = ToolRegistryBuilder::new(temp_dir.path().to_path_buf())
-            .with_provider(ProviderType::Anthropic)
+            .with_provider("anthropic")
             .build();
 
         // WebSearch fallback should NOT be registered for native providers
@@ -562,7 +562,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let registry = create_standard_tool_registry(
             temp_dir.path(),
-            ProviderType::Anthropic,
+            "anthropic",
             Some("test-key"),
             Some(ModelTiers::for_provider("anthropic")),
             None, // web_search_config
