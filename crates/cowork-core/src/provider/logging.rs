@@ -14,6 +14,37 @@ use crate::tools::ToolDefinition;
 use super::genai_provider::CompletionResult;
 use super::LlmMessage;
 
+/// Convert LlmMessage to JSON for logging
+fn message_to_json(msg: &LlmMessage) -> serde_json::Value {
+    match msg {
+        LlmMessage::Chat(chat_msg) => {
+            json!({
+                "type": "chat",
+                "role": format!("{:?}", chat_msg.role),
+                "content": msg.content_as_text()
+            })
+        }
+        LlmMessage::ToolResult(tool_resp) => {
+            json!({
+                "type": "tool_result",
+                "call_id": tool_resp.call_id,
+                "content": tool_resp.content.to_string()
+            })
+        }
+        LlmMessage::AssistantToolCalls { content, tool_calls } => {
+            json!({
+                "type": "assistant_tool_calls",
+                "content": content,
+                "tool_calls": tool_calls.iter().map(|tc| json!({
+                    "call_id": tc.call_id,
+                    "name": tc.fn_name,
+                    "arguments": tc.fn_arguments
+                })).collect::<Vec<_>>()
+            })
+        }
+    }
+}
+
 /// Configuration for what to include in the log entry
 #[derive(Default)]
 pub struct LogConfig<'a> {
@@ -48,13 +79,17 @@ pub fn log_llm_interaction(config: LogConfig<'_>) {
         Err(_) => return, // No logging if env var not set
     };
 
+    let messages_json: Vec<serde_json::Value> = config.messages.iter()
+        .map(message_to_json)
+        .collect();
+
     let entry = json!({
         "timestamp": chrono::Utc::now().to_rfc3339(),
         "model": config.model,
         "provider": config.provider,
         "request": {
             "system_prompt": config.system_prompt,
-            "messages": config.messages,
+            "messages": messages_json,
             "message_count": config.messages.len(),
             "tools": config.tools.map(|t| t.iter().map(|tool| json!({
                 "name": tool.name,

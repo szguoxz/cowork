@@ -91,8 +91,6 @@ use super::catalog;
 use super::logging::{log_llm_interaction, LogConfig};
 use super::model_listing::get_model_max_output;
 
-use super::{ContentBlock, LlmMessage, LlmProvider, LlmRequest, LlmResponse, MessageContent, TokenUsage};
-
 /// Response from completion that may contain both content and tool calls
 #[derive(Debug, Clone, Default)]
 pub struct CompletionResult {
@@ -267,105 +265,10 @@ impl GenAIProvider {
         &self.model
     }
 
-    /// Convert a user message (possibly with tool results) to genai format
-    fn convert_user_message(&self, msg: &LlmMessage, chat_req: ChatRequest) -> ChatRequest {
-        match &msg.content {
-            MessageContent::Text(text) => {
-                chat_req.append_message(ChatMessage::user(text))
-            }
-            MessageContent::Blocks(blocks) => {
-                // Process content blocks - especially tool_result blocks
-                let mut req = chat_req;
-                for block in blocks {
-                    match block {
-                        ContentBlock::Text { text } => {
-                            req = req.append_message(ChatMessage::user(text));
-                        }
-                        ContentBlock::ToolResult { tool_use_id, content, is_error: _ } => {
-                            // Tool results sent via ToolResponse for Anthropic/OpenAI compatibility
-                            let tool_response = ToolResponse::new(tool_use_id.clone(), content.clone());
-                            req = req.append_message(tool_response);
-                        }
-                        ContentBlock::ToolUse { .. } => {
-                            // Tool use blocks in user messages are unusual, skip
-                        }
-                    }
-                }
-                req
-            }
-        }
-    }
-
-    /// Convert an assistant message (possibly with tool calls) to genai format
-    fn convert_assistant_message(&self, msg: &LlmMessage, chat_req: ChatRequest) -> ChatRequest {
-        // Check if this assistant message has tool calls (via tool_calls field or content blocks)
-        let has_tool_calls = msg.tool_calls.as_ref().map(|tc| !tc.is_empty()).unwrap_or(false);
-
-        // Extract tool calls from content blocks if present
-        let tool_calls_from_blocks: Vec<ToolCall> = match &msg.content {
-            MessageContent::Blocks(blocks) => blocks
-                .iter()
-                .filter_map(|block| match block {
-                    ContentBlock::ToolUse { id, name, input } => Some(ToolCall {
-                        call_id: id.clone(),
-                        fn_name: name.clone(),
-                        fn_arguments: input.clone(),
-                        thought_signatures: None,
-                    }),
-                    _ => None,
-                })
-                .collect(),
-            _ => Vec::new(),
-        };
-
-        let has_tool_calls_in_blocks = !tool_calls_from_blocks.is_empty();
-
-        match &msg.content {
-            MessageContent::Text(text) if !has_tool_calls => {
-                // Simple text response - no tool calls
-                chat_req.append_message(ChatMessage::assistant(text))
-            }
-            MessageContent::Text(_text) => {
-                // Text with tool calls - for DeepSeek/OpenAI, we need tool calls as a single message
-                // The text content in tool call messages is usually empty or reasoning
-                // genai handles this by converting Vec<ToolCall> to an assistant message with tool_calls
-                let mut req = chat_req;
-                if let Some(tool_calls) = &msg.tool_calls {
-                    // tool_calls is already Vec<genai::chat::ToolCall>, clone it
-                    req = req.append_message(tool_calls.clone());
-                }
-                req
-            }
-            MessageContent::Blocks(blocks) => {
-                let mut req = chat_req;
-                let mut text_content = String::new();
-
-                for block in blocks {
-                    if let ContentBlock::Text { text } = block {
-                        text_content.push_str(text);
-                    }
-                }
-
-                // If we have tool calls, use them as a single message (skip separate text)
-                // For OpenAI/DeepSeek format, tool_calls must be in a single assistant message
-                if has_tool_calls_in_blocks {
-                    req = req.append_message(tool_calls_from_blocks);
-                } else if let Some(tool_calls) = &msg.tool_calls {
-                    // tool_calls is already Vec<genai::chat::ToolCall>, clone it
-                    req = req.append_message(tool_calls.clone());
-                } else if !text_content.is_empty() {
-                    // No tool calls, just text
-                    req = req.append_message(ChatMessage::assistant(&text_content));
-                }
-                req
-            }
-        }
-    }
-
     /// Execute a chat completion and return either a message or tool calls
     pub async fn chat(
         &self,
-        messages: Vec<LlmMessage>,
+        messages: Vec<super::LlmMessage>,
         tools: Option<Vec<ToolDefinition>>,
     ) -> Result<CompletionResult> {
         // Keep copies for logging
@@ -379,26 +282,26 @@ impl GenAIProvider {
             chat_req = chat_req.with_system(system.as_str());
         }
 
-        // Convert messages with proper tool call/result handling
+        // Convert messages to ChatRequest
         for msg in messages {
-            match msg.role {
-                genai::chat::ChatRole::User => {
-                    chat_req = self.convert_user_message(&msg, chat_req);
+            match msg {
+                super::LlmMessage::Chat(chat_msg) => {
+                    chat_req = chat_req.append_message(chat_msg);
                 }
-                genai::chat::ChatRole::Assistant => {
-                    chat_req = self.convert_assistant_message(&msg, chat_req);
+                super::LlmMessage::ToolResult(tool_response) => {
+                    chat_req = chat_req.append_message(tool_response);
                 }
-                genai::chat::ChatRole::Tool => {
-                    // Tool result message (legacy format, kept for compatibility)
-                    if let Some(call_id) = &msg.tool_call_id {
-                        let content = msg.content_as_text();
-                        let tool_response = ToolResponse::new(call_id.clone(), content);
-                        chat_req = chat_req.append_message(tool_response);
+                super::LlmMessage::AssistantToolCalls { content, tool_calls } => {
+                    // First add text content if present
+                    if let Some(text) = content {
+                        if !text.is_empty() {
+                            chat_req = chat_req.append_message(ChatMessage::assistant(&text));
+                        }
                     }
-                }
-                genai::chat::ChatRole::System => {
-                    let content = msg.content_as_text();
-                    chat_req = chat_req.append_message(ChatMessage::system(&content));
+                    // Then add tool calls as a separate message
+                    if !tool_calls.is_empty() {
+                        chat_req = chat_req.append_message(tool_calls);
+                    }
                 }
             }
         }
@@ -648,53 +551,15 @@ impl GenAIProvider {
 }
 
 // Implement LlmProvider trait for compatibility with existing code
-impl LlmProvider for GenAIProvider {
+impl super::LlmProvider for GenAIProvider {
     fn name(&self) -> &str {
         &self.provider_id
     }
 
-    async fn complete(&self, request: LlmRequest) -> Result<LlmResponse> {
-        // Convert tools
-        let tools = if request.tools.is_empty() {
-            None
-        } else {
-            Some(request.tools.clone())
-        };
-
-        // Add system prompt from request if present
-        let mut messages = request.messages.clone();
-        if let Some(system) = &request.system_prompt {
-            messages.insert(
-                0,
-                LlmMessage {
-                    role: genai::chat::ChatRole::System,
-                    content: MessageContent::Text(system.clone()),
-                    tool_calls: None,
-                    tool_call_id: None,
-                },
-            );
-        }
-
-        let result = self.chat(messages, tools).await?;
-
-        let finish_reason = if result.has_tool_calls() {
-            "tool_calls"
-        } else {
-            "stop"
-        };
-
-        Ok(LlmResponse {
-            content: result.content,
-            tool_calls: result.tool_calls,
-            finish_reason: finish_reason.to_string(),
-            usage: TokenUsage::default(),
-        })
-    }
-
     async fn health_check(&self) -> Result<bool> {
-        let request = LlmRequest::new(vec![LlmMessage::user("Hi")]);
+        let messages = vec![super::LlmMessage::user("Hi")];
 
-        match self.complete(request).await {
+        match self.chat(messages, None).await {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),
         }

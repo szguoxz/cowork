@@ -633,7 +633,7 @@ mod question_types_tests {
 
 mod tool_result_format_tests {
     use cowork_core::orchestration::ChatSession;
-    use cowork_core::provider::{ContentBlock, MessageContent, ChatRole};
+    use cowork_core::provider::{ChatRole, LlmMessage};
 
     /// Test that single tool result creates proper content block format
     #[test]
@@ -659,25 +659,19 @@ mod tool_result_format_tests {
         // Convert to LLM messages
         let llm_messages = session.to_llm_messages();
 
-        // Find the tool result message
+        // Find the tool result message (should be LlmMessage::ToolResult)
         let tool_result_msg = llm_messages.iter()
-            .find(|m| matches!(m.role, ChatRole::User) && matches!(&m.content, MessageContent::Blocks(_)))
+            .find(|m| matches!(m.role(), ChatRole::Tool))
             .expect("Should have tool result message");
 
-        // Verify it's a USER message with content blocks
-        assert!(matches!(tool_result_msg.role, ChatRole::User));
-        if let MessageContent::Blocks(blocks) = &tool_result_msg.content {
-            assert_eq!(blocks.len(), 1);
-            match &blocks[0] {
-                ContentBlock::ToolResult { tool_use_id, content, is_error } => {
-                    assert_eq!(tool_use_id, "call_123");
-                    assert_eq!(content, "File contents here");
-                    assert!(is_error.is_none()); // Not an error
-                }
-                _ => panic!("Expected ToolResult block"),
-            }
+        // Verify it's a ToolResult with correct data
+        assert!(matches!(tool_result_msg.role(), ChatRole::Tool));
+        if let LlmMessage::ToolResult(resp) = tool_result_msg {
+            assert_eq!(resp.call_id, "call_123");
+            // Content is now a JsonValue, check it contains the text
+            assert!(resp.content.to_string().contains("File contents here"));
         } else {
-            panic!("Expected Blocks content");
+            panic!("Expected ToolResult variant");
         }
     }
 
@@ -702,21 +696,16 @@ mod tool_result_format_tests {
         let llm_messages = session.to_llm_messages();
 
         let tool_result_msg = llm_messages.last().expect("Should have messages");
-        if let MessageContent::Blocks(blocks) = &tool_result_msg.content {
-            match &blocks[0] {
-                ContentBlock::ToolResult { tool_use_id, content, is_error } => {
-                    assert_eq!(tool_use_id, "call_456");
-                    assert_eq!(content, "Permission denied");
-                    assert_eq!(*is_error, Some(true)); // Error flag set
-                }
-                _ => panic!("Expected ToolResult block"),
-            }
+        // Error results are still sent as ToolResult (genai doesn't distinguish)
+        if let LlmMessage::ToolResult(resp) = tool_result_msg {
+            assert_eq!(resp.call_id, "call_456");
+            assert!(resp.content.to_string().contains("Permission denied"));
         } else {
-            panic!("Expected Blocks content");
+            panic!("Expected ToolResult variant");
         }
     }
 
-    /// Test that multiple tool results are batched into single message
+    /// Test that multiple tool results become multiple ToolResult messages
     #[test]
     fn test_batched_tool_results_format() {
         let mut session = ChatSession::new();
@@ -744,35 +733,20 @@ mod tool_result_format_tests {
 
         let llm_messages = session.to_llm_messages();
 
-        // Should be 3 messages: user, assistant (with tool calls), user (tool results)
-        assert_eq!(llm_messages.len(), 3);
+        // Should be 4 messages: user, assistant (with tool calls), 2x tool results
+        assert_eq!(llm_messages.len(), 4);
 
-        let tool_result_msg = &llm_messages[2];
-        assert!(matches!(tool_result_msg.role, ChatRole::User));
-
-        if let MessageContent::Blocks(blocks) = &tool_result_msg.content {
-            // Should have 2 tool results in a single message
-            assert_eq!(blocks.len(), 2);
-
-            // Verify first result
-            match &blocks[0] {
-                ContentBlock::ToolResult { tool_use_id, content, .. } => {
-                    assert_eq!(tool_use_id, "call_1");
-                    assert_eq!(content, "Contents of file 1");
-                }
-                _ => panic!("Expected ToolResult block"),
-            }
-
-            // Verify second result
-            match &blocks[1] {
-                ContentBlock::ToolResult { tool_use_id, content, .. } => {
-                    assert_eq!(tool_use_id, "call_2");
-                    assert_eq!(content, "Contents of file 2");
-                }
-                _ => panic!("Expected ToolResult block"),
-            }
+        // Verify tool results are ToolResult messages
+        if let LlmMessage::ToolResult(resp) = &llm_messages[2] {
+            assert_eq!(resp.call_id, "call_1");
         } else {
-            panic!("Expected Blocks content");
+            panic!("Expected ToolResult");
+        }
+
+        if let LlmMessage::ToolResult(resp) = &llm_messages[3] {
+            assert_eq!(resp.call_id, "call_2");
+        } else {
+            panic!("Expected ToolResult");
         }
     }
 
@@ -803,32 +777,23 @@ mod tool_result_format_tests {
         ]);
 
         let llm_messages = session.to_llm_messages();
-        let tool_result_msg = llm_messages.last().expect("Should have messages");
 
-        if let MessageContent::Blocks(blocks) = &tool_result_msg.content {
-            assert_eq!(blocks.len(), 2);
+        // Find tool result messages
+        let tool_results: Vec<_> = llm_messages.iter()
+            .filter(|m| matches!(m, LlmMessage::ToolResult(_)))
+            .collect();
+        assert_eq!(tool_results.len(), 2);
 
-            // First should be success (no is_error)
-            match &blocks[0] {
-                ContentBlock::ToolResult { is_error, .. } => {
-                    assert!(is_error.is_none() || *is_error == Some(false));
-                }
-                _ => panic!("Expected ToolResult"),
-            }
-
-            // Second should be error
-            match &blocks[1] {
-                ContentBlock::ToolResult { is_error, .. } => {
-                    assert_eq!(*is_error, Some(true));
-                }
-                _ => panic!("Expected ToolResult"),
-            }
-        } else {
-            panic!("Expected Blocks content");
+        // Both should be ToolResult (genai doesn't have error flag distinction)
+        if let LlmMessage::ToolResult(resp) = tool_results[0] {
+            assert_eq!(resp.call_id, "op_1");
+        }
+        if let LlmMessage::ToolResult(resp) = tool_results[1] {
+            assert_eq!(resp.call_id, "op_2");
         }
     }
 
-    /// Test assistant message with tool calls creates proper content blocks
+    /// Test assistant message with tool calls creates AssistantToolCalls variant
     #[test]
     fn test_assistant_tool_use_format() {
         let mut session = ChatSession::new();
@@ -846,29 +811,15 @@ mod tool_result_format_tests {
         let llm_messages = session.to_llm_messages();
         let assistant_msg = &llm_messages[1];
 
-        assert!(matches!(assistant_msg.role, ChatRole::Assistant));
+        assert!(matches!(assistant_msg.role(), ChatRole::Assistant));
 
-        if let MessageContent::Blocks(blocks) = &assistant_msg.content {
-            // Should have text + tool_use blocks
-            assert!(blocks.len() >= 2);
-
-            // First block should be text
-            match &blocks[0] {
-                ContentBlock::Text { text } => {
-                    assert_eq!(text, "Let me search for that");
-                }
-                _ => panic!("Expected Text block first"),
-            }
-
-            // Second block should be tool_use
-            match &blocks[1] {
-                ContentBlock::ToolUse { id, name, input } => {
-                    assert_eq!(id, "grep_1");
-                    assert_eq!(name, "Grep");
-                    assert_eq!(input["pattern"], "foo");
-                }
-                _ => panic!("Expected ToolUse block"),
-            }
+        if let LlmMessage::AssistantToolCalls { content, tool_calls } = assistant_msg {
+            // Should have text content
+            assert_eq!(content.as_deref(), Some("Let me search for that"));
+            // Should have tool call
+            assert_eq!(tool_calls.len(), 1);
+            assert_eq!(tool_calls[0].fn_name, "Grep");
+            assert_eq!(tool_calls[0].call_id, "grep_1");
         } else {
             panic!("Expected Blocks content");
         }

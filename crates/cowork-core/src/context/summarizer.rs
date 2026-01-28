@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::provider::{LlmMessage, LlmProvider, LlmRequest};
+use crate::provider::{GenAIProvider, LlmMessage};
 
 use super::tokens::TokenCounter;
 use super::{Message, MessageRole};
@@ -165,7 +165,7 @@ impl ConversationSummarizer {
     pub async fn summarize(
         &self,
         messages: &[Message],
-        provider: &impl LlmProvider,
+        provider: &GenAIProvider,
     ) -> Result<(Message, Vec<Message>)> {
         if messages.len() <= self.config.keep_recent {
             // Nothing to summarize
@@ -196,20 +196,14 @@ impl ConversationSummarizer {
             conversation_text
         );
 
-        let request = LlmRequest::new(vec![
-            LlmMessage {
-                role: crate::provider::ChatRole::System,
-                content: crate::provider::MessageContent::Text(
-                    "You are a helpful assistant that summarizes conversations accurately and concisely.".to_string()
-                ),
-                tool_calls: None,
-                tool_call_id: None,
-            },
+        let llm_messages = vec![
+            LlmMessage::system(
+                "You are a helpful assistant that summarizes conversations accurately and concisely."
+            ),
             LlmMessage::user(summarization_prompt),
-        ])
-        .with_max_tokens(self.config.target_summary_tokens as u32);
+        ];
 
-        let response = provider.complete(request).await?;
+        let response = provider.chat(llm_messages, None).await?;
 
         let summary_content = response.content.unwrap_or_else(|| {
             "Previous conversation involved various development tasks.".to_string()
@@ -324,12 +318,12 @@ impl ConversationSummarizer {
     ///
     /// This is the main entry point for context compaction, supporting both
     /// auto-compact and manual `/compact` command scenarios.
-    pub async fn compact<P: LlmProvider>(
+    pub async fn compact(
         &self,
         messages: &[Message],
         counter: &TokenCounter,
         config: CompactConfig,
-        provider: Option<&P>,
+        provider: Option<&GenAIProvider>,
     ) -> Result<CompactResult> {
         let tokens_before = counter.count_messages(messages);
 
@@ -375,7 +369,7 @@ impl ConversationSummarizer {
     async fn generate_llm_compact_summary(
         &self,
         messages: &[Message],
-        provider: &impl LlmProvider,
+        provider: &GenAIProvider,
         config: &CompactConfig,
     ) -> Result<Message> {
         let conversation_text = format_for_summarization(messages);
@@ -394,16 +388,15 @@ impl ConversationSummarizer {
         }
 
         // Create the request with conversation + summary prompt
-        let request = LlmRequest::new(vec![
+        let llm_messages = vec![
             LlmMessage::user(format!(
                 "Here is the conversation history:\n\n{}\n\n{}",
                 conversation_text,
                 summary_prompt
             )),
-        ])
-        .with_max_tokens(self.config.target_summary_tokens as u32);
+        ];
 
-        let response = provider.complete(request).await?;
+        let response = provider.chat(llm_messages, None).await?;
 
         let summary_content = response.content.unwrap_or_else(|| {
             "<summary>Previous conversation involved various development tasks.</summary>".to_string()

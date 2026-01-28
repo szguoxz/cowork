@@ -8,9 +8,7 @@ use tauri::State;
 use cowork_core::prompt::{
     AgentInfo, CommandInfo, ComponentRegistry, PluginInfo, RegistrySummary, SkillInfo,
 };
-use cowork_core::provider::{
-    catalog, create_provider_with_settings, LlmProvider, LlmRequest,
-};
+use cowork_core::provider::{catalog, create_provider_with_settings, LlmMessage};
 use cowork_core::ApprovalLevel;
 
 use crate::state::{AppState, Settings};
@@ -128,13 +126,10 @@ pub async fn test_api_connection(
 
     let provider = create_provider_with_settings(&provider_type, &api_key, &model_id);
 
-    // Try a simple completion
-    let request = LlmRequest::new(vec![cowork_core::provider::LlmMessage::user(
-        "Say 'hello' and nothing else.",
-    )])
-    .with_max_tokens(10);
+    // Try a simple chat
+    let messages = vec![LlmMessage::user("Say 'hello' and nothing else.")];
 
-    match provider.complete(request).await {
+    match provider.chat(messages, None).await {
         Ok(response) => Ok(ApiTestResult {
             success: true,
             message: response

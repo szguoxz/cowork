@@ -30,7 +30,6 @@ pub use model_listing::{get_known_models, get_model_context_limit, ModelInfo};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::tools::ToolDefinition;
 
 // Re-export ChatRole from genai as our Role type
 pub use genai::chat::ChatRole;
@@ -40,6 +39,95 @@ pub use genai::chat::ToolCall;
 
 // Re-export Usage from genai as TokenUsage
 pub use genai::chat::Usage as TokenUsage;
+
+// Re-export message types from genai
+pub use genai::chat::{ChatMessage, ContentPart, MessageContent, ToolResponse};
+
+/// Message for LLM API calls
+///
+/// This enum wraps genai types to support both regular messages and tool results
+/// in a single conversation history. genai uses different types for these:
+/// - Regular messages: ChatMessage
+/// - Tool results: ToolResponse
+#[derive(Debug, Clone)]
+pub enum LlmMessage {
+    /// Regular chat message (user, assistant, system)
+    Chat(ChatMessage),
+    /// Tool result message
+    ToolResult(ToolResponse),
+    /// Assistant message with tool calls
+    AssistantToolCalls {
+        /// Optional text content before/alongside tool calls
+        content: Option<String>,
+        /// The tool calls
+        tool_calls: Vec<ToolCall>,
+    },
+}
+
+impl LlmMessage {
+    /// Create a user message
+    pub fn user(content: impl Into<String>) -> Self {
+        Self::Chat(ChatMessage::user(content.into()))
+    }
+
+    /// Create an assistant message
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self::Chat(ChatMessage::assistant(content.into()))
+    }
+
+    /// Create a system message
+    pub fn system(content: impl Into<String>) -> Self {
+        Self::Chat(ChatMessage::system(content.into()))
+    }
+
+    /// Create an assistant message with tool calls
+    pub fn assistant_with_tool_calls(content: Option<String>, tool_calls: Vec<ToolCall>) -> Self {
+        Self::AssistantToolCalls { content, tool_calls }
+    }
+
+    /// Create a tool result message
+    pub fn tool_result(call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self::ToolResult(ToolResponse::new(call_id.into(), content.into()))
+    }
+
+    /// Get the role of this message
+    pub fn role(&self) -> ChatRole {
+        match self {
+            Self::Chat(msg) => msg.role.clone(),
+            Self::ToolResult(_) => ChatRole::Tool,
+            Self::AssistantToolCalls { .. } => ChatRole::Assistant,
+        }
+    }
+
+    /// Get text content as a string (for logging/display)
+    pub fn content_as_text(&self) -> String {
+        match self {
+            Self::Chat(msg) => {
+                // Use genai's joined_texts() method which combines all text parts
+                msg.content.joined_texts().unwrap_or_default()
+            }
+            Self::ToolResult(resp) => resp.content.to_string(),
+            Self::AssistantToolCalls { content, .. } => content.clone().unwrap_or_default(),
+        }
+    }
+
+    /// Append text to message content (for system reminders)
+    pub fn append_text(&mut self, text: &str) {
+        match self {
+            Self::Chat(msg) => {
+                // Use genai's append method to add text
+                msg.content = msg.content.clone().append(ContentPart::Text(text.to_string()));
+            }
+            Self::ToolResult(_) => {
+                // Can't append to tool results
+            }
+            Self::AssistantToolCalls { content, .. } => {
+                let existing = content.take().unwrap_or_default();
+                *content = Some(format!("{}{}", existing, text));
+            }
+        }
+    }
+}
 
 /// Parse a role string into ChatRole
 pub fn parse_role(s: &str) -> ChatRole {
@@ -52,264 +140,12 @@ pub fn parse_role(s: &str) -> ChatRole {
     }
 }
 
-/// Content block types for messages (aligned with Anthropic API spec)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ContentBlock {
-    /// Plain text content
-    Text { text: String },
-    /// Tool use request from assistant
-    ToolUse {
-        id: String,
-        name: String,
-        input: serde_json::Value,
-    },
-    /// Tool result from user
-    ToolResult {
-        tool_use_id: String,
-        content: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        is_error: Option<bool>,
-    },
-}
 
-impl ContentBlock {
-    /// Create a text content block
-    pub fn text(text: impl Into<String>) -> Self {
-        ContentBlock::Text { text: text.into() }
-    }
-
-    /// Create a tool use content block
-    pub fn tool_use(id: impl Into<String>, name: impl Into<String>, input: serde_json::Value) -> Self {
-        ContentBlock::ToolUse {
-            id: id.into(),
-            name: name.into(),
-            input,
-        }
-    }
-
-    /// Create a tool result content block
-    pub fn tool_result(tool_use_id: impl Into<String>, content: impl Into<String>, is_error: bool) -> Self {
-        ContentBlock::ToolResult {
-            tool_use_id: tool_use_id.into(),
-            content: content.into(),
-            is_error: if is_error { Some(true) } else { None },
-        }
-    }
-}
-
-/// Message content can be either plain text or an array of content blocks
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum MessageContent {
-    /// Simple text content
-    Text(String),
-    /// Array of content blocks (for tool calls/results)
-    Blocks(Vec<ContentBlock>),
-}
-
-impl MessageContent {
-    /// Check if content is empty
-    pub fn is_empty(&self) -> bool {
-        match self {
-            MessageContent::Text(s) => s.is_empty(),
-            MessageContent::Blocks(blocks) => blocks.is_empty(),
-        }
-    }
-
-    /// Get text content if it's a simple text message
-    pub fn as_text(&self) -> Option<&str> {
-        match self {
-            MessageContent::Text(s) => Some(s),
-            MessageContent::Blocks(_) => None,
-        }
-    }
-
-    /// Get content blocks if present
-    pub fn as_blocks(&self) -> Option<&[ContentBlock]> {
-        match self {
-            MessageContent::Text(_) => None,
-            MessageContent::Blocks(blocks) => Some(blocks),
-        }
-    }
-}
-
-impl Default for MessageContent {
-    fn default() -> Self {
-        MessageContent::Text(String::new())
-    }
-}
-
-impl From<String> for MessageContent {
-    fn from(s: String) -> Self {
-        MessageContent::Text(s)
-    }
-}
-
-impl From<&str> for MessageContent {
-    fn from(s: &str) -> Self {
-        MessageContent::Text(s.to_string())
-    }
-}
-
-impl From<Vec<ContentBlock>> for MessageContent {
-    fn from(blocks: Vec<ContentBlock>) -> Self {
-        MessageContent::Blocks(blocks)
-    }
-}
-
-/// Message for LLM consumption
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmMessage {
-    pub role: ChatRole,
-    /// Content can be simple text or array of content blocks
-    pub content: MessageContent,
-    /// Tool calls made by the assistant (only for role=Assistant)
-    /// Note: Also represented in content blocks, but kept for backwards compatibility
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCall>>,
-    /// Tool call ID this message is responding to (only for role=Tool)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-}
-
-impl LlmMessage {
-    /// Create a simple user message
-    pub fn user(content: impl Into<String>) -> Self {
-        Self {
-            role: ChatRole::User,
-            content: MessageContent::Text(content.into()),
-            tool_calls: None,
-            tool_call_id: None,
-        }
-    }
-
-    /// Create an assistant message
-    pub fn assistant(content: impl Into<String>) -> Self {
-        Self {
-            role: ChatRole::Assistant,
-            content: MessageContent::Text(content.into()),
-            tool_calls: None,
-            tool_call_id: None,
-        }
-    }
-
-    /// Create an assistant message with tool calls
-    pub fn assistant_with_tools(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
-        let text = content.into();
-        let mut blocks = Vec::new();
-        if !text.is_empty() {
-            blocks.push(ContentBlock::text(&text));
-        }
-        for tc in &tool_calls {
-            blocks.push(ContentBlock::tool_use(&tc.call_id, &tc.fn_name, tc.fn_arguments.clone()));
-        }
-        Self {
-            role: ChatRole::Assistant,
-            content: MessageContent::Blocks(blocks),
-            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
-            tool_call_id: None,
-        }
-    }
-
-    /// Create a tool result message with proper content block
-    pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>, is_error: bool) -> Self {
-        let id = tool_call_id.into();
-        Self {
-            role: ChatRole::User, // Tool results are user messages with content blocks
-            content: MessageContent::Blocks(vec![
-                ContentBlock::tool_result(&id, content, is_error)
-            ]),
-            tool_calls: None,
-            tool_call_id: Some(id),
-        }
-    }
-
-    /// Create a message with multiple tool results (batched)
-    pub fn tool_results(results: Vec<ContentBlock>) -> Self {
-        Self {
-            role: ChatRole::User,
-            content: MessageContent::Blocks(results),
-            tool_calls: None,
-            tool_call_id: None,
-        }
-    }
-
-    /// Get content as text (for backwards compatibility)
-    pub fn content_as_text(&self) -> String {
-        match &self.content {
-            MessageContent::Text(s) => s.clone(),
-            MessageContent::Blocks(blocks) => {
-                blocks.iter().filter_map(|b| {
-                    match b {
-                        ContentBlock::Text { text } => Some(text.clone()),
-                        _ => None,
-                    }
-                }).collect::<Vec<_>>().join("")
-            }
-        }
-    }
-}
-
-/// Request to an LLM provider
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmRequest {
-    pub messages: Vec<LlmMessage>,
-    pub tools: Vec<ToolDefinition>,
-    pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
-    pub system_prompt: Option<String>,
-}
-
-impl LlmRequest {
-    pub fn new(messages: Vec<LlmMessage>) -> Self {
-        Self {
-            messages,
-            tools: Vec::new(),
-            max_tokens: None,
-            temperature: None,
-            system_prompt: None,
-        }
-    }
-
-    pub fn with_tools(mut self, tools: Vec<ToolDefinition>) -> Self {
-        self.tools = tools;
-        self
-    }
-
-    pub fn with_system(mut self, prompt: impl Into<String>) -> Self {
-        self.system_prompt = Some(prompt.into());
-        self
-    }
-
-    pub fn with_max_tokens(mut self, tokens: u32) -> Self {
-        self.max_tokens = Some(tokens);
-        self
-    }
-
-    pub fn with_temperature(mut self, temp: f32) -> Self {
-        self.temperature = Some(temp);
-        self
-    }
-}
-
-/// Response from an LLM provider
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmResponse {
-    pub content: Option<String>,
-    pub tool_calls: Vec<ToolCall>,
-    pub finish_reason: String,
-    pub usage: TokenUsage,
-}
-
-/// Trait for LLM providers
-#[allow(async_fn_in_trait)] // All impls are internal and Send
+/// Trait for LLM providers (simplified - mainly for health checks)
+#[allow(async_fn_in_trait)]
 pub trait LlmProvider: Send + Sync {
     /// Provider name (e.g., "openai", "anthropic")
     fn name(&self) -> &str;
-
-    /// Send a request and get a response
-    async fn complete(&self, request: LlmRequest) -> Result<LlmResponse>;
 
     /// Check if the provider is available
     async fn health_check(&self) -> Result<bool>;
@@ -362,15 +198,6 @@ impl LlmProvider for MockProvider {
         &self.name
     }
 
-    async fn complete(&self, _request: LlmRequest) -> Result<LlmResponse> {
-        Ok(LlmResponse {
-            content: Some("Mock response".to_string()),
-            tool_calls: Vec::new(),
-            finish_reason: "stop".to_string(),
-            usage: TokenUsage::default(),
-        })
-    }
-
     async fn health_check(&self) -> Result<bool> {
         Ok(true)
     }
@@ -381,184 +208,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_content_block_text_serialization() {
-        let block = ContentBlock::text("Hello world");
-        let json = serde_json::to_string(&block).unwrap();
-        assert!(json.contains("\"type\":\"text\""));
-        assert!(json.contains("\"text\":\"Hello world\""));
-    }
-
-    #[test]
-    fn test_content_block_tool_use_serialization() {
-        let block = ContentBlock::tool_use(
-            "call_123",
-            "read_file",
-            serde_json::json!({"path": "/test.txt"}),
-        );
-        let json = serde_json::to_string(&block).unwrap();
-        assert!(json.contains("\"type\":\"tool_use\""));
-        assert!(json.contains("\"id\":\"call_123\""));
-        assert!(json.contains("\"name\":\"read_file\""));
-    }
-
-    #[test]
-    fn test_content_block_tool_result_serialization() {
-        let block = ContentBlock::tool_result("call_123", "file contents", false);
-        let json = serde_json::to_string(&block).unwrap();
-        assert!(json.contains("\"type\":\"tool_result\""));
-        assert!(json.contains("\"tool_use_id\":\"call_123\""));
-        assert!(json.contains("\"content\":\"file contents\""));
-        // is_error should not be present when false
-        assert!(!json.contains("is_error"));
-    }
-
-    #[test]
-    fn test_content_block_tool_result_with_error_serialization() {
-        let block = ContentBlock::tool_result("call_123", "Error message", true);
-        let json = serde_json::to_string(&block).unwrap();
-        assert!(json.contains("\"is_error\":true"));
-    }
-
-    #[test]
-    fn test_content_block_deserialization() {
-        let json = r#"{"type":"text","text":"Hello"}"#;
-        let block: ContentBlock = serde_json::from_str(json).unwrap();
-        match block {
-            ContentBlock::Text { text } => assert_eq!(text, "Hello"),
-            _ => panic!("Expected Text block"),
-        }
-    }
-
-    #[test]
-    fn test_content_block_tool_result_deserialization() {
-        let json = r#"{"type":"tool_result","tool_use_id":"abc","content":"result","is_error":true}"#;
-        let block: ContentBlock = serde_json::from_str(json).unwrap();
-        match block {
-            ContentBlock::ToolResult { tool_use_id, content, is_error } => {
-                assert_eq!(tool_use_id, "abc");
-                assert_eq!(content, "result");
-                assert_eq!(is_error, Some(true));
-            }
-            _ => panic!("Expected ToolResult block"),
-        }
-    }
-
-    #[test]
-    fn test_message_content_text() {
-        let content = MessageContent::Text("Hello".to_string());
-        assert!(!content.is_empty());
-        assert_eq!(content.as_text(), Some("Hello"));
-        assert!(content.as_blocks().is_none());
-    }
-
-    #[test]
-    fn test_message_content_blocks() {
-        let content = MessageContent::Blocks(vec![
-            ContentBlock::text("Hello"),
-            ContentBlock::text("World"),
-        ]);
-        assert!(!content.is_empty());
-        assert!(content.as_text().is_none());
-        assert!(content.as_blocks().is_some());
-        assert_eq!(content.as_blocks().unwrap().len(), 2);
-    }
-
-    #[test]
-    fn test_message_content_serialization() {
-        let text_content = MessageContent::Text("Hello".to_string());
-        let json = serde_json::to_string(&text_content).unwrap();
-        assert_eq!(json, "\"Hello\"");
-
-        let blocks_content = MessageContent::Blocks(vec![
-            ContentBlock::text("Hello"),
-        ]);
-        let json = serde_json::to_string(&blocks_content).unwrap();
-        assert!(json.contains("\"type\":\"text\""));
-    }
-
-    #[test]
-    fn test_llm_message_user() {
-        let msg = LlmMessage::user("Hello");
+    fn test_chat_message_user() {
+        let msg = ChatMessage::user("Hello");
         assert!(matches!(msg.role, ChatRole::User));
-        match msg.content {
-            MessageContent::Text(s) => assert_eq!(s, "Hello"),
-            _ => panic!("Expected Text content"),
-        }
     }
 
     #[test]
-    fn test_llm_message_tool_result() {
-        let msg = LlmMessage::tool_result("call_123", "Result content", false);
-        assert!(matches!(msg.role, ChatRole::User));
-        assert_eq!(msg.tool_call_id, Some("call_123".to_string()));
-        match &msg.content {
-            MessageContent::Blocks(blocks) => {
-                assert_eq!(blocks.len(), 1);
-                match &blocks[0] {
-                    ContentBlock::ToolResult { tool_use_id, content, is_error } => {
-                        assert_eq!(tool_use_id, "call_123");
-                        assert_eq!(content, "Result content");
-                        assert!(is_error.is_none());
-                    }
-                    _ => panic!("Expected ToolResult block"),
-                }
-            }
-            _ => panic!("Expected Blocks content"),
-        }
-    }
-
-    #[test]
-    fn test_llm_message_tool_results_batched() {
-        let results = vec![
-            ContentBlock::tool_result("call_1", "Result 1", false),
-            ContentBlock::tool_result("call_2", "Result 2", true),
-        ];
-        let msg = LlmMessage::tool_results(results);
-        assert!(matches!(msg.role, ChatRole::User));
-        match &msg.content {
-            MessageContent::Blocks(blocks) => {
-                assert_eq!(blocks.len(), 2);
-            }
-            _ => panic!("Expected Blocks content"),
-        }
-    }
-
-    #[test]
-    fn test_llm_message_assistant_with_tools() {
-        let tool_calls = vec![
-            ToolCall {
-                call_id: "call_1".to_string(),
-                fn_name: "read_file".to_string(),
-                fn_arguments: serde_json::json!({"path": "/test.txt"}),
-                thought_signatures: None,
-            }
-        ];
-        let msg = LlmMessage::assistant_with_tools("Let me read that file", tool_calls);
+    fn test_chat_message_assistant() {
+        let msg = ChatMessage::assistant("Hi there");
         assert!(matches!(msg.role, ChatRole::Assistant));
-        assert!(msg.tool_calls.is_some());
-        match &msg.content {
-            MessageContent::Blocks(blocks) => {
-                // Should have text + tool_use blocks
-                assert!(blocks.len() >= 2);
-            }
-            _ => panic!("Expected Blocks content"),
-        }
-    }
-
-    #[test]
-    fn test_content_as_text() {
-        let msg = LlmMessage::user("Hello");
-        assert_eq!(msg.content_as_text(), "Hello");
-
-        let msg_blocks = LlmMessage {
-            role: ChatRole::User,
-            content: MessageContent::Blocks(vec![
-                ContentBlock::text("Hello "),
-                ContentBlock::text("World"),
-            ]),
-            tool_calls: None,
-            tool_call_id: None,
-        };
-        assert_eq!(msg_blocks.content_as_text(), "Hello World");
     }
 }

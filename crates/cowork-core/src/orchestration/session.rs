@@ -5,7 +5,57 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 
-use crate::provider::ContentBlock;
+/// Content block for structured message content (tool calls, tool results)
+/// This is used for session persistence and UI display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ContentBlock {
+    /// Text content
+    #[serde(rename = "text")]
+    Text {
+        text: String,
+    },
+    /// Tool use (assistant requesting tool execution)
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    /// Tool result (response from tool execution)
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_error: Option<bool>,
+    },
+}
+
+impl ContentBlock {
+    /// Create a text block
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text { text: text.into() }
+    }
+
+    /// Create a tool use block
+    pub fn tool_use(id: impl Into<String>, name: impl Into<String>, input: serde_json::Value) -> Self {
+        Self::ToolUse {
+            id: id.into(),
+            name: name.into(),
+            input,
+        }
+    }
+
+    /// Create a tool result block
+    pub fn tool_result(tool_use_id: impl Into<String>, content: impl Into<String>, is_error: bool) -> Self {
+        Self::ToolResult {
+            tool_use_id: tool_use_id.into(),
+            content: content.into(),
+            is_error: if is_error { Some(true) } else { None },
+        }
+    }
+}
 
 /// Status of a tool call
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -301,65 +351,48 @@ impl ChatSession {
 
     /// Convert messages to LLM format
     pub fn to_llm_messages(&self) -> Vec<crate::provider::LlmMessage> {
-        use crate::provider::{LlmMessage, MessageContent, parse_role};
+        use crate::provider::{LlmMessage, ToolCall};
 
-        self.messages
-            .iter()
-            .map(|m| {
-                let role = parse_role(&m.role);
+        let mut llm_messages = Vec::new();
 
-                // If message has content_blocks, use them
-                if !m.content_blocks.is_empty() {
-                    return LlmMessage {
-                        role,
-                        content: MessageContent::Blocks(m.content_blocks.clone()),
-                        tool_calls: None,
-                        tool_call_id: None,
-                    };
-                }
-
-                // If message has tool calls (assistant message), convert them
-                if !m.tool_calls.is_empty() {
-                    // Build content blocks: text (if any) + tool_use blocks
-                    let mut blocks = Vec::new();
-                    if !m.content.is_empty() {
-                        blocks.push(crate::provider::ContentBlock::text(&m.content));
+        for m in &self.messages {
+            // Handle content_blocks (tool results)
+            if !m.content_blocks.is_empty() {
+                for block in &m.content_blocks {
+                    if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
+                        llm_messages.push(LlmMessage::tool_result(tool_use_id, content));
                     }
-                    for tc in &m.tool_calls {
-                        blocks.push(crate::provider::ContentBlock::tool_use(
-                            &tc.id,
-                            &tc.name,
-                            tc.arguments.clone(),
-                        ));
-                    }
-
-                    return LlmMessage {
-                        role,
-                        content: MessageContent::Blocks(blocks),
-                        tool_calls: Some(
-                            m.tool_calls
-                                .iter()
-                                .map(|tc| crate::provider::ToolCall {
-                                    call_id: tc.id.clone(),
-                                    fn_name: tc.name.clone(),
-                                    fn_arguments: tc.arguments.clone(),
-                                    thought_signatures: None,
-                                })
-                                .collect(),
-                        ),
-                        tool_call_id: None,
-                    };
                 }
+                continue;
+            }
 
-                // Simple text message
-                LlmMessage {
-                    role,
-                    content: MessageContent::Text(m.content.clone()),
-                    tool_calls: None,
-                    tool_call_id: None,
-                }
-            })
-            .collect()
+            // Handle assistant messages with tool calls
+            if !m.tool_calls.is_empty() {
+                let tool_calls: Vec<ToolCall> = m.tool_calls
+                    .iter()
+                    .map(|tc| ToolCall {
+                        call_id: tc.id.clone(),
+                        fn_name: tc.name.clone(),
+                        fn_arguments: tc.arguments.clone(),
+                        thought_signatures: None,
+                    })
+                    .collect();
+
+                let content = if m.content.is_empty() { None } else { Some(m.content.clone()) };
+                llm_messages.push(LlmMessage::assistant_with_tool_calls(content, tool_calls));
+                continue;
+            }
+
+            // Simple text messages
+            match m.role.as_str() {
+                "user" => llm_messages.push(LlmMessage::user(&m.content)),
+                "assistant" => llm_messages.push(LlmMessage::assistant(&m.content)),
+                "system" => llm_messages.push(LlmMessage::system(&m.content)),
+                _ => llm_messages.push(LlmMessage::user(&m.content)),
+            }
+        }
+
+        llm_messages
     }
 
     /// Clear conversation history
@@ -583,7 +616,7 @@ mod tests {
 
     #[test]
     fn test_chat_session_to_llm_messages_text_only() {
-        use crate::provider::ChatRole;
+        use crate::provider::{ChatRole, LlmMessage};
 
         let mut session = ChatSession::new();
         session.add_user_message("Hello");
@@ -591,13 +624,13 @@ mod tests {
 
         let llm_messages = session.to_llm_messages();
         assert_eq!(llm_messages.len(), 2);
-        assert!(matches!(llm_messages[0].role, ChatRole::User));
-        assert!(matches!(llm_messages[1].role, ChatRole::Assistant));
+        assert!(matches!(llm_messages[0].role(), ChatRole::User));
+        assert!(matches!(llm_messages[1].role(), ChatRole::Assistant));
     }
 
     #[test]
     fn test_chat_session_to_llm_messages_with_tool_calls() {
-        use crate::provider::{MessageContent, ChatRole};
+        use crate::provider::{ChatRole, LlmMessage};
 
         let mut session = ChatSession::new();
         session.add_user_message("Read file");
@@ -609,31 +642,15 @@ mod tests {
         assert_eq!(llm_messages.len(), 3);
 
         // User message
-        assert!(matches!(llm_messages[0].role, ChatRole::User));
+        assert!(matches!(llm_messages[0].role(), ChatRole::User));
 
-        // Assistant message with tool call
-        assert!(matches!(llm_messages[1].role, ChatRole::Assistant));
-        match &llm_messages[1].content {
-            MessageContent::Blocks(blocks) => {
-                assert!(blocks.len() >= 2); // text + tool_use
-            }
-            _ => panic!("Expected Blocks for assistant with tools"),
-        }
+        // Assistant message with tool calls
+        assert!(matches!(llm_messages[1].role(), ChatRole::Assistant));
+        assert!(matches!(&llm_messages[1], LlmMessage::AssistantToolCalls { .. }));
 
         // Tool result message
-        assert!(matches!(llm_messages[2].role, ChatRole::User));
-        match &llm_messages[2].content {
-            MessageContent::Blocks(blocks) => {
-                assert_eq!(blocks.len(), 1);
-                match &blocks[0] {
-                    ContentBlock::ToolResult { tool_use_id, .. } => {
-                        assert_eq!(tool_use_id, "call_1");
-                    }
-                    _ => panic!("Expected ToolResult block"),
-                }
-            }
-            _ => panic!("Expected Blocks for tool result"),
-        }
+        assert!(matches!(llm_messages[2].role(), ChatRole::Tool));
+        assert!(matches!(&llm_messages[2], LlmMessage::ToolResult(_)));
     }
 
     #[test]

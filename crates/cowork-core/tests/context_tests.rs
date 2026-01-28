@@ -675,7 +675,7 @@ mod compaction_tests {
         let config = CompactConfig::default().without_llm();
 
         let messages = generate_conversation(5);
-        let result = summarizer.compact::<cowork_core::provider::MockProvider>(&messages, &counter, config, None).await.unwrap();
+        let result = summarizer.compact(&messages, &counter, config, None).await.unwrap();
 
         // Following Anthropic SDK: all messages are summarized into single user message
         assert_eq!(result.messages_summarized, 5);
@@ -689,7 +689,7 @@ mod compaction_tests {
         let config = CompactConfig::default().without_llm();
 
         let messages = generate_conversation(50);
-        let result = summarizer.compact::<cowork_core::provider::MockProvider>(&messages, &counter, config, None).await.unwrap();
+        let result = summarizer.compact(&messages, &counter, config, None).await.unwrap();
 
         assert_eq!(result.messages_summarized, 50, "Should summarize all messages");
         assert!(result.tokens_after <= result.tokens_before, "Should reduce tokens");
@@ -706,7 +706,7 @@ mod compaction_tests {
             .with_instructions("API endpoints");
 
         let messages = generate_conversation(30);
-        let result = summarizer.compact::<cowork_core::provider::MockProvider>(&messages, &counter, config, None).await.unwrap();
+        let result = summarizer.compact(&messages, &counter, config, None).await.unwrap();
 
         // The summary should mention the preserved topic
         // (Note: without LLM, this is best-effort heuristic)
@@ -722,7 +722,7 @@ mod compaction_tests {
         let config = CompactConfig::default().without_llm();
 
         let messages = generate_conversation(30);
-        let result = summarizer.compact::<cowork_core::provider::MockProvider>(&messages, &counter, config, None).await.unwrap();
+        let result = summarizer.compact(&messages, &counter, config, None).await.unwrap();
 
         assert!(matches!(result.summary.role, MessageRole::User), "Summary should be a USER message");
     }
