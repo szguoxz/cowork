@@ -409,19 +409,11 @@ impl AgentLoop {
             // Emit assistant message with token usage appended to content
             let content = response.content.clone().unwrap_or_default();
             if !content.is_empty() {
-                // Use LLM-reported tokens for context usage (more accurate than local estimate)
-                // context_used = input + output tokens from this request
-                let context_used = match (response.input_tokens, response.output_tokens) {
-                    (Some(input), Some(output)) => Some((input + output) as usize),
-                    (Some(input), None) => Some(input as usize),
-                    _ => None,
-                };
                 let context_limit = self.context_monitor.context_limit();
 
                 debug!(
                     input_tokens = ?response.input_tokens,
                     output_tokens = ?response.output_tokens,
-                    context_used = ?context_used,
                     context_limit = context_limit,
                     "Emitting assistant message with tokens"
                 );
@@ -431,7 +423,6 @@ impl AgentLoop {
                     &content,
                     response.input_tokens,
                     response.output_tokens,
-                    context_used,
                     Some(context_limit),
                 ))
                 .await;

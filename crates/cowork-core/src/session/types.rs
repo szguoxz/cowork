@@ -19,13 +19,13 @@ pub type SessionId = String;
 
 /// Format a token count for display.
 ///
-/// Shows actual number when < 1000, otherwise shows as `Nk` (thousands).
-/// Examples: 500 -> "500", 1500 -> "1k", 15000 -> "15k"
+/// Shows actual number when < 1024, otherwise shows as `Nk` (kilo = >> 10).
+/// Examples: 500 -> "500", 1500 -> "1k", 15000 -> "14k"
 fn format_token_count(tokens: u64) -> String {
-    if tokens < 1000 {
+    if tokens < 1024 {
         tokens.to_string()
     } else {
-        format!("{}k", tokens / 1000)
+        format!("{}k", tokens >> 10)
     }
 }
 
@@ -239,34 +239,35 @@ impl SessionOutput {
     /// Create an assistant message with token usage info appended
     ///
     /// The content will have token usage info appended automatically:
-    /// `[input/output (ctx_used/ctx_limit pct%)]`
+    /// `[input/output/limit pct%]`
     ///
-    /// Token counts are shown as actual numbers when < 1000, otherwise as `Nk`.
+    /// Token counts are shown as actual numbers when < 1024, otherwise as `Nk` (>> 10).
     pub fn assistant_message_with_tokens(
         id: impl Into<String>,
         content: impl Into<String>,
         input_tokens: Option<u64>,
         output_tokens: Option<u64>,
-        context_used: Option<usize>,
         context_limit: Option<usize>,
     ) -> Self {
         let base_content = content.into();
 
         // Format content with token usage appended
+        // Format: [input/output/limit pct%]
         let display_content = match (input_tokens, output_tokens) {
             (Some(input), Some(output)) => {
                 let input_str = format_token_count(input);
                 let output_str = format_token_count(output);
 
                 // Add context window info if available
-                match (context_used, context_limit) {
-                    (Some(used), Some(limit)) if limit > 0 => {
-                        let ctx_used_str = format_token_count(used as u64);
-                        let ctx_limit_str = format_token_count(limit as u64);
+                // context_used = input + output
+                match context_limit {
+                    Some(limit) if limit > 0 => {
+                        let used = input + output;
+                        let limit_str = format_token_count(limit as u64);
                         let pct = (used as f64 / limit as f64 * 100.0).round() as u64;
                         format!(
-                            "{} [{}/{} ({}/{} {}%)]",
-                            base_content, input_str, output_str, ctx_used_str, ctx_limit_str, pct
+                            "{} [{}/{}/{} {}%]",
+                            base_content, input_str, output_str, limit_str, pct
                         )
                     }
                     _ => format!("{} [{}/{}]", base_content, input_str, output_str),
@@ -643,26 +644,25 @@ mod tests {
     #[test]
     fn test_assistant_message_with_tokens_and_context() {
         // Test with both input/output tokens and context info
+        // Using 131072 (128k context) like DeepSeek
         let msg = SessionOutput::assistant_message_with_tokens(
             "msg-1",
             "Hello!",
-            Some(1234),
-            Some(567),
-            Some(50000),
-            Some(200000),
+            Some(12000),  // ~11k after >> 10
+            Some(500),
+            Some(131072), // 128k context limit (131072 >> 10 = 128)
         );
         match msg {
             SessionOutput::AssistantMessage { id, content, .. } => {
                 assert_eq!(id, "msg-1");
-                // Should include format: content [input/output (ctx_used/ctx_limit pct%)]
-                // Token format: <1000 = raw number, >=1000 = Nk (e.g., 1234 -> 1k)
+                // Format: content [input/output/limit pct%]
+                // Token format: <1024 = raw number, >=1024 = N >> 10 with k suffix
                 assert!(content.contains("Hello!"), "Should contain base content");
                 assert!(content.contains("["), "Should have token info bracket");
-                assert!(content.contains("1k"), "Should show input tokens (1234 -> 1k)");
-                assert!(content.contains("567"), "Should show output tokens");
-                assert!(content.contains("50k"), "Should show context used (50000 -> 50k)");
-                assert!(content.contains("200k"), "Should show context limit (200000 -> 200k)");
-                assert!(content.contains("25%"), "Should show percentage (50k/200k = 25%)");
+                assert!(content.contains("11k"), "Should show input tokens (12000 >> 10 = 11)");
+                assert!(content.contains("500"), "Should show output tokens");
+                assert!(content.contains("128k"), "Should show context limit (131072 >> 10 = 128)");
+                assert!(content.contains("10%"), "Should show percentage ((12000+500)/131072 ~ 10%)");
             }
             _ => panic!("Expected AssistantMessage"),
         }
@@ -670,13 +670,12 @@ mod tests {
 
     #[test]
     fn test_assistant_message_with_tokens_no_context() {
-        // Test with only input/output tokens (no context info)
+        // Test with only input/output tokens (no context limit)
         let msg = SessionOutput::assistant_message_with_tokens(
             "msg-2",
             "Response",
             Some(500),
             Some(100),
-            None,
             None,
         );
         match msg {
@@ -699,7 +698,6 @@ mod tests {
             "Test",
             Some(100),
             Some(50),
-            Some(100),
             Some(0), // Zero limit should trigger fallback
         );
         match msg {
