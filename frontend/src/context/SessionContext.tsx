@@ -146,6 +146,16 @@ export function SessionProvider({ children }: SessionProviderProps) {
     setSessions(prev => {
       const existing = prev.get(sessionId)
       if (!existing) {
+        // Check if this looks like a subagent UUID (full UUID format)
+        // Subagent IDs are UUIDs like "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        // User-created sessions have short IDs like "default" or "session-1234"
+        const isSubagentId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
+        if (isSubagentId) {
+          // Don't create tabs for subagent events - they should use parent session
+          console.warn(`Ignoring event for subagent session: ${sessionId}`)
+          return prev
+        }
+        // For user sessions (like "default"), auto-create to handle race conditions
         const newSession = createSession(sessionId)
         const updated = updater(newSession)
         return new Map(prev).set(sessionId, updated)

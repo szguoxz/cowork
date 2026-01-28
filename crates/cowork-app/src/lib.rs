@@ -84,11 +84,21 @@ fn spawn_output_handler(app_handle: tauri::AppHandle, mut output_rx: OutputRecei
         tracing::info!("Session output handler started");
 
         while let Some((session_id, output)) = output_rx.recv().await {
-            tracing::debug!(
-                "Received output for session {}: {:?}",
-                session_id,
-                std::mem::discriminant(&output)
-            );
+            // Warn if session_id looks like a subagent UUID (should be forwarded with parent_id)
+            let is_uuid = session_id.len() == 36 && session_id.chars().filter(|c| *c == '-').count() == 4;
+            if is_uuid {
+                tracing::warn!(
+                    "Received event with UUID session_id (possible subagent leak): {} {:?}",
+                    session_id,
+                    std::mem::discriminant(&output)
+                );
+            } else {
+                tracing::debug!(
+                    "Received output for session {}: {:?}",
+                    session_id,
+                    std::mem::discriminant(&output)
+                );
+            }
 
             // Emit as a tagged event with session ID
             #[derive(serde::Serialize)]

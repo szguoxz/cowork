@@ -270,7 +270,11 @@ impl SessionOutput {
                             base_content, input_str, output_str, limit_str, pct
                         )
                     }
-                    _ => format!("{} [{}/{}]", base_content, input_str, output_str),
+                    Some(limit) => {
+                        // Show limit even when 0 (for debugging), but no percentage
+                        format!("{} [{}/{}/{}]", base_content, input_str, output_str, limit)
+                    }
+                    None => format!("{} [{}/{}]", base_content, input_str, output_str),
                 }
             }
             _ => base_content,
@@ -692,18 +696,18 @@ mod tests {
 
     #[test]
     fn test_assistant_message_with_tokens_zero_limit() {
-        // Test with context limit of 0 (should fall back to no-context format)
+        // Test with context limit of 0 (shows limit for debugging but no percentage)
         let msg = SessionOutput::assistant_message_with_tokens(
             "msg-3",
             "Test",
             Some(100),
             Some(50),
-            Some(0), // Zero limit should trigger fallback
+            Some(0), // Zero limit should show 0 for debugging
         );
         match msg {
             SessionOutput::AssistantMessage { content, .. } => {
-                // Should show just input/output when limit is 0
-                assert!(content.contains("[100/50]"), "Should show just tokens when limit=0");
+                // Should show input/output/0 when limit is 0 (for debugging)
+                assert!(content.contains("[100/50/0]"), "Should show limit=0 for debugging");
                 assert!(!content.contains("%"), "Should NOT have percentage when limit=0");
             }
             _ => panic!("Expected AssistantMessage"),
