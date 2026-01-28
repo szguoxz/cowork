@@ -24,7 +24,7 @@ use crate::context::{
 use crate::error::Result;
 use crate::orchestration::{ChatMessage, ChatSession, ToolCallInfo, ToolRegistryBuilder};
 use crate::prompt::{ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig};
-use crate::provider::GenAIProvider;
+use crate::provider::{GenAIProvider, ToolCall};
 use crate::skills::SkillRegistry;
 use crate::tools::interaction::ASK_QUESTION_TOOL_NAME;
 use crate::tools::planning::PlanModeState;
@@ -42,18 +42,11 @@ const MAX_TOOL_RESULT_SIZE: usize = 30_000;
 /// Result from an LLM call
 struct LlmCallResult {
     content: Option<String>,
-    tool_calls: Vec<LlmToolCall>,
+    tool_calls: Vec<ToolCall>,
     /// Input tokens for this request (from provider)
     input_tokens: Option<u64>,
     /// Output tokens for this response (from provider)
     output_tokens: Option<u64>,
-}
-
-/// Tool call from the LLM
-struct LlmToolCall {
-    id: String,
-    name: String,
-    arguments: serde_json::Value,
 }
 
 /// Info for spawning a subagent from a skill with `context: fork`
@@ -478,7 +471,7 @@ impl AgentLoop {
             let tool_calls: Vec<ToolCallInfo> = response
                 .tool_calls
                 .iter()
-                .map(|tc| ToolCallInfo::new(&tc.id, &tc.name, tc.arguments.clone()))
+                .map(|tc| ToolCallInfo::new(&tc.call_id, &tc.fn_name, tc.fn_arguments.clone()))
                 .collect();
 
             // Add assistant message with tool calls
@@ -755,15 +748,7 @@ impl AgentLoop {
         match self.provider.chat(llm_messages, tools).await {
             Ok(result) => Ok(LlmCallResult {
                 content: result.content,
-                tool_calls: result
-                    .tool_calls
-                    .into_iter()
-                    .map(|tc| LlmToolCall {
-                        id: tc.call_id,
-                        name: tc.fn_name,
-                        arguments: tc.fn_arguments,
-                    })
-                    .collect(),
+                tool_calls: result.tool_calls,
                 input_tokens: result.input_tokens,
                 output_tokens: result.output_tokens,
             }),
