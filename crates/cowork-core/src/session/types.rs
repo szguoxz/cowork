@@ -639,4 +639,76 @@ mod tests {
         assert_eq!(config.model, Some("gpt-4".to_string()));
         assert_eq!(config.system_prompt, Some("Custom prompt".to_string()));
     }
+
+    #[test]
+    fn test_assistant_message_with_tokens_and_context() {
+        // Test with both input/output tokens and context info
+        let msg = SessionOutput::assistant_message_with_tokens(
+            "msg-1",
+            "Hello!",
+            Some(1234),
+            Some(567),
+            Some(50000),
+            Some(200000),
+        );
+        match msg {
+            SessionOutput::AssistantMessage { id, content, .. } => {
+                assert_eq!(id, "msg-1");
+                // Should include format: content [input/output (ctx_used/ctx_limit pct%)]
+                // Token format: <1000 = raw number, >=1000 = Nk (e.g., 1234 -> 1k)
+                assert!(content.contains("Hello!"), "Should contain base content");
+                assert!(content.contains("["), "Should have token info bracket");
+                assert!(content.contains("1k"), "Should show input tokens (1234 -> 1k)");
+                assert!(content.contains("567"), "Should show output tokens");
+                assert!(content.contains("50k"), "Should show context used (50000 -> 50k)");
+                assert!(content.contains("200k"), "Should show context limit (200000 -> 200k)");
+                assert!(content.contains("25%"), "Should show percentage (50k/200k = 25%)");
+            }
+            _ => panic!("Expected AssistantMessage"),
+        }
+    }
+
+    #[test]
+    fn test_assistant_message_with_tokens_no_context() {
+        // Test with only input/output tokens (no context info)
+        let msg = SessionOutput::assistant_message_with_tokens(
+            "msg-2",
+            "Response",
+            Some(500),
+            Some(100),
+            None,
+            None,
+        );
+        match msg {
+            SessionOutput::AssistantMessage { id, content, .. } => {
+                assert_eq!(id, "msg-2");
+                // Should show just input/output: content [input/output]
+                assert!(content.contains("Response"), "Should contain base content");
+                assert!(content.contains("[500/100]"), "Should show just tokens");
+                assert!(!content.contains("%"), "Should NOT have percentage");
+            }
+            _ => panic!("Expected AssistantMessage"),
+        }
+    }
+
+    #[test]
+    fn test_assistant_message_with_tokens_zero_limit() {
+        // Test with context limit of 0 (should fall back to no-context format)
+        let msg = SessionOutput::assistant_message_with_tokens(
+            "msg-3",
+            "Test",
+            Some(100),
+            Some(50),
+            Some(100),
+            Some(0), // Zero limit should trigger fallback
+        );
+        match msg {
+            SessionOutput::AssistantMessage { content, .. } => {
+                // Should show just input/output when limit is 0
+                assert!(content.contains("[100/50]"), "Should show just tokens when limit=0");
+                assert!(!content.contains("%"), "Should NOT have percentage when limit=0");
+            }
+            _ => panic!("Expected AssistantMessage"),
+        }
+    }
 }
