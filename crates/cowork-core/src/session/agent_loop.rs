@@ -23,7 +23,7 @@ use crate::context::{
 };
 use crate::error::Result;
 use crate::orchestration::{ChatSession, ToolRegistryBuilder};
-use crate::prompt::{ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig};
+use crate::prompt::{HookContext, HookEvent, HookExecutor, HooksConfig};
 use crate::provider::{ChatMessage, GenAIProvider, ToolCall};
 use crate::skills::SkillRegistry;
 use crate::tools::interaction::ASK_QUESTION_TOOL_NAME;
@@ -110,9 +110,6 @@ pub struct AgentLoop {
     approval_config: ToolApprovalConfig,
     /// Plan mode state (shared with EnterPlanMode/ExitPlanMode tools and /plan command)
     plan_mode_state: Arc<tokio::sync::RwLock<PlanModeState>>,
-    /// Workspace path
-    #[allow(dead_code)]
-    workspace_path: std::path::PathBuf,
     /// Context monitor for tracking token usage
     context_monitor: ContextMonitor,
     /// Conversation summarizer for auto-compaction
@@ -123,9 +120,6 @@ pub struct AgentLoop {
     hooks_config: HooksConfig,
     /// Whether hooks are enabled
     hooks_enabled: bool,
-    /// Component registry for agents, commands, skills
-    #[allow(dead_code)]
-    component_registry: Option<Arc<ComponentRegistry>>,
     /// Whether to persist the session on exit
     save_session: bool,
     /// When the session was created
@@ -294,13 +288,11 @@ impl AgentLoop {
             tool_definitions,
             approval_config: config.approval_config,
             plan_mode_state,
-            workspace_path: config.workspace_path.clone(),
             context_monitor,
             summarizer,
             hook_executor,
             hooks_config,
             hooks_enabled,
-            component_registry: config.component_registry.clone(),
             save_session: config.save_session,
             created_at: chrono::Utc::now(),
         })

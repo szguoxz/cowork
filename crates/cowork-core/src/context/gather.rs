@@ -329,24 +329,6 @@ impl ContextGatherer {
         sections.join("\n\n")
     }
 
-    /// Read CLAUDE.md content (legacy single-file support)
-    #[allow(dead_code)]
-    async fn read_claude_md(&self) -> Option<String> {
-        let paths = [
-            self.workspace.join("CLAUDE.md"),
-            self.workspace.join(".claude/CLAUDE.md"),
-            self.workspace.join("docs/CLAUDE.md"),
-        ];
-
-        for path in &paths {
-            if let Ok(content) = tokio::fs::read_to_string(path).await {
-                return Some(content);
-            }
-        }
-
-        None
-    }
-
     /// Gather git information
     async fn gather_git_info(&self) -> Option<GitInfo> {
         // Check if this is a git repository

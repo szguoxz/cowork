@@ -52,10 +52,10 @@ pub fn tool_result_message(call_id: impl Into<String>, content: impl Into<String
 /// If content is provided, it's added as a text part before the tool calls
 pub fn assistant_with_tool_calls(content: Option<String>, tool_calls: Vec<ToolCall>) -> ChatMessage {
     let mut parts: Vec<ContentPart> = Vec::new();
-    if let Some(text) = content {
-        if !text.is_empty() {
-            parts.push(ContentPart::Text(text));
-        }
+    if let Some(text) = content
+        && !text.is_empty()
+    {
+        parts.push(ContentPart::Text(text));
     }
     parts.extend(tool_calls.into_iter().map(ContentPart::ToolCall));
     ChatMessage::assistant(MessageContent::from_parts(parts))
