@@ -41,7 +41,7 @@ export type LoopOutput =
   | { type: "ready"; session_id: string }
   | { type: "user_message"; session_id: string; id: string; content: string }
   | { type: "thinking"; session_id: string; content: string }
-  | { type: "assistant_message"; session_id: string; id: string; content: string; context_usage?: ContextUsage }
+  | { type: "assistant_message"; session_id: string; id: string; content: string }
   | { type: "tool_start"; session_id: string; id: string; name: string; arguments: Record<string, unknown> }
   | { type: "tool_pending"; session_id: string; id: string; name: string; arguments: Record<string, unknown>; subagent_id?: string }
   | { type: "tool_done"; session_id: string; id: string; name: string; success: boolean; output: string }

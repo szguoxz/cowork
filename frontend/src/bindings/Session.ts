@@ -3,7 +3,7 @@
  * Simplified: tools are ephemeral, questions/approvals are modals
  */
 
-import type { DiffLine, ContextUsage } from './LoopOutput'
+import type { DiffLine } from './LoopOutput'
 
 export interface SessionProvider {
   type: string  // 'anthropic', 'openai', 'deepseek', etc.
@@ -50,7 +50,6 @@ export interface Session {
   createdAt: Date
   updatedAt: Date
   turnStart?: number          // Timestamp when user submitted message (ms since epoch)
-  contextUsage?: ContextUsage // Current context usage (tokens used/total)
 }
 
 export function createSession(id: string, name?: string, provider?: SessionProvider): Session {

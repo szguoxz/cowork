@@ -9,7 +9,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::config::PromptSystemConfig;
-use crate::context::ContextUsage;
 use crate::formatting::DiffLine;
 use crate::mcp_manager::McpServerManager;
 use crate::orchestration::ToolScope;
@@ -121,18 +120,10 @@ pub enum SessionOutput {
         delta: String,
     },
     /// Assistant message (complete)
+    /// Token usage info is already formatted and appended to content by core.
     AssistantMessage {
         id: String,
         content: String,
-        /// Current context usage (tokens used/total)
-        #[serde(skip_serializing_if = "Option::is_none")]
-        context_usage: Option<ContextUsage>,
-        /// Input tokens for this request (from provider)
-        #[serde(skip_serializing_if = "Option::is_none")]
-        input_tokens: Option<u64>,
-        /// Output tokens for this response (from provider)
-        #[serde(skip_serializing_if = "Option::is_none")]
-        output_tokens: Option<u64>,
     },
     /// Tool execution starting (auto-approved or approved by user)
     ToolStart {
@@ -242,24 +233,22 @@ impl SessionOutput {
         Self::AssistantMessage {
             id: id.into(),
             content: content.into(),
-            context_usage: None,
-            input_tokens: None,
-            output_tokens: None,
         }
     }
 
-    /// Create an assistant message with context usage and token counts
+    /// Create an assistant message with token usage info appended
     ///
     /// The content will have token usage info appended automatically:
     /// `[input/output/total (pct%)]`
     ///
     /// Token counts are shown as actual numbers when < 1000, otherwise as `Nk`.
-    pub fn assistant_message_with_context(
+    pub fn assistant_message_with_tokens(
         id: impl Into<String>,
         content: impl Into<String>,
-        context_usage: ContextUsage,
         input_tokens: Option<u64>,
         output_tokens: Option<u64>,
+        context_limit: usize,
+        context_used_pct: f32,
     ) -> Self {
         let base_content = content.into();
 
@@ -268,8 +257,8 @@ impl SessionOutput {
             (Some(input), Some(output)) => {
                 let input_str = format_token_count(input);
                 let output_str = format_token_count(output);
-                let total_str = format_token_count(context_usage.limit_tokens as u64);
-                let pct = (context_usage.used_percentage * 100.0).round() as u32;
+                let total_str = format_token_count(context_limit as u64);
+                let pct = (context_used_pct * 100.0).round() as u32;
                 format!("{} [{}/{}/{} ({}%)]", base_content, input_str, output_str, total_str, pct)
             }
             _ => base_content,
@@ -278,9 +267,6 @@ impl SessionOutput {
         Self::AssistantMessage {
             id: id.into(),
             content: display_content,
-            context_usage: Some(context_usage),
-            input_tokens,
-            output_tokens,
         }
     }
 

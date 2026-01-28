@@ -432,16 +432,17 @@ impl AgentLoop {
             // Generate message ID
             let msg_id = uuid::Uuid::new_v4().to_string();
 
-            // Emit assistant message with context usage and token counts
+            // Emit assistant message with token counts formatted in content
             let content = response.content.clone().unwrap_or_default();
-            let context_usage = self.calculate_context_usage();
             if !content.is_empty() {
-                self.emit(SessionOutput::assistant_message_with_context(
+                let ctx = self.calculate_context_usage();
+                self.emit(SessionOutput::assistant_message_with_tokens(
                     &msg_id,
                     &content,
-                    context_usage,
                     response.input_tokens,
                     response.output_tokens,
+                    ctx.limit_tokens,
+                    ctx.used_percentage as f32,
                 )).await;
             }
 
