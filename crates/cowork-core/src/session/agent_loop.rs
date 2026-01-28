@@ -414,6 +414,14 @@ impl AgentLoop {
             if !content.is_empty() {
                 let context_limit = self.context_monitor.context_limit();
 
+                // Debug: This should never be 0 - if it is, something is wrong
+                if context_limit == 0 {
+                    warn!(
+                        session_id = %self.session_id,
+                        "Context limit is unexpectedly 0 - check provider_id and model config"
+                    );
+                }
+
                 debug!(
                     input_tokens = ?response.input_tokens,
                     output_tokens = ?response.output_tokens,
@@ -1067,16 +1075,15 @@ impl AgentLoop {
         let result = self.summarizer
             .compact(
                 &messages,
-                self.context_monitor.counter(),
                 config,
                 Some(&self.provider),
             )
             .await?;
 
         info!(
-            "Compaction complete: {} -> {} tokens ({} messages summarized)",
-            result.tokens_before,
-            result.tokens_after,
+            "Compaction complete: {} -> {} chars ({} messages summarized)",
+            result.chars_before,
+            result.chars_after,
             result.messages_summarized
         );
 
@@ -1088,8 +1095,8 @@ impl AgentLoop {
 
         // Emit completion notification
         self.emit(SessionOutput::thinking(format!(
-            "Compacted {} messages into summary ({} -> {} tokens)",
-            result.messages_summarized, result.tokens_before, result.tokens_after
+            "Compacted {} messages into summary ({} -> {} chars)",
+            result.messages_summarized, result.chars_before, result.chars_after
         )))
         .await;
 

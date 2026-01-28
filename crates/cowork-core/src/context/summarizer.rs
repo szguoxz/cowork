@@ -8,7 +8,6 @@ use crate::error::Result;
 use crate::prompt::builtin::reminders::CONVERSATION_SUMMARIZATION;
 use crate::provider::{ChatMessage, GenAIProvider};
 
-use super::tokens::TokenCounter;
 use super::{Message, MessageRole};
 
 /// Configuration for the summarizer
@@ -100,10 +99,10 @@ impl CompactConfig {
 pub struct CompactResult {
     /// The summary message (role: User) that replaces the entire conversation
     pub summary: Message,
-    /// Token count before compaction
-    pub tokens_before: usize,
-    /// Token count after compaction
-    pub tokens_after: usize,
+    /// Estimated character count before compaction
+    pub chars_before: usize,
+    /// Estimated character count after compaction
+    pub chars_after: usize,
     /// Number of messages that were summarized
     pub messages_summarized: usize,
 }
@@ -116,16 +115,6 @@ pub struct ConversationSummarizer {
 impl ConversationSummarizer {
     pub fn new(config: SummarizerConfig) -> Self {
         Self { config }
-    }
-
-    /// Check if summarization is needed based on token count
-    pub fn needs_summarization(&self, messages: &[Message], counter: &TokenCounter) -> bool {
-        if messages.len() < self.config.min_messages_to_summarize {
-            return false;
-        }
-
-        let current_tokens = counter.count_messages(messages);
-        counter.should_summarize(current_tokens)
     }
 
     /// Summarize older messages, keeping recent ones intact
@@ -290,11 +279,11 @@ impl ConversationSummarizer {
     pub async fn compact(
         &self,
         messages: &[Message],
-        counter: &TokenCounter,
         config: CompactConfig,
         provider: Option<&GenAIProvider>,
     ) -> Result<CompactResult> {
-        let tokens_before = counter.count_messages(messages);
+        // Use character count as a simple proxy for tokens (~4 chars per token)
+        let chars_before: usize = messages.iter().map(|m| m.content.len()).sum();
 
         if messages.is_empty() {
             // Nothing to compact
@@ -304,8 +293,8 @@ impl ConversationSummarizer {
                     content: "<summary>No prior context.</summary>".to_string(),
                     timestamp: chrono::Utc::now(),
                 },
-                tokens_before: 0,
-                tokens_after: 0,
+                chars_before: 0,
+                chars_after: 0,
                 messages_summarized: 0,
             });
         }
@@ -318,12 +307,12 @@ impl ConversationSummarizer {
             _ => self.generate_simple_compact_summary(messages, &config),
         };
 
-        let tokens_after = counter.count(&summary.content);
+        let chars_after = summary.content.len();
 
         Ok(CompactResult {
             summary,
-            tokens_before,
-            tokens_after,
+            chars_before,
+            chars_after,
             messages_summarized: messages.len(),
         })
     }

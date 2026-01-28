@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::tokens::TokenCounter;
+use crate::provider::{catalog, model_listing::get_model_context_limit};
 
 /// Configuration for the context monitor
 #[derive(Debug, Clone)]
@@ -46,7 +46,10 @@ pub struct ContextUsage {
 ///
 /// Uses LLM-reported input_tokens for accurate tracking instead of local estimates.
 pub struct ContextMonitor {
-    counter: TokenCounter,
+    /// Provider ID (e.g., "anthropic", "openai")
+    provider_id: String,
+    /// Model name for precise context limits
+    model: Option<String>,
     config: MonitorConfig,
     /// Last reported input tokens from LLM (cumulative context size)
     last_input_tokens: u64,
@@ -58,7 +61,8 @@ impl ContextMonitor {
     /// Create a new context monitor for a provider
     pub fn new(provider_id: impl Into<String>) -> Self {
         Self {
-            counter: TokenCounter::new(provider_id),
+            provider_id: provider_id.into(),
+            model: None,
             config: MonitorConfig::default(),
             last_input_tokens: 0,
             last_output_tokens: 0,
@@ -70,7 +74,8 @@ impl ContextMonitor {
     /// This provides more accurate context limits based on the model name.
     pub fn with_model(provider_id: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
-            counter: TokenCounter::with_model(provider_id, model),
+            provider_id: provider_id.into(),
+            model: Some(model.into()),
             config: MonitorConfig::default(),
             last_input_tokens: 0,
             last_output_tokens: 0,
@@ -80,7 +85,8 @@ impl ContextMonitor {
     /// Create a new context monitor with custom config
     pub fn with_config(provider_id: impl Into<String>, config: MonitorConfig) -> Self {
         Self {
-            counter: TokenCounter::new(provider_id),
+            provider_id: provider_id.into(),
+            model: None,
             config,
             last_input_tokens: 0,
             last_output_tokens: 0,
@@ -94,7 +100,8 @@ impl ContextMonitor {
         config: MonitorConfig,
     ) -> Self {
         Self {
-            counter: TokenCounter::with_model(provider_id, model),
+            provider_id: provider_id.into(),
+            model: Some(model.into()),
             config,
             last_input_tokens: 0,
             last_output_tokens: 0,
@@ -103,7 +110,29 @@ impl ContextMonitor {
 
     /// Get the context limit for this provider/model
     pub fn context_limit(&self) -> usize {
-        self.counter.context_limit()
+        // Check model-specific limits first
+        if let Some(ref model) = self.model {
+            if let Some(limit) = get_model_context_limit(&self.provider_id, model) {
+                if limit > 0 {
+                    return limit;
+                }
+            }
+        }
+
+        // Fall back to provider defaults from catalog
+        let limit = catalog::context_window(&self.provider_id).unwrap_or(128_000);
+
+        // Guard against 0 (should never happen with valid catalog data)
+        if limit == 0 {
+            tracing::warn!(
+                provider_id = %self.provider_id,
+                model = ?self.model,
+                "Context limit is 0 - returning fallback 128000"
+            );
+            return 128_000;
+        }
+
+        limit
     }
 
     /// Update token counts from LLM response
@@ -121,7 +150,7 @@ impl ContextMonitor {
 
     /// Get current context usage based on last LLM response
     pub fn current_usage(&self) -> ContextUsage {
-        let limit = self.counter.context_limit();
+        let limit = self.context_limit();
         let input = self.last_input_tokens;
         let output = self.last_output_tokens;
         let used = input + output;
@@ -149,11 +178,6 @@ impl ContextMonitor {
     /// Check if context should be compacted based on last LLM response
     pub fn should_compact(&self) -> bool {
         self.current_usage().should_compact
-    }
-
-    /// Get the token counter (for heuristic counting during compaction)
-    pub fn counter(&self) -> &TokenCounter {
-        &self.counter
     }
 
     /// Get the monitor config

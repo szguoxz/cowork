@@ -10,12 +10,10 @@
 pub mod gather;
 pub mod monitor;
 pub mod summarizer;
-pub mod tokens;
 
 pub use gather::{ContextGatherer, MemoryFile, MemoryHierarchy, MemoryTier, ProjectContext};
 pub use monitor::{ContextMonitor, ContextUsage, MonitorConfig};
 pub use summarizer::{CompactConfig, CompactResult, ConversationSummarizer, SummarizerConfig};
-pub use tokens::TokenCounter;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
