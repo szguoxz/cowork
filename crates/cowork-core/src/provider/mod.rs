@@ -38,6 +38,9 @@ pub use genai::chat::ChatRole;
 // Re-export ToolCall from genai (uses call_id, fn_name, fn_arguments)
 pub use genai::chat::ToolCall;
 
+// Re-export Usage from genai as TokenUsage
+pub use genai::chat::Usage as TokenUsage;
+
 /// Parse a role string into ChatRole
 pub fn parse_role(s: &str) -> ChatRole {
     match s {
@@ -297,14 +300,6 @@ pub struct LlmResponse {
     pub tool_calls: Vec<ToolCall>,
     pub finish_reason: String,
     pub usage: TokenUsage,
-}
-
-/// Token usage statistics
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TokenUsage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
 }
 
 /// Trait for LLM providers
