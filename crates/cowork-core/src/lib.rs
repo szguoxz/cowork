@@ -28,7 +28,7 @@ pub use mcp_manager::{McpServerInfo, McpServerManager, McpServerStatus, McpToolI
 pub use error::{Error, Result};
 pub use provider::{
     create_provider_from_config, create_provider_from_provider_config, create_provider_with_settings,
-    get_api_key, get_model_tiers, has_api_key_configured, ProviderType,
+    get_api_key, get_model_tiers, has_api_key_configured, ProviderType, Role,
 };
 pub use skills::{Skill, SkillContext, SkillRegistry, SkillResult};
 pub use tools::{standard_tool_definitions, Tool, ToolDefinition, ToolOutput, ToolRegistry};

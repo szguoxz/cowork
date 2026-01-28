@@ -301,15 +301,17 @@ impl ChatSession {
 
     /// Convert messages to LLM format
     pub fn to_llm_messages(&self) -> Vec<crate::provider::LlmMessage> {
-        use crate::provider::{LlmMessage, MessageContent};
+        use crate::provider::{LlmMessage, MessageContent, Role};
 
         self.messages
             .iter()
             .map(|m| {
+                let role = Role::parse(&m.role);
+
                 // If message has content_blocks, use them
                 if !m.content_blocks.is_empty() {
                     return LlmMessage {
-                        role: m.role.clone(),
+                        role,
                         content: MessageContent::Blocks(m.content_blocks.clone()),
                         tool_calls: None,
                         tool_call_id: None,
@@ -332,7 +334,7 @@ impl ChatSession {
                     }
 
                     return LlmMessage {
-                        role: m.role.clone(),
+                        role,
                         content: MessageContent::Blocks(blocks),
                         tool_calls: Some(
                             m.tool_calls
@@ -350,7 +352,7 @@ impl ChatSession {
 
                 // Simple text message
                 LlmMessage {
-                    role: m.role.clone(),
+                    role,
                     content: MessageContent::Text(m.content.clone()),
                     tool_calls: None,
                     tool_call_id: None,
@@ -580,19 +582,21 @@ mod tests {
 
     #[test]
     fn test_chat_session_to_llm_messages_text_only() {
+        use crate::provider::Role;
+
         let mut session = ChatSession::new();
         session.add_user_message("Hello");
         session.add_assistant_message("Hi there!", vec![]);
 
         let llm_messages = session.to_llm_messages();
         assert_eq!(llm_messages.len(), 2);
-        assert_eq!(llm_messages[0].role, "user");
-        assert_eq!(llm_messages[1].role, "assistant");
+        assert_eq!(llm_messages[0].role, Role::User);
+        assert_eq!(llm_messages[1].role, Role::Assistant);
     }
 
     #[test]
     fn test_chat_session_to_llm_messages_with_tool_calls() {
-        use crate::provider::MessageContent;
+        use crate::provider::{MessageContent, Role};
 
         let mut session = ChatSession::new();
         session.add_user_message("Read file");
@@ -604,10 +608,10 @@ mod tests {
         assert_eq!(llm_messages.len(), 3);
 
         // User message
-        assert_eq!(llm_messages[0].role, "user");
+        assert_eq!(llm_messages[0].role, Role::User);
 
         // Assistant message with tool call
-        assert_eq!(llm_messages[1].role, "assistant");
+        assert_eq!(llm_messages[1].role, Role::Assistant);
         match &llm_messages[1].content {
             MessageContent::Blocks(blocks) => {
                 assert!(blocks.len() >= 2); // text + tool_use
@@ -616,7 +620,7 @@ mod tests {
         }
 
         // Tool result message
-        assert_eq!(llm_messages[2].role, "user");
+        assert_eq!(llm_messages[2].role, Role::User);
         match &llm_messages[2].content {
             MessageContent::Blocks(blocks) => {
                 assert_eq!(blocks.len(), 1);

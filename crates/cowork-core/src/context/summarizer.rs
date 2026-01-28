@@ -198,7 +198,7 @@ impl ConversationSummarizer {
 
         let request = LlmRequest::new(vec![
             LlmMessage {
-                role: "system".to_string(),
+                role: crate::provider::Role::System,
                 content: crate::provider::MessageContent::Text(
                     "You are a helpful assistant that summarizes conversations accurately and concisely.".to_string()
                 ),
