@@ -254,8 +254,21 @@ impl AgentLoop {
 
         // Initialize context monitor with provider and model for accurate limits
         let context_monitor = match &config.model {
-            Some(model) => ContextMonitor::with_model(&config.provider_id, model),
-            None => ContextMonitor::new(&config.provider_id),
+            Some(model) => {
+                debug!(
+                    provider_id = %config.provider_id,
+                    model = %model,
+                    "Creating ContextMonitor with model"
+                );
+                ContextMonitor::with_model(&config.provider_id, model)
+            }
+            None => {
+                debug!(
+                    provider_id = %config.provider_id,
+                    "Creating ContextMonitor without model"
+                );
+                ContextMonitor::new(&config.provider_id)
+            }
         };
 
         // Initialize summarizer with default config
@@ -404,6 +417,14 @@ impl AgentLoop {
                     &messages,
                     &self.session.system_prompt,
                     Some(&tool_defs_json),
+                );
+
+                debug!(
+                    input_tokens = ?response.input_tokens,
+                    output_tokens = ?response.output_tokens,
+                    ctx_used = ctx_usage.used_tokens,
+                    ctx_limit = ctx_usage.limit_tokens,
+                    "Emitting assistant message with tokens"
                 );
 
                 self.emit(SessionOutput::assistant_message_with_tokens(

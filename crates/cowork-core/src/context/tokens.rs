@@ -147,11 +147,25 @@ impl TokenCounter {
         // Check model-specific limits first using centralized function
         if let Some(ref model) = self.model
             && let Some(limit) = get_model_context_limit(&self.provider_id, model) {
+                tracing::debug!(
+                    provider_id = %self.provider_id,
+                    model = %model,
+                    limit = limit,
+                    "Context limit from model-specific lookup"
+                );
                 return limit;
             }
 
         // Fall back to provider defaults from catalog
-        catalog::context_window(&self.provider_id).unwrap_or(128_000)
+        let limit = catalog::context_window(&self.provider_id).unwrap_or(128_000);
+        tracing::debug!(
+            provider_id = %self.provider_id,
+            model = ?self.model,
+            limit = limit,
+            catalog_found = catalog::get(&self.provider_id).is_some(),
+            "Context limit from provider fallback"
+        );
+        limit
     }
 
     /// Get recommended trigger threshold for summarization
