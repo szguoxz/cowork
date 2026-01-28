@@ -515,6 +515,10 @@ impl GenAIProvider {
                     // Capture raw response debug BEFORE consuming it
                     let raw_response = format!("{:#?}", response);
 
+                    // Extract token usage BEFORE consuming response
+                    let input_tokens = response.usage.prompt_tokens.map(|t| t as u64);
+                    let output_tokens = response.usage.completion_tokens.map(|t| t as u64);
+
                     // Extract content
                     let content = response.first_text().map(|s| s.to_string());
 
@@ -560,8 +564,8 @@ impl GenAIProvider {
                     let result = CompletionResult {
                         content,
                         tool_calls,
-                        input_tokens: None,  // genai doesn't expose usage
-                        output_tokens: None,
+                        input_tokens,
+                        output_tokens,
                     };
 
                     // Log successful interaction with raw response
