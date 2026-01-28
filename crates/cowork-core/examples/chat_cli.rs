@@ -9,7 +9,7 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use cowork_core::provider::{GenAIProvider, LlmMessage};
+use cowork_core::provider::{GenAIProvider, ChatMessage};
 use cowork_core::tools::ToolRegistry;
 use cowork_core::tools::filesystem::{ReadFile, WriteFile, GlobFiles, GrepFiles};
 use cowork_core::tools::shell::ExecuteCommand;
@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tool_definitions = tool_registry.list();
 
     // Chat history
-    let mut messages: Vec<LlmMessage> = Vec::new();
+    let mut messages: Vec<ChatMessage> = Vec::new();
 
     loop {
         // Print prompt
@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Add user message
-        messages.push(LlmMessage::user(input));
+        messages.push(ChatMessage::user(input));
 
         // Get response
         print!("Assistant: ");
@@ -118,13 +118,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         );
 
                                         // Add tool result to messages
-                                        messages.push(LlmMessage::assistant(
+                                        messages.push(ChatMessage::assistant(
                                             format!("Used tool {} with result: {}", call.fn_name, output.content)
                                         ));
                                     }
                                     Err(e) => {
                                         println!("  Error: {}", e);
-                                        messages.push(LlmMessage::assistant(
+                                        messages.push(ChatMessage::assistant(
                                             format!("Tool {} failed: {}", call.fn_name, e)
                                         ));
                                     }
@@ -134,14 +134,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         } else {
                             println!("  Rejected");
-                            messages.push(LlmMessage::assistant(
+                            messages.push(ChatMessage::assistant(
                                 format!("User rejected tool call: {}", call.fn_name)
                             ));
                         }
                     }
                 } else if let Some(text) = result.content {
                     // No tool calls, just add the message
-                    messages.push(LlmMessage::assistant(text));
+                    messages.push(ChatMessage::assistant(text));
                 }
             }
             Err(e) => {

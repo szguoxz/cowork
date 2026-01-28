@@ -186,8 +186,8 @@ fn test_mcp_tool_definition_conversion() {
     let definition = wrapper.to_definition();
 
     assert_eq!(definition.name, "mcp__playwright__type");
-    assert_eq!(definition.description, "Type text into an element");
-    assert!(definition.parameters.get("properties").is_some());
+    assert_eq!(definition.description, Some("Type text into an element".to_string()));
+    assert!(definition.schema.as_ref().unwrap().get("properties").is_some());
 }
 
 // Test that simulates what happens when MCP tools are discovered

@@ -43,90 +43,45 @@ pub use genai::chat::Usage as TokenUsage;
 // Re-export message types from genai
 pub use genai::chat::{ChatMessage, ContentPart, MessageContent, ToolResponse};
 
-/// Message for LLM API calls
-///
-/// This enum wraps genai types to support both regular messages and tool results
-/// in a single conversation history. genai uses different types for these:
-/// - Regular messages: ChatMessage
-/// - Tool results: ToolResponse
-#[derive(Debug, Clone)]
-pub enum LlmMessage {
-    /// Regular chat message (user, assistant, system)
-    Chat(ChatMessage),
-    /// Tool result message
-    ToolResult(ToolResponse),
-    /// Assistant message with tool calls
-    AssistantToolCalls {
-        /// Optional text content before/alongside tool calls
-        content: Option<String>,
-        /// The tool calls
-        tool_calls: Vec<ToolCall>,
-    },
+/// Helper to create a tool result ChatMessage
+pub fn tool_result_message(call_id: impl Into<String>, content: impl Into<String>) -> ChatMessage {
+    ChatMessage::from(ToolResponse::new(call_id.into(), content.into()))
 }
 
-impl LlmMessage {
-    /// Create a user message
-    pub fn user(content: impl Into<String>) -> Self {
-        Self::Chat(ChatMessage::user(content.into()))
-    }
-
-    /// Create an assistant message
-    pub fn assistant(content: impl Into<String>) -> Self {
-        Self::Chat(ChatMessage::assistant(content.into()))
-    }
-
-    /// Create a system message
-    pub fn system(content: impl Into<String>) -> Self {
-        Self::Chat(ChatMessage::system(content.into()))
-    }
-
-    /// Create an assistant message with tool calls
-    pub fn assistant_with_tool_calls(content: Option<String>, tool_calls: Vec<ToolCall>) -> Self {
-        Self::AssistantToolCalls { content, tool_calls }
-    }
-
-    /// Create a tool result message
-    pub fn tool_result(call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Self::ToolResult(ToolResponse::new(call_id.into(), content.into()))
-    }
-
-    /// Get the role of this message
-    pub fn role(&self) -> ChatRole {
-        match self {
-            Self::Chat(msg) => msg.role.clone(),
-            Self::ToolResult(_) => ChatRole::Tool,
-            Self::AssistantToolCalls { .. } => ChatRole::Assistant,
+/// Helper to create an assistant message with tool calls
+/// If content is provided, it's added as a text part before the tool calls
+pub fn assistant_with_tool_calls(content: Option<String>, tool_calls: Vec<ToolCall>) -> ChatMessage {
+    let mut parts: Vec<ContentPart> = Vec::new();
+    if let Some(text) = content {
+        if !text.is_empty() {
+            parts.push(ContentPart::Text(text));
         }
     }
+    parts.extend(tool_calls.into_iter().map(ContentPart::ToolCall));
+    ChatMessage::assistant(MessageContent::from_parts(parts))
+}
 
-    /// Get text content as a string (for logging/display)
-    pub fn content_as_text(&self) -> String {
-        match self {
-            Self::Chat(msg) => {
-                // Use genai's joined_texts() method which combines all text parts
-                msg.content.joined_texts().unwrap_or_default()
-            }
-            Self::ToolResult(resp) => resp.content.to_string(),
-            Self::AssistantToolCalls { content, .. } => content.clone().unwrap_or_default(),
-        }
+/// Get text content from a ChatMessage (for logging/display)
+/// This extracts text from regular messages and also from tool responses
+pub fn message_text_content(msg: &ChatMessage) -> String {
+    // First try to get joined texts (for regular messages)
+    if let Some(text) = msg.content.joined_texts() {
+        return text;
     }
+    // For tool response messages, extract the content from ToolResponse parts
+    let tool_responses = msg.content.tool_responses();
+    if !tool_responses.is_empty() {
+        return tool_responses.iter()
+            .map(|tr| tr.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    String::new()
+}
 
-    /// Append text to message content (for system reminders)
-    pub fn append_text(&mut self, text: &str) {
-        match self {
-            Self::Chat(msg) => {
-                // Use genai's append method to add text
-                msg.content = msg.content.clone().append(ContentPart::Text(text.to_string()));
-            }
-            Self::ToolResult(_) => {
-                // Can't append to tool results
-            }
-            Self::AssistantToolCalls { content, .. } => {
-                let existing = content.take().unwrap_or_default();
-                *content = Some(format!("{}{}", existing, text));
-            }
-        }
-    }
+/// Append text to a ChatMessage's content (for system reminders)
+pub fn append_message_text(msg: &mut ChatMessage, text: &str) {
+    msg.content = msg.content.clone().append(ContentPart::Text(text.to_string()));
 }
 
 /// Parse a role string into ChatRole

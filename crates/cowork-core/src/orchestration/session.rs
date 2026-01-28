@@ -350,8 +350,8 @@ impl ChatSession {
     }
 
     /// Convert messages to LLM format
-    pub fn to_llm_messages(&self) -> Vec<crate::provider::LlmMessage> {
-        use crate::provider::{LlmMessage, ToolCall};
+    pub fn to_llm_messages(&self) -> Vec<crate::provider::ChatMessage> {
+        use crate::provider::{assistant_with_tool_calls, tool_result_message, ChatMessage, ToolCall};
 
         let mut llm_messages = Vec::new();
 
@@ -360,7 +360,7 @@ impl ChatSession {
             if !m.content_blocks.is_empty() {
                 for block in &m.content_blocks {
                     if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
-                        llm_messages.push(LlmMessage::tool_result(tool_use_id, content));
+                        llm_messages.push(tool_result_message(tool_use_id, content));
                     }
                 }
                 continue;
@@ -379,16 +379,16 @@ impl ChatSession {
                     .collect();
 
                 let content = if m.content.is_empty() { None } else { Some(m.content.clone()) };
-                llm_messages.push(LlmMessage::assistant_with_tool_calls(content, tool_calls));
+                llm_messages.push(assistant_with_tool_calls(content, tool_calls));
                 continue;
             }
 
             // Simple text messages
             match m.role.as_str() {
-                "user" => llm_messages.push(LlmMessage::user(&m.content)),
-                "assistant" => llm_messages.push(LlmMessage::assistant(&m.content)),
-                "system" => llm_messages.push(LlmMessage::system(&m.content)),
-                _ => llm_messages.push(LlmMessage::user(&m.content)),
+                "user" => llm_messages.push(ChatMessage::user(&m.content)),
+                "assistant" => llm_messages.push(ChatMessage::assistant(&m.content)),
+                "system" => llm_messages.push(ChatMessage::system(&m.content)),
+                _ => llm_messages.push(ChatMessage::user(&m.content)),
             }
         }
 
@@ -616,7 +616,7 @@ mod tests {
 
     #[test]
     fn test_chat_session_to_llm_messages_text_only() {
-        use crate::provider::{ChatRole, LlmMessage};
+        use crate::provider::ChatRole;
 
         let mut session = ChatSession::new();
         session.add_user_message("Hello");
@@ -624,13 +624,13 @@ mod tests {
 
         let llm_messages = session.to_llm_messages();
         assert_eq!(llm_messages.len(), 2);
-        assert!(matches!(llm_messages[0].role(), ChatRole::User));
-        assert!(matches!(llm_messages[1].role(), ChatRole::Assistant));
+        assert!(matches!(llm_messages[0].role, ChatRole::User));
+        assert!(matches!(llm_messages[1].role, ChatRole::Assistant));
     }
 
     #[test]
     fn test_chat_session_to_llm_messages_with_tool_calls() {
-        use crate::provider::{ChatRole, LlmMessage};
+        use crate::provider::ChatRole;
 
         let mut session = ChatSession::new();
         session.add_user_message("Read file");
@@ -642,15 +642,13 @@ mod tests {
         assert_eq!(llm_messages.len(), 3);
 
         // User message
-        assert!(matches!(llm_messages[0].role(), ChatRole::User));
+        assert!(matches!(llm_messages[0].role, ChatRole::User));
 
-        // Assistant message with tool calls
-        assert!(matches!(llm_messages[1].role(), ChatRole::Assistant));
-        assert!(matches!(&llm_messages[1], LlmMessage::AssistantToolCalls { .. }));
+        // Assistant message with tool calls (contains ContentPart::ToolCall items)
+        assert!(matches!(llm_messages[1].role, ChatRole::Assistant));
 
         // Tool result message
-        assert!(matches!(llm_messages[2].role(), ChatRole::Tool));
-        assert!(matches!(&llm_messages[2], LlmMessage::ToolResult(_)));
+        assert!(matches!(llm_messages[2].role, ChatRole::Tool));
     }
 
     #[test]

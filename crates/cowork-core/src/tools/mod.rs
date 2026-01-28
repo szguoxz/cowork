@@ -28,6 +28,9 @@ use std::sync::Arc;
 use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 
+// Re-export genai's Tool as ToolDefinition to avoid conflict with our Tool trait
+pub use genai::chat::Tool as ToolDefinition;
+
 /// Boxed future type for object-safe async trait methods
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -69,14 +72,6 @@ impl ToolOutput {
     }
 }
 
-/// Tool definition for LLM consumption
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub parameters: Value,
-}
-
 /// Core trait for all tools
 pub trait Tool: Send + Sync {
     /// Tool name (used by LLM to invoke)
@@ -98,11 +93,9 @@ pub trait Tool: Send + Sync {
 
     /// Convert to tool definition for LLM
     fn to_definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: self.name().to_string(),
-            description: self.description().to_string(),
-            parameters: self.parameters_schema(),
-        }
+        ToolDefinition::new(self.name())
+            .with_description(self.description())
+            .with_schema(self.parameters_schema())
     }
 }
 

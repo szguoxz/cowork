@@ -12,7 +12,7 @@
 //! Example: `LLM_LOG_FILE=/tmp/llm.log cowork`
 
 use genai::adapter::AdapterKind;
-use genai::chat::{ChatMessage, ChatOptions, ChatRequest, Tool, ToolCall, ToolResponse};
+use genai::chat::{ChatMessage, ChatOptions, ChatRequest, ToolCall, ToolResponse};
 use genai::resolver::{AuthData, AuthResolver, Endpoint};
 use genai::ModelIden;
 use genai::ServiceTarget;
@@ -268,7 +268,7 @@ impl GenAIProvider {
     /// Execute a chat completion and return either a message or tool calls
     pub async fn chat(
         &self,
-        messages: Vec<super::LlmMessage>,
+        messages: Vec<ChatMessage>,
         tools: Option<Vec<ToolDefinition>>,
     ) -> Result<CompletionResult> {
         // Keep copies for logging
@@ -282,46 +282,19 @@ impl GenAIProvider {
             chat_req = chat_req.with_system(system.as_str());
         }
 
-        // Convert messages to ChatRequest
+        // Append all messages directly (ChatMessage is genai's native type)
         for msg in messages {
-            match msg {
-                super::LlmMessage::Chat(chat_msg) => {
-                    chat_req = chat_req.append_message(chat_msg);
-                }
-                super::LlmMessage::ToolResult(tool_response) => {
-                    chat_req = chat_req.append_message(tool_response);
-                }
-                super::LlmMessage::AssistantToolCalls { content, tool_calls } => {
-                    // First add text content if present
-                    if let Some(text) = content {
-                        if !text.is_empty() {
-                            chat_req = chat_req.append_message(ChatMessage::assistant(&text));
-                        }
-                    }
-                    // Then add tool calls as a separate message
-                    if !tool_calls.is_empty() {
-                        chat_req = chat_req.append_message(tool_calls);
-                    }
-                }
-            }
+            chat_req = chat_req.append_message(msg);
         }
 
-        // Add tools if provided
+        // Add tools if provided (ToolDefinition is now genai::chat::Tool)
         if let Some(tool_defs) = tools {
-            let genai_tools: Vec<Tool> = tool_defs
-                .into_iter()
-                .map(|t| {
-                    Tool::new(&t.name)
-                        .with_description(&t.description)
-                        .with_schema(t.parameters.clone())
-                })
-                .collect();
-            chat_req = chat_req.with_tools(genai_tools);
+            chat_req = chat_req.with_tools(tool_defs);
         }
 
         // Log request size for debugging truncation issues
         let request_size_estimate: usize = messages_for_log.iter()
-            .map(|m| m.content_as_text().len())
+            .map(|m: &ChatMessage| super::message_text_content(m).len())
             .sum();
         debug!(
             model = %self.model,
@@ -557,7 +530,7 @@ impl super::LlmProvider for GenAIProvider {
     }
 
     async fn health_check(&self) -> Result<bool> {
-        let messages = vec![super::LlmMessage::user("Hi")];
+        let messages = vec![ChatMessage::user("Hi")];
 
         match self.chat(messages, None).await {
             Ok(_) => Ok(true),

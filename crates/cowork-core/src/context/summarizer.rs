@@ -5,7 +5,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::provider::{GenAIProvider, LlmMessage};
+use crate::prompt::builtin::reminders::CONVERSATION_SUMMARIZATION;
+use crate::provider::{ChatMessage, GenAIProvider};
 
 use super::tokens::TokenCounter;
 use super::{Message, MessageRole};
@@ -31,38 +32,6 @@ impl Default for SummarizerConfig {
     }
 }
 
-/// Default summary prompt matching Anthropic SDK
-pub const DEFAULT_SUMMARY_PROMPT: &str = r#"You have been working on the task described above but have not yet completed it. Write a continuation summary that will allow you (or another instance of yourself) to resume work efficiently in a future context window where the conversation history will be replaced with this summary. Your summary should be structured, concise, and actionable. Include:
-
-1. Task Overview
-   - The user's core request and success criteria
-   - Any clarifications or constraints they specified
-
-2. Current State
-   - What has been completed so far
-   - Files created, modified, or analyzed (with paths if relevant)
-   - Key outputs or artifacts produced
-
-3. Important Discoveries
-   - Technical constraints or requirements uncovered
-   - Decisions made and their rationale
-   - Errors encountered and how they were resolved
-   - What approaches were tried that didn't work (and why)
-
-4. Next Steps
-   - Specific actions needed to complete the task
-   - Any blockers or open questions to resolve
-   - Priority order if multiple steps remain
-
-5. Context to Preserve
-   - User preferences or style requirements
-   - Domain-specific details that aren't obvious
-   - Any promises made to the user
-
-Be concise but complete—err on the side of including information that would prevent duplicate work or repeated mistakes. Write in a way that enables immediate resumption of the task.
-
-Wrap your summary in <summary></summary> tags."#;
-
 /// Configuration for context compaction
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactConfig {
@@ -71,7 +40,7 @@ pub struct CompactConfig {
     pub preserve_instructions: Option<String>,
     /// Whether to use the LLM for summarization (vs simple heuristics)
     pub use_llm: bool,
-    /// Custom summary prompt (if None, uses DEFAULT_SUMMARY_PROMPT)
+    /// Custom summary prompt (if None, uses CONVERSATION_SUMMARIZATION)
     pub summary_prompt: Option<String>,
 }
 
@@ -80,7 +49,7 @@ impl Default for CompactConfig {
         Self {
             preserve_instructions: None,
             use_llm: true,
-            summary_prompt: None, // Uses DEFAULT_SUMMARY_PROMPT
+            summary_prompt: None, // Uses CONVERSATION_SUMMARIZATION
         }
     }
 }
@@ -119,7 +88,7 @@ impl CompactConfig {
 
     /// Get the summary prompt to use
     pub fn get_summary_prompt(&self) -> &str {
-        self.summary_prompt.as_deref().unwrap_or(DEFAULT_SUMMARY_PROMPT)
+        self.summary_prompt.as_deref().unwrap_or(CONVERSATION_SUMMARIZATION)
     }
 }
 
@@ -197,10 +166,10 @@ impl ConversationSummarizer {
         );
 
         let llm_messages = vec![
-            LlmMessage::system(
+            ChatMessage::system(
                 "You are a helpful assistant that summarizes conversations accurately and concisely."
             ),
-            LlmMessage::user(summarization_prompt),
+            ChatMessage::user(summarization_prompt),
         ];
 
         let response = provider.chat(llm_messages, None).await?;
@@ -363,7 +332,7 @@ impl ConversationSummarizer {
     ///
     /// Following Anthropic SDK approach:
     /// 1. Format the conversation history
-    /// 2. Append the summary prompt (DEFAULT_SUMMARY_PROMPT or custom)
+    /// 2. Append the summary prompt (CONVERSATION_SUMMARIZATION or custom)
     /// 3. Call LLM to generate summary wrapped in <summary></summary> tags
     /// 4. Return as a USER message (to be the new single message in conversation)
     async fn generate_llm_compact_summary(
@@ -389,7 +358,7 @@ impl ConversationSummarizer {
 
         // Create the request with conversation + summary prompt
         let llm_messages = vec![
-            LlmMessage::user(format!(
+            ChatMessage::user(format!(
                 "Here is the conversation history:\n\n{}\n\n{}",
                 conversation_text,
                 summary_prompt

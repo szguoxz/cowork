@@ -12,37 +12,14 @@ use tracing::{debug, warn};
 
 use crate::tools::ToolDefinition;
 use super::genai_provider::CompletionResult;
-use super::LlmMessage;
+use super::ChatMessage;
 
-/// Convert LlmMessage to JSON for logging
-fn message_to_json(msg: &LlmMessage) -> serde_json::Value {
-    match msg {
-        LlmMessage::Chat(chat_msg) => {
-            json!({
-                "type": "chat",
-                "role": format!("{:?}", chat_msg.role),
-                "content": msg.content_as_text()
-            })
-        }
-        LlmMessage::ToolResult(tool_resp) => {
-            json!({
-                "type": "tool_result",
-                "call_id": tool_resp.call_id,
-                "content": tool_resp.content.to_string()
-            })
-        }
-        LlmMessage::AssistantToolCalls { content, tool_calls } => {
-            json!({
-                "type": "assistant_tool_calls",
-                "content": content,
-                "tool_calls": tool_calls.iter().map(|tc| json!({
-                    "call_id": tc.call_id,
-                    "name": tc.fn_name,
-                    "arguments": tc.fn_arguments
-                })).collect::<Vec<_>>()
-            })
-        }
-    }
+/// Convert ChatMessage to JSON for logging
+fn message_to_json(msg: &ChatMessage) -> serde_json::Value {
+    json!({
+        "role": format!("{:?}", msg.role),
+        "content": super::message_text_content(msg)
+    })
 }
 
 /// Configuration for what to include in the log entry
@@ -55,7 +32,7 @@ pub struct LogConfig<'a> {
     /// System prompt if available
     pub system_prompt: Option<&'a str>,
     /// Messages in the request
-    pub messages: &'a [LlmMessage],
+    pub messages: &'a [ChatMessage],
     /// Tools available for the request
     pub tools: Option<&'a [ToolDefinition]>,
     /// Parsed completion result
@@ -94,7 +71,7 @@ pub fn log_llm_interaction(config: LogConfig<'_>) {
             "tools": config.tools.map(|t| t.iter().map(|tool| json!({
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.parameters
+                "schema": tool.schema
             })).collect::<Vec<_>>()),
             "tool_count": config.tools.map(|t| t.len()).unwrap_or(0),
         },

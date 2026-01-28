@@ -600,7 +600,7 @@ mod compact_config_tests {
 
         assert!(config.use_llm);
         assert!(config.preserve_instructions.is_none());
-        assert!(config.summary_prompt.is_none()); // Uses DEFAULT_SUMMARY_PROMPT
+        assert!(config.summary_prompt.is_none()); // Uses CONVERSATION_SUMMARIZATION
     }
 
     #[test]
@@ -637,9 +637,9 @@ mod compact_config_tests {
 
     #[test]
     fn test_get_summary_prompt() {
-        // Default uses DEFAULT_SUMMARY_PROMPT
+        // Default uses CONVERSATION_SUMMARIZATION embedded prompt
         let config = CompactConfig::default();
-        assert!(config.get_summary_prompt().contains("continuation summary"));
+        assert!(config.get_summary_prompt().contains("Primary Request and Intent"));
 
         // Custom prompt overrides
         let config = CompactConfig::default().with_summary_prompt("My custom prompt");

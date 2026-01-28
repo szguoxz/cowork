@@ -71,7 +71,7 @@ mod tool_registry_tests {
 
         for tool_def in tools {
             assert!(!tool_def.name.is_empty());
-            assert!(!tool_def.description.is_empty());
+            assert!(tool_def.description.as_ref().map(|d| !d.is_empty()).unwrap_or(false));
         }
     }
 
@@ -147,22 +147,20 @@ mod tool_definition_tests {
 
     #[test]
     fn test_tool_definition_structure() {
-        let def = ToolDefinition {
-            name: "test_tool".to_string(),
-            description: "A test tool".to_string(),
-            parameters: json!({
+        let def = ToolDefinition::new("test_tool")
+            .with_description("A test tool")
+            .with_schema(json!({
                 "type": "object",
                 "properties": {
                     "input": {
                         "type": "string"
                     }
                 }
-            }),
-        };
+            }));
 
         assert_eq!(def.name, "test_tool");
-        assert!(!def.description.is_empty());
-        assert!(def.parameters.is_object());
+        assert!(def.description.is_some());
+        assert!(def.schema.as_ref().unwrap().is_object());
     }
 }
 

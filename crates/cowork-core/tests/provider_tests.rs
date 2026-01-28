@@ -5,7 +5,7 @@
 //! - ANTHROPIC_API_KEY
 //! - OPENAI_API_KEY
 
-use cowork_core::provider::{GenAIProvider, LlmMessage, catalog};
+use cowork_core::provider::{GenAIProvider, ChatMessage, catalog};
 
 /// Helper to check if Anthropic API key is available
 fn has_anthropic_key() -> bool {
@@ -24,7 +24,7 @@ async fn validate_anthropic_key() -> bool {
     }
 
     let provider = GenAIProvider::new("anthropic", Some("claude-3-5-haiku-20241022"));
-    let messages = vec![LlmMessage::user("Hi")];
+    let messages = vec![ChatMessage::user("Hi")];
 
     provider.chat(messages, None).await.is_ok()
 }
@@ -36,7 +36,7 @@ async fn validate_openai_key() -> bool {
     }
 
     let provider = GenAIProvider::new("openai", Some("gpt-4.1-nano"));
-    let messages = vec![LlmMessage::user("Hi")];
+    let messages = vec![ChatMessage::user("Hi")];
 
     provider.chat(messages, None).await.is_ok()
 }
@@ -157,7 +157,7 @@ mod integration_tests {
         let provider = GenAIProvider::new("anthropic", None)
             .with_system_prompt("You are a helpful assistant. Keep responses brief.");
 
-        let messages = vec![LlmMessage::user("What is 2 + 2? Reply with just the number.")];
+        let messages = vec![ChatMessage::user("What is 2 + 2? Reply with just the number.")];
 
         let result = provider.chat(messages, None).await;
         println!("Anthropic result: {:?}", result);
@@ -187,7 +187,7 @@ mod integration_tests {
         let provider = GenAIProvider::new("openai", None)
             .with_system_prompt("You are a helpful assistant. Keep responses brief.");
 
-        let messages = vec![LlmMessage::user("What is 2 + 2? Reply with just the number.")];
+        let messages = vec![ChatMessage::user("What is 2 + 2? Reply with just the number.")];
 
         let result = provider.chat(messages, None).await;
         println!("OpenAI result: {:?}", result);
@@ -221,10 +221,9 @@ mod integration_tests {
             .with_system_prompt("You are a helpful assistant. Use tools when appropriate.");
 
         // Define a simple tool
-        let tools = vec![ToolDefinition {
-            name: "get_weather".to_string(),
-            description: "Get the current weather for a city".to_string(),
-            parameters: json!({
+        let tools = vec![ToolDefinition::new("get_weather")
+            .with_description("Get the current weather for a city")
+            .with_schema(json!({
                 "type": "object",
                 "properties": {
                     "city": {
@@ -233,10 +232,9 @@ mod integration_tests {
                     }
                 },
                 "required": ["city"]
-            }),
-        }];
+            }))];
 
-        let messages = vec![LlmMessage::user("What's the weather in Paris?")];
+        let messages = vec![ChatMessage::user("What's the weather in Paris?")];
 
         let result = provider.chat(messages, Some(tools)).await;
         println!("Anthropic tool result: {:?}", result);
@@ -274,10 +272,9 @@ mod integration_tests {
             .with_system_prompt("You are a helpful assistant. Use tools when appropriate.");
 
         // Define a simple tool
-        let tools = vec![ToolDefinition {
-            name: "get_weather".to_string(),
-            description: "Get the current weather for a city".to_string(),
-            parameters: json!({
+        let tools = vec![ToolDefinition::new("get_weather")
+            .with_description("Get the current weather for a city")
+            .with_schema(json!({
                 "type": "object",
                 "properties": {
                     "city": {
@@ -286,10 +283,9 @@ mod integration_tests {
                     }
                 },
                 "required": ["city"]
-            }),
-        }];
+            }))];
 
-        let messages = vec![LlmMessage::user("What's the weather in Paris?")];
+        let messages = vec![ChatMessage::user("What's the weather in Paris?")];
 
         let result = provider.chat(messages, Some(tools)).await;
         println!("OpenAI tool result: {:?}", result);
@@ -324,7 +320,7 @@ mod integration_tests {
             .with_system_prompt("You are a helpful assistant. Keep responses very brief.");
 
         // First message
-        let messages1 = vec![LlmMessage::user("My name is Alice.")];
+        let messages1 = vec![ChatMessage::user("My name is Alice.")];
 
         let result1 = provider.chat(messages1.clone(), None).await;
         assert!(result1.is_ok(), "First API call failed: {:?}", result1.err());
@@ -336,8 +332,8 @@ mod integration_tests {
 
         // Second message - test context
         let mut messages2 = messages1;
-        messages2.push(LlmMessage::assistant(response1));
-        messages2.push(LlmMessage::user("What is my name?"));
+        messages2.push(ChatMessage::assistant(response1));
+        messages2.push(ChatMessage::user("What is my name?"));
 
         let result2 = provider.chat(messages2, None).await;
         assert!(result2.is_ok(), "Second API call failed: {:?}", result2.err());
