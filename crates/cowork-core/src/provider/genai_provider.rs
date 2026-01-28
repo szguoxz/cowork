@@ -12,7 +12,8 @@
 //! Example: `LLM_LOG_FILE=/tmp/llm.log cowork`
 
 use genai::chat::{ChatMessage, ChatOptions, ChatRequest, Tool, ToolCall, ToolResponse};
-use genai::resolver::{AuthData, AuthResolver};
+use genai::resolver::{AuthData, AuthResolver, Endpoint};
+use genai::ServiceTarget;
 use genai::WebConfig;
 use genai::Client;
 use serde::{Deserialize, Serialize};
@@ -290,17 +291,45 @@ impl GenAIProvider {
 
     /// Create a provider with API key and optional custom base URL
     ///
-    /// Note: Custom base_url support is limited and depends on the provider.
-    /// For most providers, the default API endpoint is used.
+    /// The `base_url` should be the API endpoint prefix. For example:
+    /// - Anthropic: `https://api.anthropic.com/v1/` (genai appends `messages`)
+    /// - OpenAI: `https://api.openai.com/v1/` (genai appends `chat/completions`)
     pub fn with_config(
         provider_type: ProviderType,
         api_key: &str,
         model: Option<&str>,
-        _base_url: Option<&str>,
+        base_url: Option<&str>,
     ) -> Self {
-        // Note: base_url is accepted but not fully supported by genai yet
-        // Future: implement custom endpoint support per provider
-        Self::with_api_key(provider_type, api_key, model)
+        let api_key_owned = api_key.to_string();
+        let auth_resolver = AuthResolver::from_resolver_fn(
+            move |_model_iden| -> std::result::Result<Option<AuthData>, genai::resolver::Error> {
+                Ok(Some(AuthData::from_single(api_key_owned.clone())))
+            },
+        );
+
+        let client = if let Some(url) = base_url {
+            let endpoint = Endpoint::from_owned(url.to_string());
+            Client::builder()
+                .with_web_config(Self::default_web_config())
+                .with_auth_resolver(auth_resolver)
+                .with_service_target_resolver_fn(move |mut target: ServiceTarget| {
+                    target.endpoint = endpoint.clone();
+                    Ok(target)
+                })
+                .build()
+        } else {
+            Client::builder()
+                .with_web_config(Self::default_web_config())
+                .with_auth_resolver(auth_resolver)
+                .build()
+        };
+
+        Self {
+            client,
+            provider_type,
+            model: model.unwrap_or(provider_type.default_model()).to_string(),
+            system_prompt: None,
+        }
     }
 
     /// Set the system prompt
