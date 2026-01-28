@@ -93,9 +93,6 @@ pub struct AgentLoop {
     message_rx: mpsc::UnboundedReceiver<String>,
     /// Answer receiver (approvals/answers from user)
     answer_rx: mpsc::UnboundedReceiver<SessionInput>,
-    /// Input receiver (from outside) - retained for ownership but consumed by dispatcher
-    #[allow(dead_code)]
-    input_rx: mpsc::Receiver<SessionInput>,
     /// Output sender
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
     /// LLM provider
@@ -273,12 +270,8 @@ impl AgentLoop {
             .unwrap_or_default();
         let hooks_enabled = config.enable_hooks.unwrap_or(config.prompt_config.enable_hooks);
 
-        // Re-create input_rx to satisfy struct requirement (it's unused but kept for type consistency if needed)
-        let (_, dummy_rx) = mpsc::channel(1);
-
         Ok(Self {
             session_id,
-            input_rx: dummy_rx, 
             message_rx,
             answer_rx,
             output_tx,

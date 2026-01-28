@@ -89,13 +89,9 @@ struct McpRequest {
     params: Option<Value>,
 }
 
-/// MCP JSON-RPC response
+/// MCP JSON-RPC response (only fields we actually use)
 #[derive(Debug, Deserialize)]
 struct McpResponse {
-    #[allow(dead_code)]
-    jsonrpc: String,
-    #[allow(dead_code)]
-    id: u64,
     result: Option<Value>,
     error: Option<McpError>,
 }
