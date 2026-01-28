@@ -16,77 +16,9 @@ pub mod factory;
 mod genai_provider;
 mod logging;
 pub mod model_listing;
-pub mod rig_provider;
-
-// Re-export rig provider
-pub use rig_provider::{RigProvider, StreamEvent, StreamEventStream};
-
-/// Provider wrapper that supports both GenAI and Rig backends
-///
-/// This allows switching between providers while maintaining the same interface.
-pub enum ProviderBackend {
-    /// GenAI-based provider (default)
-    GenAI(GenAIProvider),
-    /// Rig-based provider (better streaming/JSON support)
-    Rig(RigProvider),
-}
-
-impl ProviderBackend {
-    /// Execute a chat completion
-    pub async fn chat(
-        &self,
-        messages: Vec<LlmMessage>,
-        tools: Option<Vec<ToolDefinition>>,
-    ) -> Result<CompletionResult> {
-        match self {
-            ProviderBackend::GenAI(provider) => provider.chat(messages, tools).await,
-            ProviderBackend::Rig(provider) => provider.chat(messages, tools).await,
-        }
-    }
-
-    /// Execute a streaming chat completion (only available with Rig backend)
-    pub async fn chat_stream(
-        &self,
-        messages: Vec<LlmMessage>,
-        tools: Option<Vec<ToolDefinition>>,
-    ) -> Result<StreamEventStream> {
-        match self {
-            ProviderBackend::GenAI(_) => Err(crate::error::Error::Provider(
-                "Streaming not supported with GenAI backend".to_string(),
-            )),
-            ProviderBackend::Rig(provider) => provider.chat_stream(messages, tools).await,
-        }
-    }
-
-    /// Check if streaming is supported
-    pub fn supports_streaming(&self) -> bool {
-        matches!(self, ProviderBackend::Rig(_))
-    }
-
-    /// Log an interaction after streaming completes
-    ///
-    /// Call this after consuming a stream to log the request/response
-    /// in the same format as non-streaming interactions.
-    pub fn log_streaming_interaction(
-        &self,
-        messages: &[LlmMessage],
-        tools: Option<&[ToolDefinition]>,
-        result: Option<&CompletionResult>,
-        error: Option<&str>,
-    ) {
-        match self {
-            ProviderBackend::GenAI(_) => {
-                // GenAI doesn't support streaming, so this shouldn't be called
-            }
-            ProviderBackend::Rig(provider) => {
-                provider.log_streaming_interaction(messages, tools, result, error);
-            }
-        }
-    }
-}
 
 pub use factory::{
-    create_provider_backend, create_provider_from_config, create_provider_from_provider_config,
+    create_provider_from_config, create_provider_from_provider_config,
     create_provider_with_settings, get_api_key, get_model_tiers, has_api_key_configured,
 };
 pub use genai_provider::{

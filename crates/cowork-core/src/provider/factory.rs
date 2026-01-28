@@ -6,9 +6,6 @@
 use crate::config::{ConfigManager, ModelTiers};
 use crate::error::{Error, Result};
 use super::genai_provider::{GenAIProvider, ProviderType};
-use super::rig_provider::RigProvider;
-use super::ProviderBackend;
-use tracing::debug;
 
 /// Get API key for a provider, checking config then environment variables
 ///
@@ -178,59 +175,6 @@ pub fn create_provider_from_provider_config(
         Some(&config.model),
         config.base_url.as_deref(),
     ))
-}
-
-/// Create a ProviderBackend from configuration settings
-///
-/// This is the unified entry point for creating either a GenAI or Rig provider backend.
-/// It handles the consistent initialization pattern for both backends:
-/// - API key configuration (explicit or from environment)
-/// - System prompt setup
-/// - Model selection
-///
-/// # Arguments
-/// * `provider_type` - The LLM provider type
-/// * `api_key` - Optional API key (uses environment variable if None)
-/// * `model` - Optional model name (uses provider default if None)
-/// * `system_prompt` - Optional system prompt
-/// * `use_rig` - Whether to use the Rig backend instead of GenAI
-///
-/// # Returns
-/// A configured ProviderBackend instance
-pub fn create_provider_backend(
-    provider_type: ProviderType,
-    api_key: Option<&str>,
-    model: Option<&str>,
-    system_prompt: Option<&str>,
-    use_rig: bool,
-) -> ProviderBackend {
-    debug!(
-        "Creating provider backend: type={:?}, use_rig={}, system_prompt_len={}",
-        provider_type,
-        use_rig,
-        system_prompt.map(|s| s.len()).unwrap_or(0)
-    );
-    if use_rig {
-        let provider = match api_key {
-            Some(key) => RigProvider::with_api_key(provider_type, key, model),
-            None => RigProvider::new(provider_type, model),
-        };
-        let provider = match system_prompt {
-            Some(prompt) => provider.with_system_prompt(prompt),
-            None => provider,
-        };
-        ProviderBackend::Rig(provider)
-    } else {
-        let provider = match api_key {
-            Some(key) => GenAIProvider::with_api_key(provider_type, key, model),
-            None => GenAIProvider::new(provider_type, model),
-        };
-        let provider = match system_prompt {
-            Some(prompt) => provider.with_system_prompt(prompt),
-            None => provider,
-        };
-        ProviderBackend::GenAI(provider)
-    }
 }
 
 #[cfg(test)]

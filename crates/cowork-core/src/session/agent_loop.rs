@@ -24,8 +24,7 @@ use crate::context::{
 use crate::error::Result;
 use crate::orchestration::{ChatMessage, ChatSession, ToolCallInfo, ToolRegistryBuilder};
 use crate::prompt::{ComponentRegistry, HookContext, HookEvent, HookExecutor, HooksConfig};
-use crate::provider::{create_provider_backend, CompletionResult, GenAIProvider, PendingToolCall, ProviderBackend, StreamEvent};
-use futures::StreamExt;
+use crate::provider::GenAIProvider;
 use crate::skills::SkillRegistry;
 use crate::tools::interaction::ASK_QUESTION_TOOL_NAME;
 use crate::tools::planning::PlanModeState;
@@ -122,8 +121,8 @@ pub struct AgentLoop {
     input_rx: mpsc::Receiver<SessionInput>,
     /// Output sender
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
-    /// LLM provider (can be GenAI or Rig backend)
-    provider: ProviderBackend,
+    /// LLM provider
+    provider: GenAIProvider,
     /// Chat session with message history
     session: ChatSession,
     /// Tool registry
@@ -223,21 +222,21 @@ impl AgentLoop {
             info!("Dispatcher ended for session: {} (input channel closed)", sid);
         });
 
-        // Create the provider (using Rig or GenAI backend)
+        // Create the provider
         debug!(
-            "AgentLoop config: provider={:?}, model={:?}, system_prompt_len={}, use_rig={}",
+            "AgentLoop config: provider={:?}, model={:?}, system_prompt_len={}",
             config.provider_type,
             config.model,
             config.system_prompt.as_ref().map(|s| s.len()).unwrap_or(0),
-            config.use_rig_provider
         );
-        let provider = create_provider_backend(
-            config.provider_type,
-            config.api_key.as_deref(),
-            config.model.as_deref(),
-            config.system_prompt.as_deref(),
-            config.use_rig_provider,
-        );
+        let provider = match config.api_key.as_deref() {
+            Some(key) => GenAIProvider::with_api_key(config.provider_type, key, config.model.as_deref()),
+            None => GenAIProvider::new(config.provider_type, config.model.as_deref()),
+        };
+        let provider = match config.system_prompt.as_deref() {
+            Some(prompt) => provider.with_system_prompt(prompt),
+            None => provider,
+        };
 
         // Create chat session
         let session = match &config.system_prompt {
@@ -772,165 +771,6 @@ impl AgentLoop {
         }
     }
 
-    /// Call the LLM with streaming enabled
-    ///
-    /// Emits TextDelta events as tokens arrive for real-time display.
-    /// Currently unused - using non-streaming to get accurate token counts.
-    #[allow(dead_code)]
-    async fn call_llm_streaming(
-        &self,
-        messages: Vec<crate::provider::LlmMessage>,
-        tools: Option<Vec<ToolDefinition>>,
-    ) -> Result<LlmCallResult> {
-        // Keep copies for logging
-        let messages_for_log = messages.clone();
-        let tools_for_log = tools.clone();
-
-        // Generate a message ID for this streaming response
-        let message_id = uuid::Uuid::new_v4().to_string();
-
-        // Start the stream
-        let mut stream = match self.provider.chat_stream(messages, tools).await {
-            Ok(s) => s,
-            Err(e) => {
-                // Log the error
-                self.provider.log_streaming_interaction(
-                    &messages_for_log,
-                    tools_for_log.as_deref(),
-                    None,
-                    Some(&e.to_string()),
-                );
-                return Err(crate::error::Error::Provider(e.to_string()));
-            }
-        };
-
-        // Accumulate content and tool calls as they arrive
-        let mut content = String::new();
-        let mut tool_calls = Vec::new();
-        let mut pending_tool_calls = Vec::new();
-        let mut reasoning = String::new();
-
-        // Event counters for diagnostic logging
-        let mut text_delta_count = 0usize;
-        let mut tool_call_count = 0usize;
-        let mut reasoning_count = 0usize;
-        let mut done_count = 0usize;
-        #[allow(unused_assignments)]
-        let mut _error_count = 0usize;
-
-        // Process stream events
-        while let Some(event) = stream.next().await {
-            match event {
-                StreamEvent::TextDelta(delta) => {
-                    text_delta_count += 1;
-                    if !delta.is_empty() {
-                        // Emit the delta for real-time display
-                        self.emit(SessionOutput::text_delta(&message_id, &delta)).await;
-                        content.push_str(&delta);
-                    }
-                }
-                StreamEvent::ToolCall(tc) => {
-                    tool_call_count += 1;
-                    info!(
-                        tool_name = %tc.name,
-                        tool_id = %tc.call_id,
-                        count = tool_call_count,
-                        "AGENT_LOOP: Received ToolCall event"
-                    );
-                    pending_tool_calls.push(PendingToolCall {
-                        call_id: tc.call_id.clone(),
-                        name: tc.name.clone(),
-                        arguments: tc.arguments.clone(),
-                    });
-                    tool_calls.push(LlmToolCall {
-                        id: tc.call_id,
-                        name: tc.name,
-                        arguments: tc.arguments,
-                    });
-                }
-                StreamEvent::Reasoning(r) => {
-                    reasoning_count += 1;
-                    // Accumulate reasoning (could emit as thinking indicator)
-                    if !r.is_empty() {
-                        reasoning.push_str(&r);
-                        // Optionally emit as thinking
-                        self.emit(SessionOutput::thinking(&r)).await;
-                    }
-                }
-                StreamEvent::Done(_result) => {
-                    done_count += 1;
-                    // Stream complete - we've already accumulated everything
-                    break;
-                }
-                StreamEvent::Error(e) => {
-                    _error_count += 1;
-                    // Log the error
-                    self.provider.log_streaming_interaction(
-                        &messages_for_log,
-                        tools_for_log.as_deref(),
-                        None,
-                        Some(&e),
-                    );
-                    return Err(crate::error::Error::Provider(e));
-                }
-            }
-        }
-
-        // Log stream event summary
-        info!(
-            text_deltas = text_delta_count,
-            tool_calls = tool_call_count,
-            reasoning = reasoning_count,
-            done = done_count,
-            content_len = content.len(),
-            "AGENT_LOOP: Stream event summary"
-        );
-
-        // Warn if content suggests tool usage but no tool calls received
-        if tool_calls.is_empty() && !content.is_empty() {
-            let content_lower = content.to_lowercase();
-            let suggests_tool = content_lower.contains("let me ")
-                || content_lower.contains("i'll ")
-                || content_lower.contains("i will ")
-                || content_lower.contains("now i")
-                || content_lower.contains("first, i");
-
-            if suggests_tool {
-                warn!(
-                    content_preview = %content.chars().take(100).collect::<String>(),
-                    "Content suggests tool usage but no tool calls received - LLM may have decided not to use tools"
-                );
-            }
-        }
-
-        // Log reasoning if present (for debugging)
-        if !reasoning.is_empty() {
-            debug!("LLM reasoning: {}", reasoning);
-        }
-
-        // Log the successful streaming interaction
-        // Note: streaming doesn't provide usage info directly, need to get from Final event
-        let result = CompletionResult {
-            content: if content.is_empty() { None } else { Some(content.clone()) },
-            tool_calls: pending_tool_calls,
-            input_tokens: None,  // TODO: capture from streaming Final event
-            output_tokens: None,
-        };
-        self.provider.log_streaming_interaction(
-            &messages_for_log,
-            tools_for_log.as_deref(),
-            Some(&result),
-            None,
-        );
-
-        Ok(LlmCallResult {
-            content: if content.is_empty() { None } else { Some(content) },
-            tool_calls,
-            input_tokens: None,  // Streaming doesn't easily expose usage
-            output_tokens: None,
-        })
-    }
-
     /// Execute a single tool
     async fn execute_tool(&mut self, tool_call: &ToolCallInfo) {
         // Execute PreToolUse hooks
@@ -1311,30 +1151,15 @@ impl AgentLoop {
         // This is a separate API call, not recursive - Claude Code does this too
         let config = CompactConfig::auto();
 
-        // Perform compaction - use LLM for GenAI backend, fallback for Rig
-        let result = match &self.provider {
-            ProviderBackend::GenAI(p) => {
-                self.summarizer
-                    .compact(
-                        &messages,
-                        self.context_monitor.counter(),
-                        config,
-                        Some(p),
-                    )
-                    .await?
-            }
-            ProviderBackend::Rig(_) => {
-                // Rig backend uses fallback non-LLM compaction
-                self.summarizer
-                    .compact::<GenAIProvider>(
-                        &messages,
-                        self.context_monitor.counter(),
-                        config,
-                        None,
-                    )
-                    .await?
-            }
-        };
+        // Perform compaction using LLM for better context preservation
+        let result = self.summarizer
+            .compact(
+                &messages,
+                self.context_monitor.counter(),
+                config,
+                Some(&self.provider),
+            )
+            .await?;
 
         info!(
             "Compaction complete: {} -> {} tokens ({} messages summarized)",

@@ -428,8 +428,6 @@ pub struct SessionConfig {
     pub save_session: bool,
     /// Shared session registry for routing approvals to subagents
     pub session_registry: Option<SessionRegistry>,
-    /// Use Rig provider instead of GenAI (better streaming/JSON support)
-    pub use_rig_provider: bool,
     /// MCP server manager for external tool integration
     pub mcp_manager: Option<Arc<McpServerManager>>,
 }
@@ -450,7 +448,6 @@ impl Default for SessionConfig {
             enable_hooks: None,
             save_session: true,
             session_registry: None,
-            use_rig_provider: false,  // Use GenAI provider by default for better error diagnostics
             mcp_manager: None,
         }
     }
@@ -534,12 +531,6 @@ impl SessionConfig {
     /// Set the shared session registry (for subagent approval routing)
     pub fn with_session_registry(mut self, registry: SessionRegistry) -> Self {
         self.session_registry = Some(registry);
-        self
-    }
-
-    /// Use Rig provider instead of GenAI (better streaming/JSON support)
-    pub fn with_rig_provider(mut self, use_rig: bool) -> Self {
-        self.use_rig_provider = use_rig;
         self
     }
 

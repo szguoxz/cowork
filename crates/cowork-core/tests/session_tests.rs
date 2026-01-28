@@ -28,7 +28,6 @@ fn test_config() -> SessionConfig {
         enable_hooks: None,
         save_session: true,
         session_registry: None,
-        use_rig_provider: false,
         mcp_manager: None,
     }
 }
