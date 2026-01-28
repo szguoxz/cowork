@@ -44,20 +44,29 @@ impl Default for RetryConfig {
 
 /// Check if an error indicates rate limiting (HTTP 429)
 fn is_rate_limit_error(e: &genai::Error) -> bool {
-    let error_str = format!("{:?}", e);
-    error_str.contains("429") || error_str.to_lowercase().contains("rate limit")
+    match e {
+        genai::Error::WebModelCall { webc_error, .. }
+        | genai::Error::WebAdapterCall { webc_error, .. } => matches!(
+            webc_error,
+            genai::webc::Error::ResponseFailedStatus { status, .. }
+                if status.as_u16() == 429
+        ),
+        _ => false,
+    }
 }
 
 /// Check if an error indicates a JSON parse failure
 /// This happens when the provider returns HTTP 200 but with malformed/truncated JSON
 fn is_json_parse_error(e: &genai::Error) -> bool {
-    let error_str = format!("{:?}", e);
-    // Check for common JSON parse error indicators
-    error_str.contains("expected") && (error_str.contains("line") || error_str.contains("column"))
-        || error_str.to_lowercase().contains("json")
-        || error_str.contains("invalid type")
-        || error_str.contains("missing field")
-        || error_str.contains("EOF while parsing")
+    match e {
+        genai::Error::WebModelCall { webc_error, .. }
+        | genai::Error::WebAdapterCall { webc_error, .. } => matches!(
+            webc_error,
+            genai::webc::Error::ResponseFailedInvalidJson { .. }
+                | genai::webc::Error::ResponseFailedNotJson { .. }
+        ),
+        _ => false,
+    }
 }
 
 /// Extract detailed error information from a genai error
