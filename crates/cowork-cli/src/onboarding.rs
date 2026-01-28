@@ -289,10 +289,10 @@ impl OnboardingWizard {
 
         if !api_key.is_empty() {
             // Update web search config with SerpAPI key
-            let mut web_search_config = WebSearchConfig::default();
-            web_search_config.api_key = Some(api_key);
-
-            self.config_manager.config_mut().web_search = web_search_config;
+            self.config_manager.config_mut().web_search = WebSearchConfig {
+                api_key: Some(api_key),
+                ..Default::default()
+            };
             self.config_manager.save()?;
 
             println!();

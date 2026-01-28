@@ -493,20 +493,18 @@ impl WebSearchConfig {
     /// Get the SerpAPI key, checking environment variable if not set directly
     pub fn get_api_key(&self) -> Option<String> {
         // First check direct API key
-        if let Some(key) = &self.api_key {
-            if !key.is_empty() {
+        if let Some(key) = &self.api_key
+            && !key.is_empty() {
                 tracing::debug!("WebSearch: using direct api_key from config");
                 return Some(key.clone());
             }
-        }
 
         // Then check environment variable
-        if let Ok(key) = std::env::var("SERPAPI_API_KEY") {
-            if !key.is_empty() {
+        if let Ok(key) = std::env::var("SERPAPI_API_KEY")
+            && !key.is_empty() {
                 tracing::debug!("WebSearch: using SERPAPI_API_KEY from env");
                 return Some(key);
             }
-        }
 
         None
     }

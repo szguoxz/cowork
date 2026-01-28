@@ -36,13 +36,11 @@ impl EventHandler {
         std::thread::spawn(move || {
             loop {
                 // Poll with a short timeout to allow checking for shutdown
-                if event::poll(Duration::from_millis(50)).unwrap_or(false) {
-                    if let Ok(evt) = event::read() {
-                        if tx_terminal.send(Event::Terminal(evt)).is_err() {
+                if event::poll(Duration::from_millis(50)).unwrap_or(false)
+                    && let Ok(evt) = event::read()
+                        && tx_terminal.send(Event::Terminal(evt)).is_err() {
                             break;
                         }
-                    }
-                }
                 // Send tick for UI refresh
                 if tx_terminal.send(Event::Tick).is_err() {
                     break;

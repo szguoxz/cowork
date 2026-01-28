@@ -73,11 +73,10 @@ pub async fn update_settings(
     config.approval.show_dialogs = settings.approval.show_confirmation_dialogs;
 
     // Update web search settings if provided
-    if let Some(web_search) = &settings.web_search {
-        if let Some(api_key) = &web_search.api_key {
+    if let Some(web_search) = &settings.web_search
+        && let Some(api_key) = &web_search.api_key {
             config.web_search.api_key = Some(api_key.clone());
         }
-    }
 
     Ok(())
 }

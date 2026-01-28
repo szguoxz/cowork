@@ -46,7 +46,7 @@ pub fn staged_metadata_path() -> PathBuf {
 
 /// Check whether a release body contains the `[auto-update]` marker.
 pub fn has_auto_update_marker(body: Option<&str>) -> bool {
-    body.map_or(false, |b| b.contains(AUTO_UPDATE_MARKER))
+    body.is_some_and(|b| b.contains(AUTO_UPDATE_MARKER))
 }
 
 /// Read the staged update metadata from disk, returning `None` if missing or unparseable.

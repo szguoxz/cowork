@@ -345,8 +345,8 @@ impl ToolRegistryBuilder {
         }
 
         // MCP tools - when an MCP manager is provided
-        if self.include_mcp {
-            if let Some(ref mcp_manager) = self.mcp_manager {
+        if self.include_mcp
+            && let Some(ref mcp_manager) = self.mcp_manager {
                 let mcp_tools = create_mcp_tools(mcp_manager.clone());
                 for tool in mcp_tools {
                     registry.register(tool);
@@ -356,7 +356,6 @@ impl ToolRegistryBuilder {
                     "Registered MCP tools from server manager"
                 );
             }
-        }
 
         registry
     }
@@ -387,11 +386,10 @@ impl ToolRegistryBuilder {
                 ));
                 registry.register(Arc::new(WebFetch::new()));
                 // Include WebSearch if SerpAPI is configured
-                if let Some(config) = self.web_search_config.as_ref() {
-                    if config.is_configured() {
+                if let Some(config) = self.web_search_config.as_ref()
+                    && config.is_configured() {
                         registry.register(Arc::new(WebSearch::with_config(config.clone())));
                     }
-                }
                 registry.register(Arc::new(LspTool::new(workspace)));
                 registry.register(Arc::new(TodoWrite::new()));
             }
@@ -406,11 +404,10 @@ impl ToolRegistryBuilder {
                 ));
                 registry.register(Arc::new(WebFetch::new()));
                 // Include WebSearch if SerpAPI is configured
-                if let Some(config) = self.web_search_config.as_ref() {
-                    if config.is_configured() {
+                if let Some(config) = self.web_search_config.as_ref()
+                    && config.is_configured() {
                         registry.register(Arc::new(WebSearch::with_config(config.clone())));
                     }
-                }
                 registry.register(Arc::new(LspTool::new(workspace)));
                 registry.register(Arc::new(TodoWrite::new()));
             }
@@ -426,11 +423,10 @@ impl ToolRegistryBuilder {
                 ));
                 registry.register(Arc::new(WebFetch::new()));
                 // Include WebSearch if SerpAPI is configured
-                if let Some(config) = self.web_search_config.as_ref() {
-                    if config.is_configured() {
+                if let Some(config) = self.web_search_config.as_ref()
+                    && config.is_configured() {
                         registry.register(Arc::new(WebSearch::with_config(config.clone())));
                     }
-                }
                 registry.register(Arc::new(LspTool::new(workspace)));
                 registry.register(Arc::new(TodoWrite::new()));
             }

@@ -152,10 +152,7 @@ impl Tool for ExitPlanMode {
 
             // Read the plan file if one was set (plan_file is already a full path)
             let plan_contents = if let Some(ref plan_file) = state.plan_file {
-                match std::fs::read_to_string(plan_file) {
-                    Ok(contents) => Some(contents),
-                    Err(_) => None,
-                }
+                std::fs::read_to_string(plan_file).ok()
             } else {
                 None
             };

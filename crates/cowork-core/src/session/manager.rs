@@ -25,7 +25,7 @@ enum ConfigSource {
     /// Read from disk each time (for Tauri)
     FromDisk,
     /// Use fixed config (for CLI)
-    Fixed(SessionConfig),
+    Fixed(Box<SessionConfig>),
 }
 
 /// Manages multiple concurrent agent sessions
@@ -71,7 +71,7 @@ impl SessionManager {
             sessions,
             output_tx,
             workspace_path,
-            config_source: ConfigSource::Fixed(config),
+            config_source: ConfigSource::Fixed(Box::new(config)),
         };
 
         (manager, output_rx)
@@ -106,7 +106,7 @@ impl SessionManager {
         // Get config based on source
         let mut config = match &self.config_source {
             ConfigSource::FromDisk => self.build_session_config(),
-            ConfigSource::Fixed(c) => c.clone(),
+            ConfigSource::Fixed(c) => (**c).clone(),
         };
         config.session_registry = Some(self.sessions.clone());
 
@@ -233,9 +233,11 @@ impl SessionManager {
 
     /// Build system prompt with workspace context and git info
     fn build_system_prompt(&self, model_info: Option<&str>) -> String {
-        let mut vars = TemplateVars::default();
-        vars.working_directory = self.workspace_path.display().to_string();
-        vars.is_git_repo = self.workspace_path.join(".git").exists();
+        let mut vars = TemplateVars {
+            working_directory: self.workspace_path.display().to_string(),
+            is_git_repo: self.workspace_path.join(".git").exists(),
+            ..Default::default()
+        };
 
         // Get git status and branch info if in a repo
         if vars.is_git_repo {

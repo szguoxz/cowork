@@ -218,9 +218,11 @@ async fn main() -> anyhow::Result<()> {
 
 /// Build the system prompt with all template variables properly substituted
 fn build_system_prompt(workspace: &Path, model_info: Option<&str>) -> String {
-    let mut vars = TemplateVars::default();
-    vars.working_directory = workspace.display().to_string();
-    vars.is_git_repo = workspace.join(".git").exists();
+    let mut vars = TemplateVars {
+        working_directory: workspace.display().to_string(),
+        is_git_repo: workspace.join(".git").exists(),
+        ..Default::default()
+    };
 
     // Get git status if in a repo
     if vars.is_git_repo {
@@ -676,8 +678,8 @@ async fn run_event_loop(
                 Event::Session(sid, output) => {
                     if sid == session_id {
                         // Check for auto-approval before handling
-                        if let SessionOutput::ToolPending { ref id, ref name, .. } = output {
-                            if app.should_auto_approve(name) {
+                        if let SessionOutput::ToolPending { ref id, ref name, .. } = output
+                            && app.should_auto_approve(name) {
                                 app.add_message(Message::system(format!("Auto-approved: {}", name)));
                                 session_manager
                                     .push_message(session_id, SessionInput::approve_tool(id))
@@ -685,7 +687,6 @@ async fn run_event_loop(
                                 // Don't show the approval modal
                                 continue;
                             }
-                        }
                         app.handle_session_output(output);
                     }
                 }
@@ -809,20 +810,18 @@ async fn run_bash_command_quiet(workspace: &Path, command: &str) -> anyhow::Resu
 
     let mut output = String::new();
     if result.success {
-        if let Some(stdout) = result.content.get("stdout").and_then(|v| v.as_str()) {
-            if !stdout.is_empty() {
+        if let Some(stdout) = result.content.get("stdout").and_then(|v| v.as_str())
+            && !stdout.is_empty() {
                 output.push_str(stdout);
             }
-        }
-        if let Some(stderr) = result.content.get("stderr").and_then(|v| v.as_str()) {
-            if !stderr.is_empty() {
+        if let Some(stderr) = result.content.get("stderr").and_then(|v| v.as_str())
+            && !stderr.is_empty() {
                 if !output.is_empty() {
                     output.push('\n');
                 }
                 output.push_str("[stderr] ");
                 output.push_str(stderr);
             }
-        }
     } else {
         if let Some(stderr) = result.content.get("stderr").and_then(|v| v.as_str()) {
             output.push_str(stderr);

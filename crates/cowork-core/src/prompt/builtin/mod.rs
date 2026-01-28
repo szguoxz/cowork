@@ -50,10 +50,10 @@ pub fn strip_markdown_header(content: &str) -> &str {
         let after_first_line = &content[newline_pos + 1..];
 
         // Check if followed by blank line (either \n or \r\n)
-        if after_first_line.starts_with('\n') {
-            return &after_first_line[1..];
-        } else if after_first_line.starts_with("\r\n") {
-            return &after_first_line[2..];
+        if let Some(stripped) = after_first_line.strip_prefix('\n') {
+            return stripped;
+        } else if let Some(stripped) = after_first_line.strip_prefix("\r\n") {
+            return stripped;
         }
     }
 

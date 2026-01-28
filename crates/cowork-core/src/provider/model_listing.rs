@@ -32,11 +32,10 @@ pub fn get_model_context_limit(provider: ProviderType, model: &str) -> Option<us
 
     // Check if model matches any of the three tiers
     for tier in [catalog::ModelTier::Fast, catalog::ModelTier::Balanced, catalog::ModelTier::Powerful] {
-        if let Some(m) = cat_provider.model(tier) {
-            if m.id == model {
+        if let Some(m) = cat_provider.model(tier)
+            && m.id == model {
                 return Some(m.context);
             }
-        }
     }
 
     // Fall back to default (balanced) context window
@@ -53,11 +52,10 @@ pub fn get_model_max_output(provider: ProviderType, model: &str) -> Option<usize
 
     // Check if model matches any of the three tiers
     for tier in [catalog::ModelTier::Fast, catalog::ModelTier::Balanced, catalog::ModelTier::Powerful] {
-        if let Some(m) = cat_provider.model(tier) {
-            if m.id == model {
+        if let Some(m) = cat_provider.model(tier)
+            && m.id == model {
                 return Some(m.max_output);
             }
-        }
     }
 
     // Fall back to default (balanced) max output
@@ -122,15 +120,14 @@ pub fn get_known_models(provider: ProviderType) -> Vec<ModelInfo> {
     let mut models = Vec::new();
 
     // Add fast if distinct from balanced
-    if let (Some(f), Some(b)) = (fast, balanced) {
-        if f.id != b.id {
+    if let (Some(f), Some(b)) = (fast, balanced)
+        && f.id != b.id {
             models.push(
                 ModelInfo::new(&f.id)
                     .with_name(&f.name)
                     .with_context_window(f.context as u32)
             );
         }
-    }
 
     // Add balanced (always, marked as recommended)
     if let Some(b) = balanced {
@@ -143,15 +140,14 @@ pub fn get_known_models(provider: ProviderType) -> Vec<ModelInfo> {
     }
 
     // Add powerful if distinct from balanced
-    if let (Some(p), Some(b)) = (powerful, balanced) {
-        if p.id != b.id {
+    if let (Some(p), Some(b)) = (powerful, balanced)
+        && p.id != b.id {
             models.push(
                 ModelInfo::new(&p.id)
                     .with_name(&p.name)
                     .with_context_window(p.context as u32)
             );
         }
-    }
 
     models
 }
