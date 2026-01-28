@@ -48,22 +48,15 @@ fn is_rate_limit_error(e: &genai::Error) -> bool {
 /// Extract detailed error information from a genai error
 ///
 /// Uses Debug format to capture full error details.
-/// Returns (error_message, optional_raw_body)
+/// Returns (error_message, full_debug_output)
 fn extract_genai_error_details(e: &genai::Error) -> (String, Option<String>) {
     // Use Debug format to get all available error information
     // This is version-agnostic and captures nested error details
-    let error_debug = format!("{:?}", e);
+    let error_debug = format!("{:#?}", e);  // Pretty-printed debug
 
-    // Try to extract raw body from the debug output if present
-    // Look for common patterns like `body: "..."` in the debug string
-    let raw_body = if error_debug.contains("body:") {
-        // The body is embedded in the debug output
-        Some(error_debug.clone())
-    } else {
-        None
-    };
-
-    (format!("{}", e), raw_body)
+    // Always return the full debug output - it contains all available info
+    // including any embedded body, status codes, headers, etc.
+    (format!("{}", e), Some(error_debug))
 }
 
 use crate::error::{Error, Result};
