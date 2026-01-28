@@ -19,6 +19,32 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{debug, error, warn};
 
+/// Retry configuration for different error types
+struct RetryConfig {
+    /// Delay before retrying on empty response
+    empty_response_delay: Duration,
+    /// Delay before retrying on rate limit
+    rate_limit_delay: Duration,
+    /// Maximum retries per error type
+    max_retries: u32,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            empty_response_delay: Duration::from_secs(5),
+            rate_limit_delay: Duration::from_secs(60),
+            max_retries: 1,
+        }
+    }
+}
+
+/// Check if an error indicates rate limiting (HTTP 429)
+fn is_rate_limit_error(e: &genai::Error) -> bool {
+    let error_str = format!("{:?}", e);
+    error_str.contains("429") || error_str.to_lowercase().contains("rate limit")
+}
+
 /// Extract detailed error information from a genai error
 ///
 /// Uses Debug format to capture full error details.
@@ -463,100 +489,135 @@ impl GenAIProvider {
         let max_output = get_model_max_output(self.provider_type, &self.model).unwrap_or(8192);
         let chat_options = ChatOptions::default().with_max_tokens(max_output as u32);
 
-        // Execute the chat (non-streaming to avoid genai streaming parsing issues)
-        // See: https://github.com/jeremychone/rust-genai/issues/XXX
-        let chat_res = self
-            .client
-            .exec_chat(&self.model, chat_req, Some(&chat_options))
-            .await;
+        // Retry configuration
+        let retry_config = RetryConfig::default();
+        let mut empty_retries = 0u32;
+        let mut rate_limit_retries = 0u32;
 
-        match chat_res {
-            Ok(response) => {
-                // Extract content
-                let content = response.first_text().map(|s| s.to_string());
+        // Execute with retry logic
+        loop {
+            let chat_res = self
+                .client
+                .exec_chat(&self.model, chat_req.clone(), Some(&chat_options))
+                .await;
 
-                // Extract tool calls
-                let tool_calls: Vec<PendingToolCall> = response
-                    .into_tool_calls()
-                    .into_iter()
-                    .filter_map(|tc| {
-                        if tc.fn_name.is_empty() {
-                            warn!("Received tool call with empty name, skipping");
-                            return None;
-                        }
-                        debug!(
-                            tool_name = %tc.fn_name,
-                            call_id = %tc.call_id,
-                            arguments = ?tc.fn_arguments,
-                            "Received tool call"
+            match chat_res {
+                Ok(response) => {
+                    // Extract content
+                    let content = response.first_text().map(|s| s.to_string());
+
+                    // Check for empty response - retry if configured
+                    let is_empty = content.as_ref().map(|c| c.trim().is_empty()).unwrap_or(true);
+                    let has_tool_calls = !response.tool_calls().is_empty();
+
+                    if is_empty && !has_tool_calls && empty_retries < retry_config.max_retries {
+                        empty_retries += 1;
+                        warn!(
+                            model = %self.model,
+                            retry = empty_retries,
+                            delay_secs = retry_config.empty_response_delay.as_secs(),
+                            "Empty response received, retrying"
                         );
-                        Some(PendingToolCall {
-                            call_id: tc.call_id,
-                            name: tc.fn_name,
-                            arguments: tc.fn_arguments,
+                        tokio::time::sleep(retry_config.empty_response_delay).await;
+                        continue;
+                    }
+
+                    // Extract tool calls
+                    let tool_calls: Vec<PendingToolCall> = response
+                        .into_tool_calls()
+                        .into_iter()
+                        .filter_map(|tc| {
+                            if tc.fn_name.is_empty() {
+                                warn!("Received tool call with empty name, skipping");
+                                return None;
+                            }
+                            debug!(
+                                tool_name = %tc.fn_name,
+                                call_id = %tc.call_id,
+                                arguments = ?tc.fn_arguments,
+                                "Received tool call"
+                            );
+                            Some(PendingToolCall {
+                                call_id: tc.call_id,
+                                name: tc.fn_name,
+                                arguments: tc.fn_arguments,
+                            })
                         })
-                    })
-                    .collect();
+                        .collect();
 
-                let result = CompletionResult {
-                    content,
-                    tool_calls,
-                    input_tokens: None,  // genai doesn't expose usage
-                    output_tokens: None,
-                };
+                    let result = CompletionResult {
+                        content,
+                        tool_calls,
+                        input_tokens: None,  // genai doesn't expose usage
+                        output_tokens: None,
+                    };
 
-                // Log successful interaction
-                log_llm_interaction(LogConfig {
-                    model: &self.model,
-                    provider: Some("genai"),
-                    system_prompt: self.system_prompt.as_deref(),
-                    messages: &messages_for_log,
-                    tools: tools_for_log.as_deref(),
-                    result: Some(&result),
-                    ..Default::default()
-                });
+                    // Log successful interaction
+                    log_llm_interaction(LogConfig {
+                        model: &self.model,
+                        provider: Some("genai"),
+                        system_prompt: self.system_prompt.as_deref(),
+                        messages: &messages_for_log,
+                        tools: tools_for_log.as_deref(),
+                        result: Some(&result),
+                        ..Default::default()
+                    });
 
-                Ok(result)
-            }
-            Err(e) => {
-                // Extract detailed error information including raw body when available
-                let (error_details, raw_body) = extract_genai_error_details(&e);
-                let error_msg = format!("GenAI error: {}", error_details);
-
-                // Log failed interaction with request context and raw response
-                log_llm_interaction(LogConfig {
-                    model: &self.model,
-                    provider: Some("genai"),
-                    system_prompt: self.system_prompt.as_deref(),
-                    messages: &messages_for_log,
-                    tools: tools_for_log.as_deref(),
-                    error: Some(&error_msg),
-                    raw_response: raw_body.as_deref(),
-                    ..Default::default()
-                });
-
-                // Log with tracing for stack context - include request size info and raw body
-                if let Some(body) = &raw_body {
-                    error!(
-                        error = %error_details,
-                        model = %self.model,
-                        message_count = messages_for_log.len(),
-                        request_size_chars = request_size_estimate,
-                        raw_body_len = body.len(),
-                        raw_body_preview = %if body.len() > 1000 { &body[..1000] } else { body },
-                        "LLM request failed with raw response"
-                    );
-                } else {
-                    error!(
-                        error = %error_details,
-                        model = %self.model,
-                        message_count = messages_for_log.len(),
-                        request_size_chars = request_size_estimate,
-                        "LLM request failed"
-                    );
+                    return Ok(result);
                 }
+                Err(e) => {
+                    // Check for rate limit error - retry if configured
+                    if is_rate_limit_error(&e) && rate_limit_retries < retry_config.max_retries {
+                        rate_limit_retries += 1;
+                        warn!(
+                            model = %self.model,
+                            retry = rate_limit_retries,
+                            delay_secs = retry_config.rate_limit_delay.as_secs(),
+                            "Rate limit hit, retrying"
+                        );
+                        tokio::time::sleep(retry_config.rate_limit_delay).await;
+                        continue;
+                    }
 
-                Err(Error::Provider(error_msg))
+                    // No retry - extract detailed error information
+                    let (error_details, raw_body) = extract_genai_error_details(&e);
+                    let error_msg = format!("GenAI error: {}", error_details);
+
+                    // Log failed interaction with request context and raw response
+                    log_llm_interaction(LogConfig {
+                        model: &self.model,
+                        provider: Some("genai"),
+                        system_prompt: self.system_prompt.as_deref(),
+                        messages: &messages_for_log,
+                        tools: tools_for_log.as_deref(),
+                        error: Some(&error_msg),
+                        raw_response: raw_body.as_deref(),
+                        ..Default::default()
+                    });
+
+                    // Log with tracing for stack context
+                    if let Some(body) = &raw_body {
+                        error!(
+                            error = %error_details,
+                            model = %self.model,
+                            message_count = messages_for_log.len(),
+                            request_size_chars = request_size_estimate,
+                            raw_body_len = body.len(),
+                            raw_body_preview = %if body.len() > 1000 { &body[..1000] } else { body },
+                            "LLM request failed with raw response"
+                        );
+                    } else {
+                        error!(
+                            error = %error_details,
+                            model = %self.model,
+                            message_count = messages_for_log.len(),
+                            request_size_chars = request_size_estimate,
+                            "LLM request failed"
+                        );
+                    }
+
+                    return Err(Error::Provider(error_msg));
+                }
             }
         }
     }
