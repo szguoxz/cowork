@@ -35,6 +35,9 @@ use crate::tools::ToolDefinition;
 // Re-export ChatRole from genai as our Role type
 pub use genai::chat::ChatRole;
 
+// Re-export ToolCall from genai (uses call_id, fn_name, fn_arguments)
+pub use genai::chat::ToolCall;
+
 /// Parse a role string into ChatRole
 pub fn parse_role(s: &str) -> ChatRole {
     match s {
@@ -196,7 +199,7 @@ impl LlmMessage {
             blocks.push(ContentBlock::text(&text));
         }
         for tc in &tool_calls {
-            blocks.push(ContentBlock::tool_use(&tc.id, &tc.name, tc.arguments.clone()));
+            blocks.push(ContentBlock::tool_use(&tc.call_id, &tc.fn_name, tc.fn_arguments.clone()));
         }
         Self {
             role: ChatRole::Assistant,
@@ -285,14 +288,6 @@ impl LlmRequest {
         self.temperature = Some(temp);
         self
     }
-}
-
-/// A tool call from the LLM
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: serde_json::Value,
 }
 
 /// Response from an LLM provider
@@ -537,9 +532,10 @@ mod tests {
     fn test_llm_message_assistant_with_tools() {
         let tool_calls = vec![
             ToolCall {
-                id: "call_1".to_string(),
-                name: "read_file".to_string(),
-                arguments: serde_json::json!({"path": "/test.txt"}),
+                call_id: "call_1".to_string(),
+                fn_name: "read_file".to_string(),
+                fn_arguments: serde_json::json!({"path": "/test.txt"}),
+                thought_signatures: None,
             }
         ];
         let msg = LlmMessage::assistant_with_tools("Let me read that file", tool_calls);

@@ -340,9 +340,10 @@ impl ChatSession {
                             m.tool_calls
                                 .iter()
                                 .map(|tc| crate::provider::ToolCall {
-                                    id: tc.id.clone(),
-                                    name: tc.name.clone(),
-                                    arguments: tc.arguments.clone(),
+                                    call_id: tc.id.clone(),
+                                    fn_name: tc.name.clone(),
+                                    fn_arguments: tc.arguments.clone(),
+                                    thought_signatures: None,
                                 })
                                 .collect(),
                         ),

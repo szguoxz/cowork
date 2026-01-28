@@ -351,16 +351,8 @@ impl GenAIProvider {
                 // genai handles this by converting Vec<ToolCall> to an assistant message with tool_calls
                 let mut req = chat_req;
                 if let Some(tool_calls) = &msg.tool_calls {
-                    let genai_tool_calls: Vec<ToolCall> = tool_calls
-                        .iter()
-                        .map(|tc| ToolCall {
-                            call_id: tc.id.clone(),
-                            fn_name: tc.name.clone(),
-                            fn_arguments: tc.arguments.clone(),
-                            thought_signatures: None,
-                        })
-                        .collect();
-                    req = req.append_message(genai_tool_calls);
+                    // tool_calls is already Vec<genai::chat::ToolCall>, clone it
+                    req = req.append_message(tool_calls.clone());
                 }
                 req
             }
@@ -379,17 +371,8 @@ impl GenAIProvider {
                 if has_tool_calls_in_blocks {
                     req = req.append_message(tool_calls_from_blocks);
                 } else if let Some(tool_calls) = &msg.tool_calls {
-                    // Tool calls from field (not blocks)
-                    let genai_tool_calls: Vec<ToolCall> = tool_calls
-                        .iter()
-                        .map(|tc| ToolCall {
-                            call_id: tc.id.clone(),
-                            fn_name: tc.name.clone(),
-                            fn_arguments: tc.arguments.clone(),
-                            thought_signatures: None,
-                        })
-                        .collect();
-                    req = req.append_message(genai_tool_calls);
+                    // tool_calls is already Vec<genai::chat::ToolCall>, clone it
+                    req = req.append_message(tool_calls.clone());
                 } else if !text_content.is_empty() {
                     // No tool calls, just text
                     req = req.append_message(ChatMessage::assistant(&text_content));
@@ -745,9 +728,10 @@ impl LlmProvider for GenAIProvider {
                 .tool_calls
                 .into_iter()
                 .map(|tc| super::ToolCall {
-                    id: tc.call_id,
-                    name: tc.name,
-                    arguments: tc.arguments,
+                    call_id: tc.call_id,
+                    fn_name: tc.name,
+                    fn_arguments: tc.arguments,
+                    thought_signatures: None,
                 })
                 .collect(),
             finish_reason: finish_reason.to_string(),
