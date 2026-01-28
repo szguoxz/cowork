@@ -157,9 +157,6 @@ pub struct ServerInfo {
 
 #[derive(Debug, serde::Deserialize)]
 struct InitializeResult {
-    #[serde(rename = "protocolVersion")]
-    #[allow(dead_code)]
-    protocol_version: String,
     capabilities: ServerCapabilities,
     #[serde(rename = "serverInfo")]
     server_info: ServerInfoInner,

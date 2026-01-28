@@ -16,7 +16,6 @@ use lsp_types::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Stdio};
@@ -33,8 +32,6 @@ pub struct LspClient {
     stdout: Mutex<BufReader<ChildStdout>>,
     request_id: AtomicU64,
     workspace_root: PathBuf,
-    #[allow(dead_code)]
-    pending_responses: Mutex<HashMap<u64, Value>>,
 }
 
 /// Convert a file path to a file:// URI string with proper percent encoding.
@@ -164,7 +161,6 @@ impl LspClient {
             stdout: Mutex::new(BufReader::new(stdout)),
             request_id: AtomicU64::new(1),
             workspace_root: workspace.to_path_buf(),
-            pending_responses: Mutex::new(HashMap::new()),
         };
 
         // Initialize the server
@@ -300,12 +296,10 @@ impl LspClient {
             debug!("Received LSP message: {}", response);
 
             // Check if this is our response
-            if let Some(id) = response.get("id").and_then(|v| v.as_u64()) {
-                if id == expected_id {
-                    return Ok(response);
-                }
-                // Store for later
-                self.pending_responses.lock().await.insert(id, response);
+            if let Some(id) = response.get("id").and_then(|v| v.as_u64())
+                && id == expected_id
+            {
+                return Ok(response);
             }
             // Otherwise it's a notification or server request - ignore for now
         }
