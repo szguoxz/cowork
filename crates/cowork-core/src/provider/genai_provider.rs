@@ -91,27 +91,7 @@ use super::catalog;
 use super::logging::{log_llm_interaction, LogConfig};
 use super::model_listing::get_model_max_output;
 
-use serde::{Deserialize, Serialize};
-
 use super::{ContentBlock, LlmMessage, LlmProvider, LlmRequest, LlmResponse, MessageContent, TokenUsage};
-
-/// Tool call from the LLM that needs approval
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PendingToolCall {
-    pub call_id: String,
-    pub name: String,
-    pub arguments: serde_json::Value,
-}
-
-impl From<ToolCall> for PendingToolCall {
-    fn from(tc: ToolCall) -> Self {
-        Self {
-            call_id: tc.call_id,
-            name: tc.fn_name,
-            arguments: tc.fn_arguments, // Already a serde_json::Value
-        }
-    }
-}
 
 /// Response from completion that may contain both content and tool calls
 #[derive(Debug, Clone, Default)]
@@ -119,7 +99,7 @@ pub struct CompletionResult {
     /// Text content from the assistant (may be present even with tool calls)
     pub content: Option<String>,
     /// Tool calls that need approval before execution
-    pub tool_calls: Vec<PendingToolCall>,
+    pub tool_calls: Vec<ToolCall>,
     /// Input tokens used for this request (from provider)
     pub input_tokens: Option<u64>,
     /// Output tokens used for this response (from provider)
@@ -493,13 +473,13 @@ impl GenAIProvider {
                     }
 
                     // Extract tool calls
-                    let tool_calls: Vec<PendingToolCall> = response
+                    let tool_calls: Vec<ToolCall> = response
                         .into_tool_calls()
                         .into_iter()
-                        .filter_map(|tc| {
+                        .filter(|tc| {
                             if tc.fn_name.is_empty() {
                                 warn!("Received tool call with empty name, skipping");
-                                return None;
+                                return false;
                             }
                             debug!(
                                 tool_name = %tc.fn_name,
@@ -507,11 +487,7 @@ impl GenAIProvider {
                                 arguments = ?tc.fn_arguments,
                                 "Received tool call"
                             );
-                            Some(PendingToolCall {
-                                call_id: tc.call_id,
-                                name: tc.fn_name,
-                                arguments: tc.fn_arguments,
-                            })
+                            true
                         })
                         .collect();
 
@@ -612,22 +588,11 @@ impl GenAIProvider {
     pub async fn continue_with_tool_results(
         &self,
         mut chat_req: ChatRequest,
-        tool_calls: Vec<PendingToolCall>,
+        tool_calls: Vec<ToolCall>,
         results: Vec<(String, String)>, // (call_id, result)
     ) -> Result<CompletionResult> {
-        // Convert PendingToolCall back to genai ToolCall for the message
-        let genai_tool_calls: Vec<ToolCall> = tool_calls
-            .into_iter()
-            .map(|tc| ToolCall {
-                call_id: tc.call_id,
-                fn_name: tc.name,
-                fn_arguments: tc.arguments,
-                thought_signatures: None,
-            })
-            .collect();
-
         // Add tool calls as assistant message
-        chat_req = chat_req.append_message(genai_tool_calls);
+        chat_req = chat_req.append_message(tool_calls);
 
         // Add tool results
         for (call_id, result) in results {
@@ -654,13 +619,13 @@ impl GenAIProvider {
         let content = response.first_text().map(|s| s.to_string());
 
         // Extract tool calls
-        let tool_calls: Vec<PendingToolCall> = response
+        let tool_calls: Vec<ToolCall> = response
             .into_tool_calls()
             .into_iter()
-            .filter_map(|tc| {
+            .filter(|tc| {
                 if tc.fn_name.is_empty() {
                     warn!("Received tool call with empty name, skipping");
-                    return None;
+                    return false;
                 }
                 debug!(
                     tool_name = %tc.fn_name,
@@ -668,11 +633,7 @@ impl GenAIProvider {
                     arguments = ?tc.fn_arguments,
                     "Received tool call (continuation)"
                 );
-                Some(PendingToolCall {
-                    call_id: tc.call_id,
-                    name: tc.fn_name,
-                    arguments: tc.fn_arguments,
-                })
+                true
             })
             .collect();
 
@@ -724,16 +685,7 @@ impl LlmProvider for GenAIProvider {
 
         Ok(LlmResponse {
             content: result.content,
-            tool_calls: result
-                .tool_calls
-                .into_iter()
-                .map(|tc| super::ToolCall {
-                    call_id: tc.call_id,
-                    fn_name: tc.name,
-                    fn_arguments: tc.arguments,
-                    thought_signatures: None,
-                })
-                .collect(),
+            tool_calls: result.tool_calls,
             finish_reason: finish_reason.to_string(),
             usage: TokenUsage::default(),
         })

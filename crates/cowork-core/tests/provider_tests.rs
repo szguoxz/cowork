@@ -247,7 +247,7 @@ mod integration_tests {
         if result.has_tool_calls() {
             println!("Tool calls: {:?}", result.tool_calls);
             assert!(!result.tool_calls.is_empty(), "Expected at least one tool call");
-            assert_eq!(result.tool_calls[0].name, "get_weather");
+            assert_eq!(result.tool_calls[0].fn_name, "get_weather");
         } else {
             // Some models might not use tools - that's OK
             println!("Got message instead of tool call: {:?}", result.content);
@@ -300,7 +300,7 @@ mod integration_tests {
         if result.has_tool_calls() {
             println!("Tool calls: {:?}", result.tool_calls);
             assert!(!result.tool_calls.is_empty(), "Expected at least one tool call");
-            assert_eq!(result.tool_calls[0].name, "get_weather");
+            assert_eq!(result.tool_calls[0].fn_name, "get_weather");
         } else {
             // Some models might not use tools - that's OK
             println!("Got message instead of tool call: {:?}", result.content);

@@ -94,8 +94,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("(wants to use {} tool(s))", result.tool_calls.len());
 
                     for call in &result.tool_calls {
-                        println!("\n  Tool: {}", call.name);
-                        println!("  Args: {}", serde_json::to_string_pretty(&call.arguments)?);
+                        println!("\n  Tool: {}", call.fn_name);
+                        println!("  Args: {}", serde_json::to_string_pretty(&call.fn_arguments)?);
 
                         // Ask for approval
                         print!("  Approve? [y/n]: ");
@@ -106,8 +106,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         if approval.trim().to_lowercase() == "y" {
                             // Execute tool
-                            if let Some(tool) = tool_registry.get(&call.name) {
-                                match tool.execute(call.arguments.clone()).await {
+                            if let Some(tool) = tool_registry.get(&call.fn_name) {
+                                match tool.execute(call.fn_arguments.clone()).await {
                                     Ok(output) => {
                                         println!("  Result: {}",
                                             if output.content.to_string().len() > 200 {
@@ -119,23 +119,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                         // Add tool result to messages
                                         messages.push(LlmMessage::assistant(
-                                            format!("Used tool {} with result: {}", call.name, output.content)
+                                            format!("Used tool {} with result: {}", call.fn_name, output.content)
                                         ));
                                     }
                                     Err(e) => {
                                         println!("  Error: {}", e);
                                         messages.push(LlmMessage::assistant(
-                                            format!("Tool {} failed: {}", call.name, e)
+                                            format!("Tool {} failed: {}", call.fn_name, e)
                                         ));
                                     }
                                 }
                             } else {
-                                println!("  Unknown tool: {}", call.name);
+                                println!("  Unknown tool: {}", call.fn_name);
                             }
                         } else {
                             println!("  Rejected");
                             messages.push(LlmMessage::assistant(
-                                format!("User rejected tool call: {}", call.name)
+                                format!("User rejected tool call: {}", call.fn_name)
                             ));
                         }
                     }

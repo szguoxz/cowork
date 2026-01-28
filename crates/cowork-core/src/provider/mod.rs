@@ -22,7 +22,7 @@ pub use factory::{
     create_provider_with_settings, get_api_key, get_model_tiers, has_api_key_configured,
 };
 pub use genai_provider::{
-    create_provider, CompletionResult, GenAIProvider, PendingToolCall,
+    create_provider, CompletionResult, GenAIProvider,
 };
 
 pub use model_listing::{get_known_models, get_model_context_limit, ModelInfo};

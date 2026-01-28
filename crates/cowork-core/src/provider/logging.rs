@@ -68,9 +68,9 @@ pub fn log_llm_interaction(config: LogConfig<'_>) {
                 "type": if r.has_tool_calls() { "tool_calls" } else { "message" },
                 "content": r.content,
                 "tool_calls": r.tool_calls.iter().map(|c| json!({
-                    "name": c.name,
+                    "name": c.fn_name,
                     "call_id": c.call_id,
-                    "arguments": c.arguments
+                    "arguments": c.fn_arguments
                 })).collect::<Vec<_>>()
             })),
             "raw": config.raw_response,

@@ -760,8 +760,8 @@ impl AgentLoop {
                     .into_iter()
                     .map(|tc| LlmToolCall {
                         id: tc.call_id,
-                        name: tc.name,
-                        arguments: tc.arguments,
+                        name: tc.fn_name,
+                        arguments: tc.fn_arguments,
                     })
                     .collect(),
                 input_tokens: result.input_tokens,
