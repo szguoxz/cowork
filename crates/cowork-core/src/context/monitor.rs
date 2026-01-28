@@ -1,12 +1,11 @@
 //! Context monitoring for tracking token usage and triggering auto-compact
 //!
-//! Tracks context usage across conversations and provides signals
-//! for when compaction should be triggered.
+//! Uses LLM-reported token counts for accurate context tracking.
+//! The LLM's input_tokens IS the cumulative context size - no local counting needed.
 
 use serde::{Deserialize, Serialize};
 
 use super::tokens::TokenCounter;
-use super::Message;
 
 /// Configuration for the context monitor
 #[derive(Debug, Clone)]
@@ -15,8 +14,6 @@ pub struct MonitorConfig {
     pub auto_compact_threshold: f64,
     /// Minimum tokens remaining before forcing compaction
     pub min_remaining_tokens: usize,
-    /// Check interval (every N iterations of the agentic loop)
-    pub check_interval: usize,
 }
 
 impl Default for MonitorConfig {
@@ -24,16 +21,17 @@ impl Default for MonitorConfig {
         Self {
             auto_compact_threshold: 0.75,
             min_remaining_tokens: 20_000,
-            check_interval: 5,
         }
     }
 }
 
-/// Current context usage statistics
+/// Current context usage statistics (from LLM response)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextUsage {
-    /// Total tokens currently used
-    pub used_tokens: usize,
+    /// Input tokens from last LLM response (cumulative context)
+    pub input_tokens: u64,
+    /// Output tokens from last LLM response
+    pub output_tokens: u64,
     /// Maximum tokens available for the provider
     pub limit_tokens: usize,
     /// Percentage of context used (0.0 - 1.0)
@@ -42,35 +40,18 @@ pub struct ContextUsage {
     pub remaining_tokens: usize,
     /// Whether context should be compacted
     pub should_compact: bool,
-
-    /// Breakdown of token usage
-    pub breakdown: ContextBreakdown,
-}
-
-/// Breakdown of token usage by category
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ContextBreakdown {
-    /// Tokens used by system prompt and instructions
-    pub system_tokens: usize,
-    /// Tokens used by conversation history
-    pub conversation_tokens: usize,
-    /// Tokens used by tool calls and results
-    pub tool_tokens: usize,
-    /// Tokens used by memory files (CLAUDE.md, etc.)
-    pub memory_tokens: usize,
-    /// Input tokens (system + memory + user messages + tool results)
-    pub input_tokens: usize,
-    /// Output tokens (all assistant messages accumulated)
-    pub output_tokens: usize,
-    /// Output tokens for the current response only
-    pub current_output_tokens: usize,
 }
 
 /// Context monitor that tracks token usage and signals when compaction is needed
+///
+/// Uses LLM-reported input_tokens for accurate tracking instead of local estimates.
 pub struct ContextMonitor {
     counter: TokenCounter,
     config: MonitorConfig,
-    iteration_count: usize,
+    /// Last reported input tokens from LLM (cumulative context size)
+    last_input_tokens: u64,
+    /// Last reported output tokens from LLM
+    last_output_tokens: u64,
 }
 
 impl ContextMonitor {
@@ -79,7 +60,8 @@ impl ContextMonitor {
         Self {
             counter: TokenCounter::new(provider_id),
             config: MonitorConfig::default(),
-            iteration_count: 0,
+            last_input_tokens: 0,
+            last_output_tokens: 0,
         }
     }
 
@@ -90,7 +72,8 @@ impl ContextMonitor {
         Self {
             counter: TokenCounter::with_model(provider_id, model),
             config: MonitorConfig::default(),
-            iteration_count: 0,
+            last_input_tokens: 0,
+            last_output_tokens: 0,
         }
     }
 
@@ -99,13 +82,9 @@ impl ContextMonitor {
         Self {
             counter: TokenCounter::new(provider_id),
             config,
-            iteration_count: 0,
+            last_input_tokens: 0,
+            last_output_tokens: 0,
         }
-    }
-
-    /// Get the context limit for this provider/model
-    pub fn context_limit(&self) -> usize {
-        self.counter.context_limit()
     }
 
     /// Create a new context monitor with model and custom config
@@ -117,11 +96,62 @@ impl ContextMonitor {
         Self {
             counter: TokenCounter::with_model(provider_id, model),
             config,
-            iteration_count: 0,
+            last_input_tokens: 0,
+            last_output_tokens: 0,
         }
     }
 
-    /// Get the token counter
+    /// Get the context limit for this provider/model
+    pub fn context_limit(&self) -> usize {
+        self.counter.context_limit()
+    }
+
+    /// Update token counts from LLM response
+    ///
+    /// Call this after every LLM call with the reported token counts.
+    /// input_tokens is the cumulative context size (everything sent to LLM).
+    pub fn update_from_response(&mut self, input_tokens: Option<u64>, output_tokens: Option<u64>) {
+        if let Some(input) = input_tokens {
+            self.last_input_tokens = input;
+        }
+        if let Some(output) = output_tokens {
+            self.last_output_tokens = output;
+        }
+    }
+
+    /// Get current context usage based on last LLM response
+    pub fn current_usage(&self) -> ContextUsage {
+        let limit = self.counter.context_limit();
+        let input = self.last_input_tokens;
+        let output = self.last_output_tokens;
+        let used = input + output;
+
+        let used_percentage = if limit > 0 {
+            used as f64 / limit as f64
+        } else {
+            0.0
+        };
+
+        let remaining = (limit as u64).saturating_sub(used) as usize;
+        let should_compact = used_percentage >= self.config.auto_compact_threshold
+            || remaining < self.config.min_remaining_tokens;
+
+        ContextUsage {
+            input_tokens: input,
+            output_tokens: output,
+            limit_tokens: limit,
+            used_percentage,
+            remaining_tokens: remaining,
+            should_compact,
+        }
+    }
+
+    /// Check if context should be compacted based on last LLM response
+    pub fn should_compact(&self) -> bool {
+        self.current_usage().should_compact
+    }
+
+    /// Get the token counter (for heuristic counting during compaction)
     pub fn counter(&self) -> &TokenCounter {
         &self.counter
     }
@@ -136,93 +166,10 @@ impl ContextMonitor {
         self.config = config;
     }
 
-    /// Calculate context usage from messages
-    pub fn calculate_usage(
-        &self,
-        messages: &[Message],
-        system_prompt: &str,
-        memory_content: Option<&str>,
-    ) -> ContextUsage {
-        let limit_tokens = self.counter.context_limit();
-
-        // Count system tokens
-        let system_tokens = self.counter.count(system_prompt);
-
-        // Count memory tokens
-        let memory_tokens = memory_content.map(|c| self.counter.count(c)).unwrap_or(0);
-
-        // Count conversation and tool tokens, separating input from output
-        let mut conversation_tokens = 0;
-        let mut tool_tokens = 0;
-        let mut user_tokens = 0;
-        let mut assistant_tokens = 0;
-
-        for msg in messages {
-            let tokens = self.counter.count(&msg.content) + 4; // +4 for message overhead
-
-            match msg.role {
-                super::MessageRole::Tool => {
-                    tool_tokens += tokens;
-                }
-                super::MessageRole::User => {
-                    user_tokens += tokens;
-                    conversation_tokens += tokens;
-                }
-                super::MessageRole::Assistant => {
-                    assistant_tokens += tokens;
-                    conversation_tokens += tokens;
-                }
-                super::MessageRole::System => {
-                    // System messages in conversation count as input
-                    user_tokens += tokens;
-                    conversation_tokens += tokens;
-                }
-            }
-        }
-
-        // Input = system prompt + memory + user messages + tool results
-        // Output = assistant messages
-        let input_tokens = system_tokens + memory_tokens + user_tokens + tool_tokens;
-        let output_tokens = assistant_tokens;
-
-        let used_tokens = system_tokens + memory_tokens + conversation_tokens + tool_tokens;
-        let remaining_tokens = limit_tokens.saturating_sub(used_tokens);
-        let used_percentage = if limit_tokens > 0 {
-            used_tokens as f64 / limit_tokens as f64
-        } else {
-            0.0
-        };
-
-        let should_compact = used_percentage >= self.config.auto_compact_threshold
-            || remaining_tokens < self.config.min_remaining_tokens;
-
-        ContextUsage {
-            used_tokens,
-            limit_tokens,
-            used_percentage,
-            remaining_tokens,
-            should_compact,
-            breakdown: ContextBreakdown {
-                system_tokens,
-                conversation_tokens,
-                tool_tokens,
-                memory_tokens,
-                input_tokens,
-                output_tokens,
-                current_output_tokens: 0,  // Set by caller if known
-            },
-        }
-    }
-
-    /// Check if we should evaluate context usage based on iteration count
-    pub fn should_check(&mut self) -> bool {
-        self.iteration_count += 1;
-        self.iteration_count.is_multiple_of(self.config.check_interval)
-    }
-
-    /// Reset the iteration counter
-    pub fn reset_counter(&mut self) {
-        self.iteration_count = 0;
+    /// Reset token counts (e.g., after compaction)
+    pub fn reset_tokens(&mut self) {
+        self.last_input_tokens = 0;
+        self.last_output_tokens = 0;
     }
 
     /// Format context usage as a human-readable string
@@ -244,22 +191,16 @@ impl ContextMonitor {
             r#"Context Usage: {:.1}% {} {}
 
 Tokens: {}/{} ({} remaining)
-
-Breakdown:
-  System:       {:>6} tokens
-  Memory:       {:>6} tokens
-  Conversation: {:>6} tokens
-  Tool calls:   {:>6} tokens"#,
+  Input:  {} tokens
+  Output: {} tokens"#,
             usage.used_percentage * 100.0,
             bar,
             status,
-            usage.used_tokens,
+            usage.input_tokens + usage.output_tokens,
             usage.limit_tokens,
             usage.remaining_tokens,
-            usage.breakdown.system_tokens,
-            usage.breakdown.memory_tokens,
-            usage.breakdown.conversation_tokens,
-            usage.breakdown.tool_tokens,
+            usage.input_tokens,
+            usage.output_tokens,
         )
     }
 }
@@ -267,105 +208,99 @@ Breakdown:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::MessageRole;
-    use chrono::Utc;
-
-    fn create_test_message(role: MessageRole, content: &str) -> Message {
-        Message {
-            role,
-            content: content.to_string(),
-            timestamp: Utc::now(),
-        }
-    }
 
     #[test]
-    fn test_calculate_usage_empty() {
+    fn test_initial_state() {
         let monitor = ContextMonitor::new("anthropic");
-        let usage = monitor.calculate_usage(&[], "You are a helpful assistant.", None);
+        let usage = monitor.current_usage();
 
-        assert!(usage.used_tokens > 0);
-        assert!(usage.used_percentage < 0.01);
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
         assert!(!usage.should_compact);
     }
 
     #[test]
-    fn test_calculate_usage_with_messages() {
-        let monitor = ContextMonitor::new("anthropic");
-        let messages = vec![
-            create_test_message(MessageRole::User, "Hello, how are you?"),
-            create_test_message(MessageRole::Assistant, "I'm doing well, thank you!"),
-        ];
+    fn test_update_from_response() {
+        let mut monitor = ContextMonitor::new("anthropic");
 
-        let usage = monitor.calculate_usage(&messages, "You are a helpful assistant.", None);
+        // Simulate LLM response with token counts
+        monitor.update_from_response(Some(50_000), Some(1_000));
 
-        assert!(usage.breakdown.conversation_tokens > 0);
-        assert!(usage.breakdown.system_tokens > 0);
-        assert_eq!(usage.breakdown.tool_tokens, 0);
-    }
-
-    #[test]
-    fn test_calculate_usage_with_memory() {
-        let monitor = ContextMonitor::new("anthropic");
-        let memory = "# Project\nThis is a Rust project using Tokio.";
-
-        let usage = monitor.calculate_usage(&[], "System prompt", Some(memory));
-
-        assert!(usage.breakdown.memory_tokens > 0);
+        let usage = monitor.current_usage();
+        assert_eq!(usage.input_tokens, 50_000);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert!(usage.used_percentage > 0.0);
     }
 
     #[test]
     fn test_should_compact_threshold() {
-        // Test compaction threshold by using a low percentage
-        let threshold = 0.0001; // Very low threshold - will always trigger
         let config = MonitorConfig {
-            auto_compact_threshold: threshold,
-            min_remaining_tokens: 0, // Don't use this condition
-            check_interval: 5,
+            auto_compact_threshold: 0.75,
+            min_remaining_tokens: 0,
         };
 
-        let monitor = ContextMonitor::with_config("anthropic", config);
+        let mut monitor = ContextMonitor::with_config("anthropic", config);
 
-        // Any messages should trigger compaction due to low threshold
-        let messages = vec![
-            create_test_message(MessageRole::User, "Hello, this is a message."),
-            create_test_message(MessageRole::Assistant, "Hi there, thanks for reaching out!"),
-        ];
+        // Below threshold (75% of 200k = 150k)
+        monitor.update_from_response(Some(100_000), Some(0));
+        assert!(!monitor.should_compact());
 
-        let usage = monitor.calculate_usage(&messages, "System prompt", None);
-        // Should trigger because any usage exceeds 0.01% threshold
-        assert!(
-            usage.should_compact,
-            "Should compact due to low threshold. used_percentage: {}, threshold: {}",
-            usage.used_percentage,
-            threshold
-        );
+        // Above threshold
+        monitor.update_from_response(Some(160_000), Some(0));
+        assert!(monitor.should_compact());
     }
 
     #[test]
-    fn test_should_check_interval() {
+    fn test_should_compact_min_remaining() {
+        let config = MonitorConfig {
+            auto_compact_threshold: 1.0, // Never trigger by percentage
+            min_remaining_tokens: 50_000,
+        };
+
+        let mut monitor = ContextMonitor::with_config("anthropic", config);
+        // 200k limit, 50k min remaining means 150k max usage
+
+        // Below limit
+        monitor.update_from_response(Some(140_000), Some(0));
+        assert!(!monitor.should_compact());
+
+        // Above limit (less than 50k remaining)
+        monitor.update_from_response(Some(160_000), Some(0));
+        assert!(monitor.should_compact());
+    }
+
+    #[test]
+    fn test_context_limit() {
+        let monitor = ContextMonitor::new("anthropic");
+        assert_eq!(monitor.context_limit(), 200_000);
+
+        let monitor = ContextMonitor::new("openai");
+        // OpenAI default from catalog
+        assert!(monitor.context_limit() > 0);
+    }
+
+    #[test]
+    fn test_reset_tokens() {
         let mut monitor = ContextMonitor::new("anthropic");
+        monitor.update_from_response(Some(100_000), Some(5_000));
 
-        // Default interval is 5
-        assert!(!monitor.should_check()); // 1
-        assert!(!monitor.should_check()); // 2
-        assert!(!monitor.should_check()); // 3
-        assert!(!monitor.should_check()); // 4
-        assert!(monitor.should_check()); // 5 - should trigger
+        monitor.reset_tokens();
 
-        assert!(!monitor.should_check()); // 6
-        assert!(!monitor.should_check()); // 7
-        assert!(!monitor.should_check()); // 8
-        assert!(!monitor.should_check()); // 9
-        assert!(monitor.should_check()); // 10 - should trigger
+        let usage = monitor.current_usage();
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
     }
 
     #[test]
     fn test_format_usage() {
-        let monitor = ContextMonitor::new("anthropic");
-        let usage = monitor.calculate_usage(&[], "System", None);
+        let mut monitor = ContextMonitor::new("anthropic");
+        monitor.update_from_response(Some(50_000), Some(1_000));
+
+        let usage = monitor.current_usage();
         let formatted = monitor.format_usage(&usage);
 
         assert!(formatted.contains("Context Usage:"));
-        assert!(formatted.contains("Breakdown:"));
+        assert!(formatted.contains("Input:"));
+        assert!(formatted.contains("Output:"));
     }
 }

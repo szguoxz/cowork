@@ -13,7 +13,7 @@ pub mod summarizer;
 pub mod tokens;
 
 pub use gather::{ContextGatherer, MemoryFile, MemoryHierarchy, MemoryTier, ProjectContext};
-pub use monitor::{ContextBreakdown, ContextMonitor, ContextUsage, MonitorConfig};
+pub use monitor::{ContextMonitor, ContextUsage, MonitorConfig};
 pub use summarizer::{CompactConfig, CompactResult, ConversationSummarizer, SummarizerConfig};
 pub use tokens::TokenCounter;
 

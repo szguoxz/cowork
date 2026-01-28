@@ -403,6 +403,9 @@ impl AgentLoop {
 
             let response = self.call_llm().await?;
 
+            // Update context monitor with LLM-reported token counts
+            self.context_monitor.update_from_response(response.input_tokens, response.output_tokens);
+
             // Generate message ID
             let msg_id = uuid::Uuid::new_v4().to_string();
 
@@ -1021,32 +1024,21 @@ impl AgentLoop {
     /// Check context usage and compact if necessary
     ///
     /// This implements automatic context management similar to Claude Code:
-    /// - Calculates current token usage
+    /// - Uses LLM-reported token counts for accurate tracking
     /// - If above threshold (75%), triggers auto-compaction
     /// - Uses LLM-powered summarization when possible, falls back to heuristics
     async fn check_and_compact_context(&mut self) -> Result<()> {
-        let messages = self.chat_messages_to_context_messages();
+        // Get usage from last LLM response (stored in monitor)
+        let usage = self.context_monitor.current_usage();
 
-        // Serialize tool definitions to count their tokens
-        // Tool definitions are sent with every request and can be quite large
-        let tool_defs_json = serde_json::to_string(&self.tool_definitions).unwrap_or_default();
-
-        let usage = self.context_monitor.calculate_usage(
-            &messages,
-            &self.session.system_prompt,
-            Some(&tool_defs_json), // Include tool definitions in token count
-        );
-
-        // Log detailed breakdown for debugging context issues
+        // Log context usage for debugging
         info!(
-            "Context usage: {:.1}% ({}/{} tokens) - breakdown: system={}, memory/tools={}, conversation={}, tool_results={}",
+            "Context usage: {:.1}% ({}/{} tokens) - input={}, output={}",
             usage.used_percentage * 100.0,
-            usage.used_tokens,
+            usage.input_tokens + usage.output_tokens,
             usage.limit_tokens,
-            usage.breakdown.system_tokens,
-            usage.breakdown.memory_tokens,
-            usage.breakdown.conversation_tokens,
-            usage.breakdown.tool_tokens,
+            usage.input_tokens,
+            usage.output_tokens,
         );
 
         if !usage.should_compact {
@@ -1065,8 +1057,10 @@ impl AgentLoop {
         )))
         .await;
 
+        // Convert session messages to context messages for summarization
+        let messages = self.chat_messages_to_context_messages();
+
         // Use LLM-powered compaction for better context preservation
-        // This is a separate API call, not recursive - Claude Code does this too
         let config = CompactConfig::auto();
 
         // Perform compaction using LLM for better context preservation
@@ -1088,6 +1082,9 @@ impl AgentLoop {
 
         // Replace session messages with compacted version
         self.apply_compaction_result(&result);
+
+        // Reset token counts after compaction - next LLM response will update
+        self.context_monitor.reset_tokens();
 
         // Emit completion notification
         self.emit(SessionOutput::thinking(format!(

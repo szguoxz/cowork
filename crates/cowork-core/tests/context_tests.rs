@@ -362,7 +362,6 @@ mod context_monitor_tests {
         assert!(config.auto_compact_threshold > 0.0);
         assert!(config.auto_compact_threshold < 1.0);
         assert!(config.min_remaining_tokens > 0);
-        assert!(config.check_interval > 0);
     }
 
     #[test]
@@ -370,99 +369,99 @@ mod context_monitor_tests {
         let config = MonitorConfig {
             auto_compact_threshold: 0.5,
             min_remaining_tokens: 10_000,
-            check_interval: 3,
         };
         let monitor = ContextMonitor::with_config("anthropic", config);
 
         assert_eq!(monitor.config().auto_compact_threshold, 0.5);
         assert_eq!(monitor.config().min_remaining_tokens, 10_000);
-        assert_eq!(monitor.config().check_interval, 3);
     }
 
     #[test]
-    fn test_calculate_usage_empty() {
+    fn test_initial_usage() {
         let monitor = ContextMonitor::new("anthropic");
-        let usage = monitor.calculate_usage(&[], "System prompt", None);
+        let usage = monitor.current_usage();
 
-        assert!(usage.used_tokens > 0, "System prompt should use tokens");
-        assert!(usage.used_percentage < 0.01, "Usage should be minimal");
-        assert!(!usage.should_compact, "Should not need compaction");
-        assert!(usage.breakdown.system_tokens > 0);
-        assert_eq!(usage.breakdown.conversation_tokens, 0);
-        assert_eq!(usage.breakdown.tool_tokens, 0);
-        assert_eq!(usage.breakdown.memory_tokens, 0);
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert!(!usage.should_compact);
     }
 
     #[test]
-    fn test_calculate_usage_with_messages() {
-        let monitor = ContextMonitor::new("anthropic");
-        let messages = vec![
-            msg(MessageRole::User, "Hello, how are you?"),
-            msg(MessageRole::Assistant, "I'm doing well, thank you!"),
-            msg(MessageRole::Tool, "Tool result: success"),
-        ];
-
-        let usage = monitor.calculate_usage(&messages, "System prompt", None);
-
-        assert!(usage.breakdown.conversation_tokens > 0);
-        assert!(usage.breakdown.tool_tokens > 0);
-    }
-
-    #[test]
-    fn test_calculate_usage_with_memory() {
-        let monitor = ContextMonitor::new("anthropic");
-        let memory = "# Project\nThis is the CLAUDE.md file content.";
-
-        let usage = monitor.calculate_usage(&[], "System", Some(memory));
-
-        assert!(usage.breakdown.memory_tokens > 0);
-    }
-
-    #[test]
-    fn test_should_check_interval() {
+    fn test_update_from_response() {
         let mut monitor = ContextMonitor::new("anthropic");
 
-        // Default interval is 5
-        for i in 1..=10 {
-            let should = monitor.should_check();
-            if i % 5 == 0 {
-                assert!(should, "Should check at iteration {}", i);
-            } else {
-                assert!(!should, "Should not check at iteration {}", i);
-            }
-        }
+        // Simulate LLM response with token counts
+        monitor.update_from_response(Some(50_000), Some(1_000));
+
+        let usage = monitor.current_usage();
+        assert_eq!(usage.input_tokens, 50_000);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert!(usage.used_percentage > 0.0);
+    }
+
+    #[test]
+    fn test_should_compact_threshold() {
+        let config = MonitorConfig {
+            auto_compact_threshold: 0.75,
+            min_remaining_tokens: 0,
+        };
+        let mut monitor = ContextMonitor::with_config("anthropic", config);
+
+        // Below threshold (75% of 200k = 150k)
+        monitor.update_from_response(Some(100_000), Some(0));
+        assert!(!monitor.should_compact());
+
+        // Above threshold
+        monitor.update_from_response(Some(160_000), Some(0));
+        assert!(monitor.should_compact());
+    }
+
+    #[test]
+    fn test_should_compact_min_remaining() {
+        let config = MonitorConfig {
+            auto_compact_threshold: 1.0, // Never trigger by percentage
+            min_remaining_tokens: 50_000,
+        };
+        let mut monitor = ContextMonitor::with_config("anthropic", config);
+
+        // Below limit (200k - 140k = 60k remaining > 50k min)
+        monitor.update_from_response(Some(140_000), Some(0));
+        assert!(!monitor.should_compact());
+
+        // Above limit (200k - 160k = 40k remaining < 50k min)
+        monitor.update_from_response(Some(160_000), Some(0));
+        assert!(monitor.should_compact());
+    }
+
+    #[test]
+    fn test_reset_tokens() {
+        let mut monitor = ContextMonitor::new("anthropic");
+        monitor.update_from_response(Some(100_000), Some(5_000));
+
+        monitor.reset_tokens();
+
+        let usage = monitor.current_usage();
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
     }
 
     #[test]
     fn test_format_usage() {
-        let monitor = ContextMonitor::new("anthropic");
-        let usage = monitor.calculate_usage(&[], "System prompt", None);
+        let mut monitor = ContextMonitor::new("anthropic");
+        monitor.update_from_response(Some(50_000), Some(1_000));
+
+        let usage = monitor.current_usage();
         let formatted = monitor.format_usage(&usage);
 
         assert!(formatted.contains("Context Usage:"));
-        assert!(formatted.contains("Breakdown:"));
-        assert!(formatted.contains("System:"));
-        assert!(formatted.contains("Memory:"));
-        assert!(formatted.contains("Conversation:"));
-        assert!(formatted.contains("Tool calls:"));
+        assert!(formatted.contains("Input:"));
+        assert!(formatted.contains("Output:"));
     }
 
     #[test]
-    fn test_usage_triggers_compaction() {
-        let config = MonitorConfig {
-            auto_compact_threshold: 0.01, // Very low threshold
-            min_remaining_tokens: 199_000, // Almost full
-            check_interval: 1,
-        };
-        let monitor = ContextMonitor::with_config("anthropic", config);
-
-        // Create enough messages to trigger compaction
-        let messages: Vec<_> = (0..100)
-            .map(|i| msg(MessageRole::User, &format!("Message {} with some content", i)))
-            .collect();
-
-        let usage = monitor.calculate_usage(&messages, "System", None);
-        assert!(usage.should_compact, "Should trigger compaction");
+    fn test_context_limit() {
+        let monitor = ContextMonitor::new("anthropic");
+        assert_eq!(monitor.context_limit(), 200_000);
     }
 }
 
