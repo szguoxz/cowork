@@ -677,18 +677,44 @@ fn draw_approval_modal(frame: &mut Frame, approval: &PendingApproval) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2), // Tool name
-            Constraint::Min(8),    // Arguments (more space)
-            Constraint::Length(6), // Options
-        ])
-        .split(inner);
+    // Adjust layout based on whether we have a description
+    let has_description = approval.description.is_some();
+    let chunks = if has_description {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2), // Tool name
+                Constraint::Length(4), // Description
+                Constraint::Min(4),    // Arguments
+                Constraint::Length(6), // Options
+            ])
+            .split(inner)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2), // Tool name
+                Constraint::Min(8),    // Arguments (more space when no description)
+                Constraint::Length(6), // Options
+            ])
+            .split(inner)
+    };
 
     let tool_text = Paragraph::new(format!("Tool: {}", approval.name))
         .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
     frame.render_widget(tool_text, chunks[0]);
+
+    // Show description if available, then arguments
+    let (args_chunk, options_chunk) = if has_description {
+        // Render description
+        let desc_text = Paragraph::new(approval.description.as_deref().unwrap_or(""))
+            .style(Style::default().fg(Color::White))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(desc_text, chunks[1]);
+        (chunks[2], chunks[3])
+    } else {
+        (chunks[1], chunks[2])
+    };
 
     // Format arguments nicely instead of raw JSON dump
     let args_lines = format_approval_args(&approval.name, &approval.arguments);
@@ -696,7 +722,7 @@ fn draw_approval_modal(frame: &mut Frame, approval: &PendingApproval) {
         .style(Style::default().fg(Color::Gray))
         .wrap(Wrap { trim: false })
         .block(Block::default().borders(Borders::TOP).title(" Details "));
-    frame.render_widget(args_text, chunks[1]);
+    frame.render_widget(args_text, args_chunk);
 
     let options: Vec<ListItem> = approval
         .options()
@@ -717,7 +743,7 @@ fn draw_approval_modal(frame: &mut Frame, approval: &PendingApproval) {
 
     let list = List::new(options)
         .block(Block::default().borders(Borders::TOP).title(" Select action (\u{2191}/\u{2193}, Enter) "));
-    frame.render_widget(list, chunks[2]);
+    frame.render_widget(list, options_chunk);
 }
 
 /// Draw the question modal

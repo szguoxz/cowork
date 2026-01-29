@@ -135,6 +135,48 @@ enum ComponentCommands {
     All,
 }
 
+/// Setup logging with stderr output and file logging for errors
+///
+/// Logs are written to:
+/// - stderr: warnings (or info/debug with --verbose)
+/// - file: errors always, in ~/.local/share/cowork/logs/cowork.log (or platform equivalent)
+fn setup_logging(verbose: bool) {
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+
+    // Get logs directory using platform-appropriate location
+    let logs_dir = directories::ProjectDirs::from("com", "cowork", "cowork")
+        .map(|dirs| dirs.data_dir().join("logs"))
+        .unwrap_or_else(|| PathBuf::from(".cowork/logs"));
+
+    // Create logs directory if it doesn't exist
+    let _ = std::fs::create_dir_all(&logs_dir);
+
+    // File appender for errors - daily rolling log file
+    let file_appender = tracing_appender::rolling::daily(&logs_dir, "cowork.log");
+
+    // Stderr layer - respects --verbose flag
+    let stderr_filter = if verbose {
+        "info,cowork_core=debug"
+    } else {
+        "warn"
+    };
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_filter(EnvFilter::new(stderr_filter));
+
+    // File layer - always logs errors (and warnings for context)
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_appender)
+        .with_ansi(false)  // No ANSI colors in file
+        .with_filter(EnvFilter::new("warn"));
+
+    // Combine layers
+    tracing_subscriber::registry()
+        .with(stderr_layer)
+        .with(file_layer)
+        .init();
+}
+
 /// Validate provider name, defaulting to "anthropic" if unknown
 fn validate_provider_id(provider_str: &str) -> &str {
     if catalog::get(provider_str).is_some() {
@@ -149,16 +191,8 @@ fn validate_provider_id(provider_str: &str) -> &str {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Setup logging - write to stderr to avoid interfering with TUI rendering on stdout
-    // Use --verbose for info/debug level logs
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(if cli.verbose {
-            "info,cowork_core=debug"
-        } else {
-            "warn"
-        })
-        .init();
+    // Setup logging with both stderr and file output
+    setup_logging(cli.verbose);
 
     // Use dunce::canonicalize to avoid UNC path prefix on Windows (\\?\)
     // If canonicalize fails, ensure we at least have an absolute path
@@ -908,15 +942,17 @@ fn show_config(workspace: &Path) {
     println!("{}", style("Configuration:").bold());
     println!();
     println!("  Workspace: {}", style(workspace.display()).green());
-    println!(
-        "  Config dir: {}",
-        style(
-            directories::ProjectDirs::from("com", "cowork", "cowork")
-                .map(|d| d.config_dir().display().to_string())
-                .unwrap_or_else(|| "N/A".to_string())
-        )
-        .dim()
-    );
+
+    if let Some(dirs) = directories::ProjectDirs::from("com", "cowork", "cowork") {
+        println!(
+            "  Config dir: {}",
+            style(dirs.config_dir().display()).dim()
+        );
+        println!(
+            "  Logs dir:   {}",
+            style(dirs.data_dir().join("logs").display()).dim()
+        );
+    }
 }
 
 /// Handle plugin management commands

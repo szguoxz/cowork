@@ -299,6 +299,7 @@ export default function Chat() {
           id={modal.id}
           name={modal.name}
           arguments={modal.arguments}
+          description={modal.description}
           onApprove={handleApprove}
           onReject={handleReject}
           onApproveForSession={handleApproveForSession}

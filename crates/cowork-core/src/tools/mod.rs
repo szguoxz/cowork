@@ -91,6 +91,14 @@ pub trait Tool: Send + Sync {
         ApprovalLevel::None
     }
 
+    /// Human-readable description for the approval modal
+    ///
+    /// Override this for tools with empty or non-descriptive arguments
+    /// to help users understand what they're approving.
+    fn approval_description(&self, _params: &Value) -> Option<String> {
+        None
+    }
+
     /// Convert to tool definition for LLM
     fn to_definition(&self) -> ToolDefinition {
         ToolDefinition::new(self.name())

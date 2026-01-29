@@ -181,7 +181,8 @@ export function SessionProvider({ children }: SessionProviderProps) {
       case 'thinking':
         updateSession(sessionId, s => ({
           ...s,
-          status: output.content ? 'Thinking...' : 'Processing...',
+          // Show actual content (e.g., compaction notifications) or fallback
+          status: output.content || 'Processing...',
           updatedAt: new Date(),
         }))
         break
@@ -231,6 +232,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
             id: output.id,
             name: output.name,
             arguments: output.arguments,
+            description: output.description,
             // If from subagent, route approvals there
             targetSessionId: output.subagent_id,
           },

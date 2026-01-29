@@ -616,8 +616,11 @@ impl AgentLoop {
                         }
                     }
                 } else {
-                    // Needs approval
-                    self.emit(SessionOutput::tool_pending(&tool_call.call_id, &tool_call.fn_name, tool_call.fn_arguments.clone(), None)).await;
+                    // Needs approval - get description from tool if available
+                    let description = self.tool_registry
+                        .get(&tool_call.fn_name)
+                        .and_then(|tool| tool.approval_description(&tool_call.fn_arguments));
+                    self.emit(SessionOutput::tool_pending(&tool_call.call_id, &tool_call.fn_name, tool_call.fn_arguments.clone(), description)).await;
 
                     // Wait for approval/rejection (loop to handle unexpected messages)
                     loop {

@@ -85,4 +85,8 @@ impl Tool for EnterPlanMode {
         // Requires user approval to enter plan mode
         ApprovalLevel::Low
     }
+
+    fn approval_description(&self, _params: &serde_json::Value) -> Option<String> {
+        Some("Entering plan mode".to_string())
+    }
 }

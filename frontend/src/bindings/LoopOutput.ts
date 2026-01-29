@@ -43,7 +43,7 @@ export type LoopOutput =
   | { type: "thinking"; session_id: string; content: string }
   | { type: "assistant_message"; session_id: string; id: string; content: string }
   | { type: "tool_start"; session_id: string; id: string; name: string; arguments: Record<string, unknown> }
-  | { type: "tool_pending"; session_id: string; id: string; name: string; arguments: Record<string, unknown>; subagent_id?: string }
+  | { type: "tool_pending"; session_id: string; id: string; name: string; arguments: Record<string, unknown>; description?: string; subagent_id?: string }
   | { type: "tool_done"; session_id: string; id: string; name: string; success: boolean; output: string }
   | { type: "tool_call"; session_id: string; id: string; name: string; arguments: Record<string, unknown>; formatted: string }
   | { type: "tool_result"; session_id: string; id: string; name: string; success: boolean; output: string; summary: string; diff_preview: DiffLine[] | null }
