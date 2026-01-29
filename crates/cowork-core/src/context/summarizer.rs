@@ -4,15 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::prompt::builtin::reminders::CONVERSATION_SUMMARIZATION;
-use crate::provider::{ChatMessage, GenAIProvider};
-
-use super::{Message, MessageRole};
+use crate::provider::{message_text_content, ChatMessage, ChatRole, GenAIProvider};
 
 /// Result of a compaction operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactResult {
-    /// The summary message that replaces the conversation
-    pub summary: Message,
+    /// The summary text that replaces the conversation
+    pub summary: String,
     /// Character count before compaction
     pub chars_before: usize,
     /// Character count after compaction
@@ -25,15 +23,15 @@ pub struct CompactResult {
 ///
 /// `preserve_instructions` - optional hints about what to preserve (e.g. "API changes")
 pub async fn compact(
-    messages: &[Message],
+    messages: &[ChatMessage],
     preserve_instructions: Option<&str>,
     provider: &GenAIProvider,
 ) -> Result<CompactResult> {
-    let chars_before: usize = messages.iter().map(|m| m.content.len()).sum();
+    let chars_before: usize = messages.iter().map(|m| message_text_content(m).len()).sum();
 
     if messages.is_empty() {
         return Ok(CompactResult {
-            summary: Message::new(MessageRole::User, "<summary>No prior context.</summary>"),
+            summary: "<summary>No prior context.</summary>".to_string(),
             chars_before: 0,
             chars_after: 0,
             messages_summarized: 0,
@@ -57,12 +55,10 @@ pub async fn compact(
 
     let response = provider.chat(llm_messages, None).await?;
 
-    let content = response.content.unwrap_or_else(|| {
+    let summary = response.content.unwrap_or_else(|| {
         "<summary>Previous conversation involved various development tasks.</summary>".to_string()
     });
-
-    let summary = Message::new(MessageRole::User, content);
-    let chars_after = summary.content.len();
+    let chars_after = summary.len();
 
     Ok(CompactResult {
         summary,
@@ -72,17 +68,18 @@ pub async fn compact(
     })
 }
 
-fn format_for_summarization(messages: &[Message]) -> String {
+fn format_for_summarization(messages: &[ChatMessage]) -> String {
     messages
         .iter()
         .map(|m| {
             let role = match m.role {
-                MessageRole::User => "Human",
-                MessageRole::Assistant => "Assistant",
-                MessageRole::System => "System",
-                MessageRole::Tool => "Tool",
+                ChatRole::User => "Human",
+                ChatRole::Assistant => "Assistant",
+                ChatRole::System => "System",
+                ChatRole::Tool => "Tool",
             };
-            format!("{}: {}", role, m.content)
+            let content = message_text_content(m);
+            format!("{}: {}", role, content)
         })
         .collect::<Vec<_>>()
         .join("\n\n")

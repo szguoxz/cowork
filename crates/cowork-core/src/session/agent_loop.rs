@@ -18,10 +18,7 @@ use tracing::{debug, error, info, warn};
 use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
 use crate::approval::ToolApprovalConfig;
 use crate::formatting::{format_tool_call, format_tool_result_summary};
-use crate::context::{
-    compact, Message, MessageRole,
-    context_limit, usage_stats,
-};
+use crate::context::{compact, context_limit, usage_stats};
 use crate::error::Result;
 use crate::orchestration::{ChatSession, ToolRegistryBuilder};
 use crate::prompt::{HookContext, HookEvent, HookExecutor, HooksConfig};
@@ -979,45 +976,6 @@ impl AgentLoop {
     // Context Management
     // ========================================================================
 
-    /// Convert ChatMessages to context Messages for token counting
-    ///
-    /// IMPORTANT: This includes tool calls and tool responses in the content
-    /// because they contribute significantly to the actual token count sent to the LLM.
-    fn chat_messages_to_context_messages(&self) -> Vec<Message> {
-        use crate::provider::ChatRole;
-
-        self.session
-            .messages
-            .iter()
-            .map(|cm| {
-                let role = match cm.role {
-                    ChatRole::User => MessageRole::User,
-                    ChatRole::Assistant => MessageRole::Assistant,
-                    ChatRole::System => MessageRole::System,
-                    ChatRole::Tool => MessageRole::Tool,
-                };
-
-                // Build full content from MessageContent
-                let mut full_content = cm.content.joined_texts().unwrap_or_default();
-
-                // Add tool calls
-                for tc in cm.content.tool_calls() {
-                    full_content.push_str(&tc.fn_name);
-                    if let Ok(json) = serde_json::to_string(&tc.fn_arguments) {
-                        full_content.push_str(&json);
-                    }
-                }
-
-                // Add tool responses
-                for tr in cm.content.tool_responses() {
-                    full_content.push_str(&tr.content);
-                }
-
-                Message::new(role, &full_content)
-            })
-            .collect()
-    }
-
     /// Check context usage and compact if necessary
     ///
     /// This implements automatic context management similar to Claude Code:
@@ -1054,11 +1012,8 @@ impl AgentLoop {
         )))
         .await;
 
-        // Convert session messages to context messages for summarization
-        let messages = self.chat_messages_to_context_messages();
-
         // Perform compaction using LLM
-        let result = compact(&messages, None, &self.provider).await?;
+        let result = compact(&self.session.messages, None, &self.provider).await?;
 
         info!(
             "Compaction complete: {} -> {} chars ({} messages summarized)",
@@ -1094,7 +1049,7 @@ impl AgentLoop {
 
         // Add the summary as a single USER message (following Anthropic SDK)
         // The summary contains <summary>...</summary> tags
-        self.session.messages.push(ChatMessage::user(&result.summary.content));
+        self.session.messages.push(ChatMessage::user(&result.summary));
     }
 
     // ========================================================================

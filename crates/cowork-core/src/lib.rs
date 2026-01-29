@@ -23,7 +23,7 @@ pub mod update;
 
 pub use approval::{ApprovalLevel, ApprovalPolicy, ApprovalRequest, ToolApprovalConfig};
 pub use config::{defaults, Config, ConfigManager, McpServerConfig, ModelTiers, ProviderConfig};
-pub use context::{Message, MessageRole};
+// Context exports moved to context module
 pub use mcp_manager::{McpServerInfo, McpServerManager, McpServerStatus, McpToolInfo};
 pub use error::{Error, Result};
 pub use provider::{
