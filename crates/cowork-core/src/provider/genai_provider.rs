@@ -288,9 +288,7 @@ impl GenAIProvider {
         }
 
         // Append all messages directly (ChatMessage is genai's native type)
-        for msg in messages {
-            chat_req = chat_req.append_message(msg);
-        }
+        chat_req = chat_req.append_messages(messages);
 
         // Add tools if provided (ToolDefinition is now genai::chat::Tool)
         if let Some(tool_defs) = tools {
