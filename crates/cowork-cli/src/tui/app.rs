@@ -96,15 +96,17 @@ pub struct PendingApproval {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+    pub description: Option<String>,
     pub selected_option: usize,
 }
 
 impl PendingApproval {
-    pub fn new(id: String, name: String, arguments: serde_json::Value) -> Self {
+    pub fn new(id: String, name: String, arguments: serde_json::Value, description: Option<String>) -> Self {
         Self {
             id,
             name,
             arguments,
+            description,
             selected_option: 0,
         }
     }
@@ -366,7 +368,8 @@ impl App {
                 if content.is_empty() {
                     self.status = "Processing...".to_string();
                 } else {
-                    self.status = "Thinking...".to_string();
+                    // Show actual content (e.g., compaction notifications)
+                    self.status = content;
                 }
             }
             SessionOutput::TextDelta { delta, .. } => {
@@ -389,8 +392,8 @@ impl App {
                 self.status = "Processing...".to_string();
                 self.ephemeral = Some(format_ephemeral(&name, &arguments));
             }
-            SessionOutput::ToolPending { id, name, arguments, .. } => {
-                self.modal = Some(Modal::Approval(PendingApproval::new(id, name, arguments)));
+            SessionOutput::ToolPending { id, name, arguments, description, .. } => {
+                self.modal = Some(Modal::Approval(PendingApproval::new(id, name, arguments, description)));
             }
             SessionOutput::ToolDone { name, success, output, .. } => {
                 if success {
@@ -475,5 +478,47 @@ mod tests {
         assert_eq!(app.messages.len(), 2);
         let last_msg = &app.messages[1];
         assert_eq!(last_msg.content, "Hello world");
+    }
+
+    #[test]
+    fn test_tool_pending_with_description() {
+        let mut app = App::new("test".to_string(), "0.1.0".to_string());
+
+        let description = Some("Enter plan mode to design an implementation approach.".to_string());
+        app.handle_session_output(SessionOutput::tool_pending(
+            "tool-1",
+            "EnterPlanMode",
+            serde_json::json!({}),
+            description.clone(),
+        ));
+
+        assert!(app.modal.is_some());
+        if let Some(Modal::Approval(approval)) = &app.modal {
+            assert_eq!(approval.name, "EnterPlanMode");
+            assert_eq!(approval.description, description);
+            assert!(approval.arguments.as_object().unwrap().is_empty());
+        } else {
+            panic!("Expected Approval modal");
+        }
+    }
+
+    #[test]
+    fn test_tool_pending_without_description() {
+        let mut app = App::new("test".to_string(), "0.1.0".to_string());
+
+        app.handle_session_output(SessionOutput::tool_pending(
+            "tool-1",
+            "Bash",
+            serde_json::json!({"command": "ls -la"}),
+            None,
+        ));
+
+        assert!(app.modal.is_some());
+        if let Some(Modal::Approval(approval)) = &app.modal {
+            assert_eq!(approval.name, "Bash");
+            assert!(approval.description.is_none());
+        } else {
+            panic!("Expected Approval modal");
+        }
     }
 }

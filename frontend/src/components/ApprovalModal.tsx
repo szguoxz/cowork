@@ -5,6 +5,7 @@ interface ApprovalModalProps {
   id: string
   name: string
   arguments: Record<string, unknown>
+  description?: string
   onApprove: (id: string) => void
   onReject: (id: string) => void
   onApproveForSession: (id: string, name: string) => void
@@ -22,7 +23,7 @@ function formatArgs(args: Record<string, unknown>): string {
     .join('\n')
 }
 
-export default function ApprovalModal({ id, name, arguments: args, onApprove, onReject, onApproveForSession, onApproveAll }: ApprovalModalProps) {
+export default function ApprovalModal({ id, name, arguments: args, description, onApprove, onReject, onApproveForSession, onApproveAll }: ApprovalModalProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'y' || e.key === 'Y' || e.key === 'Enter') {
@@ -58,7 +59,10 @@ export default function ApprovalModal({ id, name, arguments: args, onApprove, on
         </div>
 
         {/* Content */}
-        <div className="px-4 py-3 flex-1 overflow-auto min-h-0">
+        <div className="px-4 py-3 flex-1 overflow-auto min-h-0 space-y-3">
+          {description && (
+            <p className="text-sm text-foreground">{description}</p>
+          )}
           {Object.keys(args).length > 0 && (
             <pre className="text-xs font-mono text-foreground bg-secondary/50 rounded-lg p-3 max-h-[50vh] overflow-auto whitespace-pre-wrap break-words">
               {formatArgs(args)}
