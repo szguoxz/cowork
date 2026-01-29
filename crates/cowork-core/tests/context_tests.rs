@@ -2,7 +2,7 @@
 
 use cowork_core::context::{
     context_limit, should_compact, usage_stats,
-    CompactConfig, ContextGatherer, MemoryTier,
+    ContextGatherer, MemoryTier,
 };
 use tempfile::TempDir;
 use std::fs;
@@ -207,37 +207,5 @@ mod memory_hierarchy_tests {
         assert!(!hierarchy.combined_content.is_empty());
         assert!(hierarchy.combined_content.contains("Project Instructions"));
         assert!(hierarchy.combined_content.contains("Coding Style"));
-    }
-}
-
-mod compact_config_tests {
-    use super::*;
-
-    #[test]
-    fn test_default_config() {
-        let config = CompactConfig::default();
-        assert!(config.preserve_instructions.is_none());
-    }
-
-    #[test]
-    fn test_auto_config() {
-        let config = CompactConfig::auto();
-        assert!(config.preserve_instructions.is_none());
-    }
-
-    #[test]
-    fn test_from_command() {
-        let config = CompactConfig::from_command(Some("keep API changes".to_string()));
-
-        assert_eq!(
-            config.preserve_instructions,
-            Some("keep API changes".to_string())
-        );
-    }
-
-    #[test]
-    fn test_from_command_none() {
-        let config = CompactConfig::from_command(None);
-        assert!(config.preserve_instructions.is_none());
     }
 }

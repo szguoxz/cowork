@@ -13,7 +13,7 @@ pub mod summarizer;
 
 pub use gather::{ContextGatherer, MemoryFile, MemoryHierarchy, MemoryTier, ProjectContext};
 pub use monitor::{context_limit, should_compact, usage_stats, format_usage, ContextUsage};
-pub use summarizer::{compact, CompactConfig, CompactResult};
+pub use summarizer::{compact, CompactResult};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

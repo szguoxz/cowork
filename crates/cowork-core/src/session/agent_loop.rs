@@ -19,7 +19,7 @@ use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
 use crate::approval::ToolApprovalConfig;
 use crate::formatting::{format_tool_call, format_tool_result_summary};
 use crate::context::{
-    compact, CompactConfig, Message, MessageRole,
+    compact, Message, MessageRole,
     context_limit, usage_stats,
 };
 use crate::error::Result;
@@ -1057,11 +1057,8 @@ impl AgentLoop {
         // Convert session messages to context messages for summarization
         let messages = self.chat_messages_to_context_messages();
 
-        // Use LLM-powered compaction for better context preservation
-        let config = CompactConfig::auto();
-
-        // Perform compaction using LLM for better context preservation
-        let result = compact(&messages, config, &self.provider).await?;
+        // Perform compaction using LLM
+        let result = compact(&messages, None, &self.provider).await?;
 
         info!(
             "Compaction complete: {} -> {} chars ({} messages summarized)",
