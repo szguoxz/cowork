@@ -341,6 +341,7 @@ async fn run_one_shot(
     let session_id = "cli-oneshot";
 
     // Send the prompt
+    // Note: @path image parsing is handled by the core AgentLoop
     session_manager
         .push_message(session_id, SessionInput::user_message(prompt))
         .await?;
@@ -822,6 +823,7 @@ async fn handle_user_input(
         }
         _ => {
             // Regular message to AI
+            // Note: @path image parsing is handled by the core AgentLoop
             app.add_message(Message::user(input));
             app.status = "Sending...".to_string();
 

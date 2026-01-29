@@ -34,12 +34,150 @@ fn format_token_count(tokens: u64) -> String {
 /// Used to route approval/answer inputs to both top-level sessions and subagents.
 pub type SessionRegistry = Arc<parking_lot::RwLock<HashMap<SessionId, mpsc::Sender<SessionInput>>>>;
 
+/// An image attachment for multimodal input
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageAttachment {
+    /// Base64-encoded image data
+    pub data: String,
+    /// MIME type (e.g., "image/png", "image/jpeg")
+    pub media_type: String,
+}
+
+impl ImageAttachment {
+    /// Create a new image attachment from base64 data and media type
+    pub fn new(data: impl Into<String>, media_type: impl Into<String>) -> Self {
+        Self {
+            data: data.into(),
+            media_type: media_type.into(),
+        }
+    }
+
+    /// Load an image from a file path
+    pub fn from_file(path: &std::path::Path) -> std::io::Result<Self> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        use std::io::Read;
+
+        let mut file = std::fs::File::open(path)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+
+        let data = STANDARD.encode(&buffer);
+
+        let media_type = match path.extension().and_then(|e| e.to_str()) {
+            Some("png") => "image/png",
+            Some("jpg") | Some("jpeg") => "image/jpeg",
+            Some("gif") => "image/gif",
+            Some("webp") => "image/webp",
+            Some("svg") => "image/svg+xml",
+            _ => "application/octet-stream",
+        };
+
+        Ok(Self {
+            data,
+            media_type: media_type.to_string(),
+        })
+    }
+
+    /// Parse @path patterns from input text and return (cleaned_text, images)
+    ///
+    /// Supports patterns like:
+    /// - @/absolute/path/to/image.png
+    /// - @./relative/path/to/image.jpg
+    /// - @../parent/path.gif
+    /// - @~/home/relative/path.png
+    ///
+    /// Only image files (png, jpg, jpeg, gif, webp, svg) are extracted.
+    /// Non-image @paths are left in the text.
+    pub fn parse_from_text(input: &str, workspace: &std::path::Path) -> (String, Vec<Self>) {
+        use std::path::PathBuf;
+
+        let mut images = Vec::new();
+        let mut cleaned = String::new();
+        let mut last_end = 0;
+
+        // Get home directory for ~ expansion
+        let home_dir = std::env::var("HOME").ok().map(PathBuf::from);
+
+        // Match @path patterns (@ followed by path characters until whitespace or end)
+        // Path must start with /, ./, ../, or ~/
+        for (start, _) in input.match_indices('@') {
+            let rest = &input[start + 1..];
+
+            // Check if this looks like a path (starts with /, ./, ../, or ~/)
+            if !rest.starts_with('/')
+                && !rest.starts_with("./")
+                && !rest.starts_with("../")
+                && !rest.starts_with("~/")
+            {
+                continue;
+            }
+
+            // Find the end of the path (whitespace or end of string)
+            let path_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+            let path_str = &rest[..path_end];
+
+            // Expand ~ to home directory
+            let expanded_path = if let Some(stripped) = path_str.strip_prefix("~/") {
+                home_dir
+                    .as_ref()
+                    .map(|h| h.join(stripped))
+                    .unwrap_or_else(|| PathBuf::from(path_str))
+            } else if path_str.starts_with("./") || path_str.starts_with("../") {
+                workspace.join(path_str)
+            } else {
+                PathBuf::from(path_str)
+            };
+
+            // Check if it's a supported image file
+            let ext = expanded_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e: &str| e.to_lowercase());
+
+            let is_image = matches!(
+                ext.as_deref(),
+                Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "svg")
+            );
+
+            if is_image {
+                // Add the text before this @path
+                cleaned.push_str(&input[last_end..start]);
+                last_end = start + 1 + path_end;
+
+                // Try to load the image
+                match Self::from_file(&expanded_path) {
+                    Ok(attachment) => {
+                        images.push(attachment);
+                    }
+                    Err(e) => {
+                        // Keep the @path in the text and add an error note
+                        cleaned.push_str(&format!("@{} [error: {}]", path_str, e));
+                    }
+                }
+            }
+        }
+
+        // Add remaining text
+        cleaned.push_str(&input[last_end..]);
+
+        // Trim any extra whitespace that might result from removing @paths
+        let cleaned = cleaned.split_whitespace().collect::<Vec<&str>>().join(" ");
+
+        (cleaned, images)
+    }
+}
+
 /// Input messages sent TO an agent session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionInput {
-    /// User sends a message
+    /// User sends a text-only message
     UserMessage { content: String },
+    /// User sends a message with image attachments
+    UserMessageWithImages {
+        content: String,
+        images: Vec<ImageAttachment>,
+    },
     /// User approves a tool execution
     ApproveTool { tool_call_id: String },
     /// User rejects a tool execution
@@ -63,6 +201,14 @@ impl SessionInput {
     pub fn user_message(content: impl Into<String>) -> Self {
         Self::UserMessage {
             content: content.into(),
+        }
+    }
+
+    /// Create a user message with image attachments
+    pub fn user_message_with_images(content: impl Into<String>, images: Vec<ImageAttachment>) -> Self {
+        Self::UserMessageWithImages {
+            content: content.into(),
+            images,
         }
     }
 
