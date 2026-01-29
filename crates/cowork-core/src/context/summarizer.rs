@@ -9,21 +9,10 @@ use crate::provider::{ChatMessage, GenAIProvider};
 use super::{Message, MessageRole};
 
 /// Configuration for context compaction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompactConfig {
     /// Custom instructions for what to preserve during compaction
     pub preserve_instructions: Option<String>,
-    /// Whether to use the LLM for summarization (vs simple heuristics)
-    pub use_llm: bool,
-}
-
-impl Default for CompactConfig {
-    fn default() -> Self {
-        Self {
-            preserve_instructions: None,
-            use_llm: true,
-        }
-    }
 }
 
 impl CompactConfig {
@@ -34,10 +23,7 @@ impl CompactConfig {
 
     /// Create a config from a user command with optional instructions
     pub fn from_command(instructions: Option<String>) -> Self {
-        Self {
-            preserve_instructions: instructions,
-            ..Default::default()
-        }
+        Self { preserve_instructions: instructions }
     }
 }
 
@@ -54,11 +40,11 @@ pub struct CompactResult {
     pub messages_summarized: usize,
 }
 
-/// Compact conversation history into a summary
+/// Compact conversation history into a summary using LLM
 pub async fn compact(
     messages: &[Message],
     config: CompactConfig,
-    provider: Option<&GenAIProvider>,
+    provider: &GenAIProvider,
 ) -> Result<CompactResult> {
     let chars_before: usize = messages.iter().map(|m| m.content.len()).sum();
 
@@ -71,27 +57,6 @@ pub async fn compact(
         });
     }
 
-    let summary = match provider {
-        Some(p) if config.use_llm => generate_llm_summary(messages, p, &config).await?,
-        _ => generate_simple_summary(messages, &config),
-    };
-
-    let chars_after = summary.content.len();
-
-    Ok(CompactResult {
-        summary,
-        chars_before,
-        chars_after,
-        messages_summarized: messages.len(),
-    })
-}
-
-/// Generate LLM-powered summary
-async fn generate_llm_summary(
-    messages: &[Message],
-    provider: &GenAIProvider,
-    config: &CompactConfig,
-) -> Result<Message> {
     let conversation_text = format_for_summarization(messages);
 
     let mut summary_prompt = CONVERSATION_SUMMARIZATION.to_string();
@@ -114,66 +79,15 @@ async fn generate_llm_summary(
         "<summary>Previous conversation involved various development tasks.</summary>".to_string()
     });
 
-    Ok(Message::new(MessageRole::User, content))
-}
+    let summary = Message::new(MessageRole::User, content);
+    let chars_after = summary.content.len();
 
-/// Generate simple heuristic-based summary (fallback)
-fn generate_simple_summary(messages: &[Message], config: &CompactConfig) -> Message {
-    let mut files = Vec::new();
-    let mut topics = Vec::new();
-
-    for msg in messages {
-        // Extract file paths
-        for word in msg.content.split_whitespace() {
-            if is_file_path(word) {
-                let clean = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-');
-                if !files.contains(&clean.to_string()) && files.len() < 15 {
-                    files.push(clean.to_string());
-                }
-            }
-        }
-
-        // Extract topics from user messages
-        if matches!(msg.role, MessageRole::User) && msg.content.len() > 20 && topics.len() < 5 {
-            let topic: String = msg.content.chars().take(80).collect();
-            topics.push(topic);
-        }
-    }
-
-    let mut summary = format!("Summary of {} messages:\n", messages.len());
-
-    if let Some(ref instructions) = config.preserve_instructions {
-        summary.push_str(&format!("\n## Preserved Context\n{}\n", instructions));
-    }
-
-    if !topics.is_empty() {
-        summary.push_str("\n## Topics\n");
-        for (i, topic) in topics.iter().enumerate() {
-            summary.push_str(&format!("{}. {}...\n", i + 1, topic));
-        }
-    }
-
-    if !files.is_empty() {
-        summary.push_str("\n## Files\n");
-        for file in &files {
-            summary.push_str(&format!("- {}\n", file));
-        }
-    }
-
-    Message::new(MessageRole::User, format!("<summary>\n{}</summary>", summary))
-}
-
-fn is_file_path(word: &str) -> bool {
-    (word.contains('/') || word.contains('.'))
-        && (word.ends_with(".rs")
-            || word.ends_with(".ts")
-            || word.ends_with(".tsx")
-            || word.ends_with(".js")
-            || word.ends_with(".jsx")
-            || word.ends_with(".py")
-            || word.ends_with(".json")
-            || word.ends_with(".toml")
-            || word.ends_with(".md"))
+    Ok(CompactResult {
+        summary,
+        chars_before,
+        chars_after,
+        messages_summarized: messages.len(),
+    })
 }
 
 fn format_for_summarization(messages: &[Message]) -> String {

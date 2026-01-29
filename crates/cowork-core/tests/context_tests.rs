@@ -1,17 +1,11 @@
 //! Context management tests
 
 use cowork_core::context::{
-    compact, context_limit, should_compact, usage_stats,
-    CompactConfig, ContextGatherer,
-    Message, MessageRole, MemoryTier,
+    context_limit, should_compact, usage_stats,
+    CompactConfig, ContextGatherer, MemoryTier,
 };
 use tempfile::TempDir;
 use std::fs;
-
-/// Helper to create a message
-fn msg(role: MessageRole, content: &str) -> Message {
-    Message::new(role, content)
-}
 
 /// Create a test workspace with typical project files
 fn setup_project_workspace() -> TempDir {
@@ -222,16 +216,13 @@ mod compact_config_tests {
     #[test]
     fn test_default_config() {
         let config = CompactConfig::default();
-
-        assert!(config.use_llm);
         assert!(config.preserve_instructions.is_none());
     }
 
     #[test]
     fn test_auto_config() {
         let config = CompactConfig::auto();
-
-        assert!(config.use_llm);
+        assert!(config.preserve_instructions.is_none());
     }
 
     #[test]
@@ -243,87 +234,10 @@ mod compact_config_tests {
             Some("keep API changes".to_string())
         );
     }
-}
 
-mod compaction_tests {
-    use super::*;
-
-    fn generate_conversation(message_count: usize) -> Vec<Message> {
-        (0..message_count)
-            .map(|i| {
-                let role = if i % 2 == 0 {
-                    MessageRole::User
-                } else {
-                    MessageRole::Assistant
-                };
-                let content = format!(
-                    "Message {} with some code: fn foo() {{ return {}; }}",
-                    i, i
-                );
-                msg(role, &content)
-            })
-            .collect()
-    }
-
-    #[tokio::test]
-    async fn test_compact_small_conversation() {
-        let mut config = CompactConfig::default();
-        config.use_llm = false;
-
-        let messages = generate_conversation(5);
-        let result = compact(&messages, config, None).await.unwrap();
-
-        assert_eq!(result.messages_summarized, 5);
-        assert!(result.summary.content.contains("<summary>"));
-    }
-
-    #[tokio::test]
-    async fn test_compact_large_conversation() {
-        let mut config = CompactConfig::default();
-        config.use_llm = false;
-
-        let messages = generate_conversation(50);
-        let result = compact(&messages, config, None).await.unwrap();
-
-        assert_eq!(result.messages_summarized, 50);
-        assert!(result.chars_after <= result.chars_before);
-        assert!(!result.summary.content.is_empty());
-        assert!(result.summary.content.contains("<summary>"));
-    }
-
-    #[tokio::test]
-    async fn test_compact_preserves_instructions() {
-        let config = CompactConfig {
-            preserve_instructions: Some("API endpoints".to_string()),
-            use_llm: false,
-        };
-
-        let messages = generate_conversation(30);
-        let result = compact(&messages, config, None).await.unwrap();
-
-        assert!(result.summary.content.contains("Preserved Context"));
-        assert!(result.summary.content.contains("API endpoints"));
-    }
-
-    #[tokio::test]
-    async fn test_compact_returns_user_message() {
-        let mut config = CompactConfig::default();
-        config.use_llm = false;
-
-        let messages = generate_conversation(30);
-        let result = compact(&messages, config, None).await.unwrap();
-
-        assert!(matches!(result.summary.role, MessageRole::User));
-    }
-
-    #[tokio::test]
-    async fn test_compact_empty_messages() {
-        let config = CompactConfig::default();
-        let messages: Vec<Message> = vec![];
-
-        let result = compact(&messages, config, None).await.unwrap();
-
-        assert_eq!(result.messages_summarized, 0);
-        assert!(result.summary.content.contains("No prior context"));
+    #[test]
+    fn test_from_command_none() {
+        let config = CompactConfig::from_command(None);
+        assert!(config.preserve_instructions.is_none());
     }
 }

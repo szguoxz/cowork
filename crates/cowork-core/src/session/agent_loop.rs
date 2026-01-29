@@ -1061,7 +1061,7 @@ impl AgentLoop {
         let config = CompactConfig::auto();
 
         // Perform compaction using LLM for better context preservation
-        let result = compact(&messages, config, Some(&self.provider)).await?;
+        let result = compact(&messages, config, &self.provider).await?;
 
         info!(
             "Compaction complete: {} -> {} chars ({} messages summarized)",
