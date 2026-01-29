@@ -17,7 +17,7 @@ use cowork_core::config::ConfigManager;
 use cowork_core::provider::{catalog, has_api_key_configured};
 use cowork_core::orchestration::SystemPrompt;
 use cowork_core::prompt::{ComponentRegistry, TemplateVars, substitute_commands};
-use cowork_core::session::{SessionConfig, SessionInput, SessionManager, SessionOutput};
+use cowork_core::session::{SessionConfig, SessionInput, SessionManager, SessionOutput, ImageAttachment};
 use cowork_core::skills::SkillRegistry;
 use cowork_core::ToolApprovalConfig;
 // Import for ! prefix bash mode
@@ -144,12 +144,21 @@ fn setup_logging(verbose: bool) {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
     // Get logs directory using platform-appropriate location
+    // Primary: use ProjectDirs for proper app-specific location
+    // Fallback: use BaseDirs data directory with cowork subfolder
     let logs_dir = directories::ProjectDirs::from("com", "cowork", "cowork")
         .map(|dirs| dirs.data_dir().join("logs"))
+        .or_else(|| {
+            directories::BaseDirs::new().map(|base| base.data_dir().join("cowork").join("logs"))
+        })
         .unwrap_or_else(|| PathBuf::from(".cowork/logs"));
 
     // Create logs directory if it doesn't exist
-    let _ = std::fs::create_dir_all(&logs_dir);
+    if let Err(e) = std::fs::create_dir_all(&logs_dir) {
+        eprintln!("Warning: Failed to create logs directory {}: {}", logs_dir.display(), e);
+    } else if verbose {
+        eprintln!("Logs: {}", logs_dir.display());
+    }
 
     // File appender for errors - daily rolling log file
     let file_appender = tracing_appender::rolling::daily(&logs_dir, "cowork.log");
@@ -340,11 +349,20 @@ async fn run_one_shot(
 
     let session_id = "cli-oneshot";
 
-    // Send the prompt
-    // Note: @path image parsing is handled by the core AgentLoop
-    session_manager
-        .push_message(session_id, SessionInput::user_message(prompt))
-        .await?;
+    // Parse @path image attachments from the prompt
+    let (cleaned_prompt, images) = ImageAttachment::parse_from_text(prompt, &workspace);
+
+    // Send the prompt (with images if any)
+    if images.is_empty() {
+        session_manager
+            .push_message(session_id, SessionInput::user_message(prompt))
+            .await?;
+    } else {
+        println!("{}: {} [{} image(s)]", style("User").bold(), &cleaned_prompt, images.len());
+        session_manager
+            .push_message(session_id, SessionInput::user_message_with_images(&cleaned_prompt, images))
+            .await?;
+    }
 
     // Process outputs until idle
     while let Some((_, output)) = output_rx.recv().await {
@@ -822,14 +840,23 @@ async fn handle_user_input(
             }
         }
         _ => {
-            // Regular message to AI
-            // Note: @path image parsing is handled by the core AgentLoop
-            app.add_message(Message::user(input));
-            app.status = "Sending...".to_string();
+            // Regular message to AI - parse @path image attachments
+            let (cleaned_input, images) = ImageAttachment::parse_from_text(input, workspace);
 
-            session_manager
-                .push_message(session_id, SessionInput::user_message(input))
-                .await?;
+            if images.is_empty() {
+                app.add_message(Message::user(input));
+                app.status = "Sending...".to_string();
+                session_manager
+                    .push_message(session_id, SessionInput::user_message(input))
+                    .await?;
+            } else {
+                // Show user message with image count
+                app.add_message(Message::user(format!("{} [{} image(s)]", &cleaned_input, images.len())));
+                app.status = "Sending...".to_string();
+                session_manager
+                    .push_message(session_id, SessionInput::user_message_with_images(&cleaned_input, images))
+                    .await?;
+            }
         }
     }
 

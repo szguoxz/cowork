@@ -128,11 +128,33 @@ fn spawn_output_handler(app_handle: tauri::AppHandle, mut output_rx: OutputRecei
 /// Run the Tauri application
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+
+    // Get logs directory
+    let logs_dir = dirs::data_dir()
+        .map(|d| d.join("cowork").join("logs"))
+        .unwrap_or_else(|| std::path::PathBuf::from(".cowork/logs"));
+
+    // Create logs directory
+    let _ = std::fs::create_dir_all(&logs_dir);
+
+    // File appender for all logs
+    let file_appender = tracing_appender::rolling::daily(&logs_dir, "cowork-app.log");
+
+    // Stderr layer (for development/debugging when run from terminal)
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_filter(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()));
+
+    // File layer - logs everything
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_appender)
+        .with_ansi(false)
+        .with_filter(EnvFilter::new("info"));
+
+    tracing_subscriber::registry()
+        .with(stderr_layer)
+        .with(file_layer)
         .init();
 
     tauri::Builder::default()

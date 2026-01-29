@@ -91,8 +91,6 @@ type UserInput = (String, Vec<super::ImageAttachment>);
 pub struct AgentLoop {
     /// Session identifier
     session_id: SessionId,
-    /// Workspace path for resolving relative paths
-    workspace_path: std::path::PathBuf,
     /// Message receiver (questions from user, with optional images)
     message_rx: mpsc::UnboundedReceiver<UserInput>,
     /// Answer receiver (approvals/answers from user)
@@ -284,7 +282,6 @@ impl AgentLoop {
 
         Ok(Self {
             session_id,
-            workspace_path: config.workspace_path.clone(),
             message_rx,
             answer_rx,
             output_tx,
@@ -347,29 +344,15 @@ impl AgentLoop {
     async fn handle_user_message(
         &mut self,
         content: String,
-        mut images: Vec<super::ImageAttachment>,
+        images: Vec<super::ImageAttachment>,
     ) -> Result<()> {
-        // Parse @path patterns from the content to extract inline image references
-        let (cleaned_content, parsed_images) =
-            super::ImageAttachment::parse_from_text(&content, &self.workspace_path);
-
-        // Combine parsed images with any already-provided images
-        images.extend(parsed_images);
-
-        // Use cleaned content (with @paths removed) for display
-        let display_content = if images.is_empty() {
-            content.clone()
-        } else {
-            format!("{} [{} image(s)]", cleaned_content, images.len())
-        };
-
-        // Execute UserPromptSubmit hooks (on cleaned content)
-        let mut content_with_hooks = cleaned_content.clone();
+        // Execute UserPromptSubmit hooks
+        let mut content_with_hooks = content.clone();
         if self.hooks_enabled {
-            match self.run_user_prompt_hook(&cleaned_content) {
+            match self.run_user_prompt_hook(&content) {
                 Ok(Some(additional_context)) => {
                     // Append hook context to the message
-                    content_with_hooks = format!("{}\n\n<user-prompt-submit-hook>\n{}\n</user-prompt-submit-hook>", cleaned_content, additional_context);
+                    content_with_hooks = format!("{}\n\n<user-prompt-submit-hook>\n{}\n</user-prompt-submit-hook>", content, additional_context);
                 }
                 Err(block_reason) => {
                     // Hook blocked the message
@@ -382,7 +365,12 @@ impl AgentLoop {
         // Generate message ID
         let msg_id = uuid::Uuid::new_v4().to_string();
 
-        // Echo the user message (display content shows image count)
+        // Echo the user message (with image count if any)
+        let display_content = if images.is_empty() {
+            content.clone()
+        } else {
+            format!("{} [{} image(s)]", content, images.len())
+        };
         self.emit(SessionOutput::user_message(&msg_id, &display_content))
             .await;
 
