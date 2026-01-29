@@ -8,25 +8,6 @@ use crate::provider::{ChatMessage, GenAIProvider};
 
 use super::{Message, MessageRole};
 
-/// Configuration for context compaction
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CompactConfig {
-    /// Custom instructions for what to preserve during compaction
-    pub preserve_instructions: Option<String>,
-}
-
-impl CompactConfig {
-    /// Create a config for auto-compaction
-    pub fn auto() -> Self {
-        Self::default()
-    }
-
-    /// Create a config from a user command with optional instructions
-    pub fn from_command(instructions: Option<String>) -> Self {
-        Self { preserve_instructions: instructions }
-    }
-}
-
 /// Result of a compaction operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactResult {
@@ -41,9 +22,11 @@ pub struct CompactResult {
 }
 
 /// Compact conversation history into a summary using LLM
+///
+/// `preserve_instructions` - optional hints about what to preserve (e.g. "API changes")
 pub async fn compact(
     messages: &[Message],
-    config: CompactConfig,
+    preserve_instructions: Option<&str>,
     provider: &GenAIProvider,
 ) -> Result<CompactResult> {
     let chars_before: usize = messages.iter().map(|m| m.content.len()).sum();
@@ -59,14 +42,13 @@ pub async fn compact(
 
     let conversation_text = format_for_summarization(messages);
 
-    let mut summary_prompt = CONVERSATION_SUMMARIZATION.to_string();
-
-    if let Some(ref instructions) = config.preserve_instructions {
-        summary_prompt = format!(
+    let summary_prompt = match preserve_instructions {
+        Some(instructions) => format!(
             "IMPORTANT: Pay special attention to and preserve details about: {}\n\n{}",
-            instructions, summary_prompt
-        );
-    }
+            instructions, CONVERSATION_SUMMARIZATION
+        ),
+        None => CONVERSATION_SUMMARIZATION.to_string(),
+    };
 
     let llm_messages = vec![ChatMessage::user(format!(
         "Here is the conversation history:\n\n{}\n\n{}",
