@@ -307,16 +307,6 @@ mod message_conversion_tests {
         // Timestamp should be recent
         assert!(msg.timestamp <= Utc::now());
     }
-
-    #[test]
-    fn test_message_with_timestamp() {
-        let ts = Utc::now();
-        let msg = Message::with_timestamp(MessageRole::Assistant, "Response", ts);
-        assert!(matches!(msg.role, MessageRole::Assistant));
-        assert_eq!(msg.content, "Response");
-        assert_eq!(msg.timestamp, ts);
-    }
-
 }
 
 mod parallel_tool_execution_tests {

@@ -79,38 +79,6 @@ pub struct ContextUsage {
     pub should_compact: bool,
 }
 
-/// Format context usage as a human-readable string
-pub fn format_usage(usage: &ContextUsage) -> String {
-    let bar_width: usize = 20;
-    let filled = (usage.used_percentage * bar_width as f64).round() as usize;
-    let empty = bar_width.saturating_sub(filled);
-    let bar = format!("[{}{}]", "█".repeat(filled), "░".repeat(empty));
-
-    let status = if usage.should_compact {
-        "⚠️ Compaction recommended"
-    } else if usage.used_percentage >= 0.5 {
-        "Context usage moderate"
-    } else {
-        "Context usage low"
-    };
-
-    format!(
-        r#"Context Usage: {:.1}% {} {}
-
-Tokens: {}/{} ({} remaining)
-  Input:  {} tokens
-  Output: {} tokens"#,
-        usage.used_percentage * 100.0,
-        bar,
-        status,
-        usage.input_tokens + usage.output_tokens,
-        usage.limit_tokens,
-        usage.remaining_tokens,
-        usage.input_tokens,
-        usage.output_tokens,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
