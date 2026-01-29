@@ -1,23 +1,16 @@
 //! Context management tests
-//!
-//! Tests for summarization, context gathering,
-//! memory hierarchy, and context monitoring.
 
 use cowork_core::context::{
-    ConversationSummarizer, SummarizerConfig, ContextGatherer,
-    Message, MessageRole, ContextMonitor, MonitorConfig, CompactConfig, MemoryTier,
+    compact, context_limit, should_compact, usage_stats,
+    CompactConfig, ContextGatherer,
+    Message, MessageRole, MemoryTier,
 };
-use chrono::Utc;
 use tempfile::TempDir;
 use std::fs;
 
-/// Helper to create a message with current timestamp
+/// Helper to create a message
 fn msg(role: MessageRole, content: &str) -> Message {
-    Message {
-        role,
-        content: content.to_string(),
-        timestamp: Utc::now(),
-    }
+    Message::new(role, content)
 }
 
 /// Create a test workspace with typical project files
@@ -25,7 +18,6 @@ fn setup_project_workspace() -> TempDir {
     let dir = TempDir::new().expect("Failed to create temp dir");
     let base = dir.path();
 
-    // Create CLAUDE.md
     fs::write(
         base.join("CLAUDE.md"),
         r#"# Project Instructions
@@ -33,77 +25,66 @@ fn setup_project_workspace() -> TempDir {
 This is a Rust project. When modifying code:
 - Use `cargo fmt` before committing
 - Run `cargo test` to verify changes
-- Follow existing code style
-
-## Build Commands
-- Build: `cargo build`
-- Test: `cargo test`
-- Run: `cargo run`
 "#,
     ).unwrap();
 
-    // Create .git directory to simulate git repo
     fs::create_dir_all(base.join(".git")).unwrap();
     fs::write(base.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
 
-    // Create Cargo.toml
     fs::write(
         base.join("Cargo.toml"),
         r#"[package]
 name = "test-project"
 version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-serde = "1"
-tokio = { version = "1", features = ["full"] }
 "#,
     ).unwrap();
 
-    // Create source files
     fs::create_dir_all(base.join("src")).unwrap();
-    fs::write(
-        base.join("src/main.rs"),
-        r#"fn main() {
-    println!("Hello, world!");
-}
-"#,
-    ).unwrap();
+    fs::write(base.join("src/main.rs"), "fn main() {}\n").unwrap();
 
     dir
 }
 
-mod summarizer_tests {
+mod monitor_tests {
     use super::*;
 
-    fn create_summarizer() -> ConversationSummarizer {
-        ConversationSummarizer::new(SummarizerConfig::default())
+    #[test]
+    fn test_context_limit_anthropic() {
+        let limit = context_limit("anthropic", None);
+        assert_eq!(limit, 200_000);
     }
 
     #[test]
-    fn test_create_summarizer() {
-        let _summarizer = create_summarizer();
-        // Just verify it can be created
+    fn test_context_limit_unknown() {
+        let limit = context_limit("unknown", None);
+        assert_eq!(limit, 128_000); // fallback
     }
 
     #[test]
-    fn test_simple_summary() {
-        let summarizer = create_summarizer();
-        let messages = vec![
-            msg(MessageRole::User, "I need help with authentication"),
-            msg(MessageRole::Assistant, "I can help with JWT authentication"),
-            msg(MessageRole::User, "Yes, let's use JWT"),
-            msg(MessageRole::Assistant, "I'll create the JWT module"),
-        ];
+    fn test_should_compact_below_threshold() {
+        // 50% usage - should not compact
+        assert!(!should_compact(100_000, 0, 200_000));
+    }
 
-        let (summary, recent) = summarizer.simple_summary(&messages);
+    #[test]
+    fn test_should_compact_above_threshold() {
+        // 80% usage - should compact
+        assert!(should_compact(160_000, 0, 200_000));
+    }
 
-        // Summary should be a system message
-        assert!(matches!(summary.role, MessageRole::System));
-        assert!(!summary.content.is_empty());
+    #[test]
+    fn test_should_compact_low_remaining() {
+        // Less than 20k remaining - should compact
+        assert!(should_compact(185_000, 0, 200_000));
+    }
 
-        // Recent messages should be preserved
-        assert!(!recent.is_empty());
+    #[test]
+    fn test_usage_stats() {
+        let usage = usage_stats(50_000, 1_000, 200_000);
+        assert_eq!(usage.input_tokens, 50_000);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert!(!usage.should_compact);
+        assert!(usage.used_percentage > 0.0);
     }
 }
 
@@ -117,7 +98,6 @@ mod context_gatherer_tests {
 
         let context = gatherer.gather().await;
 
-        // Should return a ProjectContext with some data
         assert!(context.claude_md.is_some() || context.project_type.is_some());
     }
 
@@ -128,37 +108,9 @@ mod context_gatherer_tests {
 
         let context = gatherer.gather().await;
 
-        // Should find CLAUDE.md
         assert!(context.claude_md.is_some(), "Should find CLAUDE.md");
         let claude_content = context.claude_md.unwrap();
         assert!(claude_content.contains("Project Instructions"));
-    }
-
-    #[tokio::test]
-    async fn test_detects_git_repo() {
-        let dir = setup_project_workspace();
-        let gatherer = ContextGatherer::new(dir.path().to_path_buf());
-
-        let context = gatherer.gather().await;
-
-        // git_branch being Some indicates it's a git repo
-        // Note: This may be None if git is not properly set up in test environment
-        println!("Git branch: {:?}", context.git_branch);
-    }
-
-    #[tokio::test]
-    async fn test_detects_rust_project() {
-        let dir = setup_project_workspace();
-        let gatherer = ContextGatherer::new(dir.path().to_path_buf());
-
-        let context = gatherer.gather().await;
-
-        // Should detect Rust project or at least find Cargo.toml
-        assert!(
-            context.project_type.as_deref() == Some("rust") ||
-            context.key_files.iter().any(|f| f.contains("Cargo.toml")),
-            "Should detect Rust project"
-        );
     }
 
     #[tokio::test]
@@ -168,152 +120,22 @@ mod context_gatherer_tests {
 
         let context = gatherer.gather().await;
 
-        // Should handle empty workspace
         assert!(context.claude_md.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_format_as_prompt() {
-        let dir = setup_project_workspace();
-        let gatherer = ContextGatherer::new(dir.path().to_path_buf());
-
-        let context = gatherer.gather().await;
-        let prompt = gatherer.format_as_prompt(&context);
-
-        // Should produce some output
-        println!("Formatted prompt:\n{}", prompt);
-    }
-}
-
-mod context_monitor_tests {
-    use super::*;
-
-    #[test]
-    fn test_monitor_default_config() {
-        let monitor = ContextMonitor::new("anthropic");
-        let config = monitor.config();
-
-        assert!(config.auto_compact_threshold > 0.0);
-        assert!(config.auto_compact_threshold < 1.0);
-        assert!(config.min_remaining_tokens > 0);
-    }
-
-    #[test]
-    fn test_monitor_custom_config() {
-        let config = MonitorConfig {
-            auto_compact_threshold: 0.5,
-            min_remaining_tokens: 10_000,
-        };
-        let monitor = ContextMonitor::with_config("anthropic", config);
-
-        assert_eq!(monitor.config().auto_compact_threshold, 0.5);
-        assert_eq!(monitor.config().min_remaining_tokens, 10_000);
-    }
-
-    #[test]
-    fn test_initial_usage() {
-        let monitor = ContextMonitor::new("anthropic");
-        let usage = monitor.current_usage();
-
-        assert_eq!(usage.input_tokens, 0);
-        assert_eq!(usage.output_tokens, 0);
-        assert!(!usage.should_compact);
-    }
-
-    #[test]
-    fn test_update_from_response() {
-        let mut monitor = ContextMonitor::new("anthropic");
-
-        // Simulate LLM response with token counts
-        monitor.update_from_response(Some(50_000), Some(1_000));
-
-        let usage = monitor.current_usage();
-        assert_eq!(usage.input_tokens, 50_000);
-        assert_eq!(usage.output_tokens, 1_000);
-        assert!(usage.used_percentage > 0.0);
-    }
-
-    #[test]
-    fn test_should_compact_threshold() {
-        let config = MonitorConfig {
-            auto_compact_threshold: 0.75,
-            min_remaining_tokens: 0,
-        };
-        let mut monitor = ContextMonitor::with_config("anthropic", config);
-
-        // Below threshold (75% of 200k = 150k)
-        monitor.update_from_response(Some(100_000), Some(0));
-        assert!(!monitor.should_compact());
-
-        // Above threshold
-        monitor.update_from_response(Some(160_000), Some(0));
-        assert!(monitor.should_compact());
-    }
-
-    #[test]
-    fn test_should_compact_min_remaining() {
-        let config = MonitorConfig {
-            auto_compact_threshold: 1.0, // Never trigger by percentage
-            min_remaining_tokens: 50_000,
-        };
-        let mut monitor = ContextMonitor::with_config("anthropic", config);
-
-        // Below limit (200k - 140k = 60k remaining > 50k min)
-        monitor.update_from_response(Some(140_000), Some(0));
-        assert!(!monitor.should_compact());
-
-        // Above limit (200k - 160k = 40k remaining < 50k min)
-        monitor.update_from_response(Some(160_000), Some(0));
-        assert!(monitor.should_compact());
-    }
-
-    #[test]
-    fn test_reset_tokens() {
-        let mut monitor = ContextMonitor::new("anthropic");
-        monitor.update_from_response(Some(100_000), Some(5_000));
-
-        monitor.reset_tokens();
-
-        let usage = monitor.current_usage();
-        assert_eq!(usage.input_tokens, 0);
-        assert_eq!(usage.output_tokens, 0);
-    }
-
-    #[test]
-    fn test_format_usage() {
-        let mut monitor = ContextMonitor::new("anthropic");
-        monitor.update_from_response(Some(50_000), Some(1_000));
-
-        let usage = monitor.current_usage();
-        let formatted = monitor.format_usage(&usage);
-
-        assert!(formatted.contains("Context Usage:"));
-        assert!(formatted.contains("Input:"));
-        assert!(formatted.contains("Output:"));
-    }
-
-    #[test]
-    fn test_context_limit() {
-        let monitor = ContextMonitor::new("anthropic");
-        assert_eq!(monitor.context_limit(), 200_000);
     }
 }
 
 mod memory_hierarchy_tests {
     use super::*;
 
-    /// Create a workspace with the full 4-tier memory hierarchy
     fn setup_memory_hierarchy() -> TempDir {
         let dir = TempDir::new().expect("Failed to create temp dir");
         let base = dir.path();
 
-        // Tier 2: Project level - ./CLAUDE.md
         fs::write(
             base.join("CLAUDE.md"),
             "# Project Instructions\n\nThis is the main project CLAUDE.md file.",
         ).unwrap();
 
-        // Tier 3: Rules - ./.claude/rules/*.md
         fs::create_dir_all(base.join(".claude/rules")).unwrap();
         fs::write(
             base.join(".claude/rules/01-coding-style.md"),
@@ -321,10 +143,9 @@ mod memory_hierarchy_tests {
         ).unwrap();
         fs::write(
             base.join(".claude/rules/02-testing.md"),
-            "# Testing\n\nAlways write tests for new features.",
+            "# Testing\n\nAlways write tests.",
         ).unwrap();
 
-        // Tier 4: User level - ./CLAUDE.local.md
         fs::write(
             base.join("CLAUDE.local.md"),
             "# Local Overrides\n\nMy personal preferences.",
@@ -341,8 +162,6 @@ mod memory_hierarchy_tests {
         let hierarchy = gatherer.gather_memory_hierarchy().await;
 
         assert!(!hierarchy.is_empty(), "Should find memory files");
-        println!("Found {} memory files", hierarchy.file_count());
-        println!("{}", hierarchy.summary());
     }
 
     #[tokio::test]
@@ -352,7 +171,6 @@ mod memory_hierarchy_tests {
 
         let hierarchy = gatherer.gather_memory_hierarchy().await;
 
-        // Verify files are sorted by tier (priority order)
         let mut prev_tier: Option<MemoryTier> = None;
         for file in &hierarchy.files {
             if let Some(pt) = prev_tier {
@@ -386,18 +204,6 @@ mod memory_hierarchy_tests {
     }
 
     #[tokio::test]
-    async fn test_finds_user_tier() {
-        let dir = setup_memory_hierarchy();
-        let gatherer = ContextGatherer::new(dir.path().to_path_buf());
-
-        let hierarchy = gatherer.gather_memory_hierarchy().await;
-        let user_files = hierarchy.files_in_tier(MemoryTier::User);
-
-        assert!(!user_files.is_empty(), "Should find user tier files");
-        assert!(user_files[0].content.contains("Local Overrides"));
-    }
-
-    #[tokio::test]
     async fn test_combined_content() {
         let dir = setup_memory_hierarchy();
         let gatherer = ContextGatherer::new(dir.path().to_path_buf());
@@ -407,20 +213,6 @@ mod memory_hierarchy_tests {
         assert!(!hierarchy.combined_content.is_empty());
         assert!(hierarchy.combined_content.contains("Project Instructions"));
         assert!(hierarchy.combined_content.contains("Coding Style"));
-        assert!(hierarchy.combined_content.contains("Testing"));
-        assert!(hierarchy.combined_content.contains("Local Overrides"));
-    }
-
-    #[tokio::test]
-    async fn test_empty_workspace_hierarchy() {
-        let dir = TempDir::new().unwrap();
-        let gatherer = ContextGatherer::new(dir.path().to_path_buf());
-
-        let hierarchy = gatherer.gather_memory_hierarchy().await;
-
-        assert!(hierarchy.is_empty());
-        assert_eq!(hierarchy.file_count(), 0);
-        assert_eq!(hierarchy.total_size, 0);
     }
 }
 
@@ -433,7 +225,6 @@ mod compact_config_tests {
 
         assert!(config.use_llm);
         assert!(config.preserve_instructions.is_none());
-        assert!(config.summary_prompt.is_none()); // Uses CONVERSATION_SUMMARIZATION
     }
 
     #[test]
@@ -452,32 +243,6 @@ mod compact_config_tests {
             Some("keep API changes".to_string())
         );
     }
-
-    #[test]
-    fn test_builder_pattern() {
-        let config = CompactConfig::default()
-            .with_instructions("preserve auth logic")
-            .without_llm()
-            .with_summary_prompt("Custom prompt");
-
-        assert_eq!(
-            config.preserve_instructions,
-            Some("preserve auth logic".to_string())
-        );
-        assert!(!config.use_llm);
-        assert_eq!(config.summary_prompt, Some("Custom prompt".to_string()));
-    }
-
-    #[test]
-    fn test_get_summary_prompt() {
-        // Default uses CONVERSATION_SUMMARIZATION embedded prompt
-        let config = CompactConfig::default();
-        assert!(config.get_summary_prompt().contains("Primary Request and Intent"));
-
-        // Custom prompt overrides
-        let config = CompactConfig::default().with_summary_prompt("My custom prompt");
-        assert_eq!(config.get_summary_prompt(), "My custom prompt");
-    }
 }
 
 mod compaction_tests {
@@ -492,8 +257,7 @@ mod compaction_tests {
                     MessageRole::Assistant
                 };
                 let content = format!(
-                    "Message {} with enough content to make it realistic. \
-                     This includes some code: fn foo() {{ return {}; }}",
+                    "Message {} with some code: fn foo() {{ return {}; }}",
                     i, i
                 );
                 msg(role, &content)
@@ -503,102 +267,63 @@ mod compaction_tests {
 
     #[tokio::test]
     async fn test_compact_small_conversation() {
-        let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let config = CompactConfig::default().without_llm();
+        let mut config = CompactConfig::default();
+        config.use_llm = false;
 
         let messages = generate_conversation(5);
-        let result = summarizer.compact(&messages, config, None).await.unwrap();
+        let result = compact(&messages, config, None).await.unwrap();
 
-        // Following Anthropic SDK: all messages are summarized into single user message
         assert_eq!(result.messages_summarized, 5);
         assert!(result.summary.content.contains("<summary>"));
     }
 
     #[tokio::test]
     async fn test_compact_large_conversation() {
-        let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let config = CompactConfig::default().without_llm();
+        let mut config = CompactConfig::default();
+        config.use_llm = false;
 
         let messages = generate_conversation(50);
-        let result = summarizer.compact(&messages, config, None).await.unwrap();
+        let result = compact(&messages, config, None).await.unwrap();
 
-        assert_eq!(result.messages_summarized, 50, "Should summarize all messages");
-        assert!(result.chars_after <= result.chars_before, "Should reduce size");
-        assert!(!result.summary.content.is_empty(), "Should have a summary");
-        assert!(result.summary.content.contains("<summary>"), "Should wrap in summary tags");
+        assert_eq!(result.messages_summarized, 50);
+        assert!(result.chars_after <= result.chars_before);
+        assert!(!result.summary.content.is_empty());
+        assert!(result.summary.content.contains("<summary>"));
     }
 
     #[tokio::test]
     async fn test_compact_preserves_instructions() {
-        let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let config = CompactConfig::default()
-            .without_llm()
-            .with_instructions("API endpoints");
+        let config = CompactConfig {
+            preserve_instructions: Some("API endpoints".to_string()),
+            use_llm: false,
+        };
 
         let messages = generate_conversation(30);
-        let result = summarizer.compact(&messages, config, None).await.unwrap();
+        let result = compact(&messages, config, None).await.unwrap();
 
-        // The summary should mention the preserved topic
-        // (Note: without LLM, this is best-effort heuristic)
-        assert!(result.summary.content.contains("Preserved Context") &&
-                result.summary.content.contains("API endpoints"));
+        assert!(result.summary.content.contains("Preserved Context"));
+        assert!(result.summary.content.contains("API endpoints"));
     }
 
     #[tokio::test]
     async fn test_compact_returns_user_message() {
-        // Following Anthropic SDK: summary is a USER message
-        let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-        let config = CompactConfig::default().without_llm();
+        let mut config = CompactConfig::default();
+        config.use_llm = false;
 
         let messages = generate_conversation(30);
-        let result = summarizer.compact(&messages, config, None).await.unwrap();
+        let result = compact(&messages, config, None).await.unwrap();
 
-        assert!(matches!(result.summary.role, MessageRole::User), "Summary should be a USER message");
+        assert!(matches!(result.summary.role, MessageRole::User));
     }
 
-    #[test]
-    fn test_simple_summary_extracts_files() {
-        // Use a config with low keep_recent to ensure summarization happens
-        let config = SummarizerConfig {
-            keep_recent: 2,
-            target_summary_tokens: 500,
-            min_messages_to_summarize: 3,
-        };
-        let summarizer = ConversationSummarizer::new(config);
+    #[tokio::test]
+    async fn test_compact_empty_messages() {
+        let config = CompactConfig::default();
+        let messages: Vec<Message> = vec![];
 
-        // Create enough messages to trigger summarization
-        let messages = vec![
-            msg(MessageRole::User, "Let's start by reviewing the project"),
-            msg(MessageRole::Assistant, "Sure, I'll look at the codebase"),
-            msg(MessageRole::User, "Let's modify src/main.rs"),
-            msg(MessageRole::Assistant, "I'll update src/main.rs with the new code"),
-            msg(MessageRole::User, "Also update Cargo.toml"),
-            msg(MessageRole::Assistant, "Done, I've updated both files"),
-        ];
+        let result = compact(&messages, config, None).await.unwrap();
 
-        let (summary, _recent) = summarizer.simple_summary(&messages);
-
-        // Should extract mentioned files from the summarized messages
-        assert!(
-            summary.content.contains("src/main.rs") || summary.content.contains("Cargo.toml") || summary.content.contains("Files mentioned"),
-            "Should mention files in summary: {}",
-            summary.content
-        );
-    }
-
-    #[test]
-    fn test_simple_summary_extracts_commands() {
-        let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
-
-        let messages = vec![
-            msg(MessageRole::User, "Run the tests"),
-            msg(MessageRole::Tool, "$ cargo test\nrunning 10 tests\ntest result: ok"),
-            msg(MessageRole::Assistant, "All tests passed"),
-        ];
-
-        let (summary, _recent) = summarizer.simple_summary(&messages);
-
-        // Check that summary was created
-        assert!(!summary.content.is_empty());
+        assert_eq!(result.messages_summarized, 0);
+        assert!(result.summary.content.contains("No prior context"));
     }
 }

@@ -19,7 +19,8 @@ use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
 use crate::approval::ToolApprovalConfig;
 use crate::formatting::{format_tool_call, format_tool_result_summary};
 use crate::context::{
-    CompactConfig, ContextMonitor, ConversationSummarizer, Message, MessageRole, SummarizerConfig,
+    compact, CompactConfig, Message, MessageRole,
+    context_limit, usage_stats,
 };
 use crate::error::Result;
 use crate::orchestration::{ChatSession, ToolRegistryBuilder};
@@ -107,10 +108,12 @@ pub struct AgentLoop {
     approval_config: ToolApprovalConfig,
     /// Plan mode state (shared with EnterPlanMode/ExitPlanMode tools and /plan command)
     plan_mode_state: Arc<tokio::sync::RwLock<PlanModeState>>,
-    /// Context monitor for tracking token usage
-    context_monitor: ContextMonitor,
-    /// Conversation summarizer for auto-compaction
-    summarizer: ConversationSummarizer,
+    /// Context limit for this provider/model
+    context_limit: usize,
+    /// Last input tokens from LLM response
+    last_input_tokens: u64,
+    /// Last output tokens from LLM response
+    last_output_tokens: u64,
     /// Hook executor for running hooks at lifecycle points
     hook_executor: HookExecutor,
     /// Hooks configuration
@@ -252,27 +255,14 @@ impl AgentLoop {
 
         let tool_definitions = tool_registry.list();
 
-        // Initialize context monitor with provider and model for accurate limits
-        let context_monitor = match &config.model {
-            Some(model) => {
-                debug!(
-                    provider_id = %config.provider_id,
-                    model = %model,
-                    "Creating ContextMonitor with model"
-                );
-                ContextMonitor::with_model(&config.provider_id, model)
-            }
-            None => {
-                debug!(
-                    provider_id = %config.provider_id,
-                    "Creating ContextMonitor without model"
-                );
-                ContextMonitor::new(&config.provider_id)
-            }
-        };
-
-        // Initialize summarizer with default config
-        let summarizer = ConversationSummarizer::new(SummarizerConfig::default());
+        // Get context limit for this provider/model
+        let ctx_limit = context_limit(&config.provider_id, config.model.as_deref());
+        debug!(
+            provider_id = %config.provider_id,
+            model = ?config.model,
+            context_limit = ctx_limit,
+            "Context limit initialized"
+        );
 
         // Initialize hook executor and configuration
         let hook_executor = HookExecutor::new(config.workspace_path.clone());
@@ -294,8 +284,9 @@ impl AgentLoop {
             tool_definitions,
             approval_config: config.approval_config,
             plan_mode_state,
-            context_monitor,
-            summarizer,
+            context_limit: ctx_limit,
+            last_input_tokens: 0,
+            last_output_tokens: 0,
             hook_executor,
             hooks_config,
             hooks_enabled,
@@ -403,8 +394,13 @@ impl AgentLoop {
 
             let response = self.call_llm().await?;
 
-            // Update context monitor with LLM-reported token counts
-            self.context_monitor.update_from_response(response.input_tokens, response.output_tokens);
+            // Store token counts from LLM response
+            if let Some(input) = response.input_tokens {
+                self.last_input_tokens = input;
+            }
+            if let Some(output) = response.output_tokens {
+                self.last_output_tokens = output;
+            }
 
             // Generate message ID
             let msg_id = uuid::Uuid::new_v4().to_string();
@@ -412,20 +408,10 @@ impl AgentLoop {
             // Emit assistant message with token usage appended to content
             let content = response.content.clone().unwrap_or_default();
             if !content.is_empty() {
-                let context_limit = self.context_monitor.context_limit();
-
-                // Debug: This should never be 0 - if it is, something is wrong
-                if context_limit == 0 {
-                    warn!(
-                        session_id = %self.session_id,
-                        "Context limit is unexpectedly 0 - check provider_id and model config"
-                    );
-                }
-
                 debug!(
                     input_tokens = ?response.input_tokens,
                     output_tokens = ?response.output_tokens,
-                    context_limit = context_limit,
+                    context_limit = self.context_limit,
                     "Emitting assistant message with tokens"
                 );
 
@@ -434,7 +420,7 @@ impl AgentLoop {
                     &content,
                     response.input_tokens,
                     response.output_tokens,
-                    Some(context_limit),
+                    Some(self.context_limit),
                 ))
                 .await;
             }
@@ -1039,8 +1025,8 @@ impl AgentLoop {
     /// - If above threshold (75%), triggers auto-compaction
     /// - Uses LLM-powered summarization when possible, falls back to heuristics
     async fn check_and_compact_context(&mut self) -> Result<()> {
-        // Get usage from last LLM response (stored in monitor)
-        let usage = self.context_monitor.current_usage();
+        // Get usage stats from stored token counts
+        let usage = usage_stats(self.last_input_tokens, self.last_output_tokens, self.context_limit);
 
         // Log context usage for debugging
         info!(
@@ -1075,13 +1061,7 @@ impl AgentLoop {
         let config = CompactConfig::auto();
 
         // Perform compaction using LLM for better context preservation
-        let result = self.summarizer
-            .compact(
-                &messages,
-                config,
-                Some(&self.provider),
-            )
-            .await?;
+        let result = compact(&messages, config, Some(&self.provider)).await?;
 
         info!(
             "Compaction complete: {} -> {} chars ({} messages summarized)",
@@ -1093,8 +1073,9 @@ impl AgentLoop {
         // Replace session messages with compacted version
         self.apply_compaction_result(&result);
 
-        // Reset token counts after compaction - next LLM response will update
-        self.context_monitor.reset_tokens();
+        // Reset token counts - next LLM response will update
+        self.last_input_tokens = 0;
+        self.last_output_tokens = 0;
 
         // Emit completion notification
         self.emit(SessionOutput::thinking(format!(
