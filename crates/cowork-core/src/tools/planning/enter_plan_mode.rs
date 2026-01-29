@@ -87,6 +87,6 @@ impl Tool for EnterPlanMode {
     }
 
     fn approval_description(&self, _params: &serde_json::Value) -> Option<String> {
-        Some("Enter plan mode to design an implementation approach before writing code. Claude will explore the codebase, create a plan, and ask for your approval before proceeding.".to_string())
+        Some("Entering plan mode".to_string())
     }
 }
