@@ -12,8 +12,8 @@ pub mod monitor;
 pub mod summarizer;
 
 pub use gather::{ContextGatherer, MemoryFile, MemoryHierarchy, MemoryTier, ProjectContext};
-pub use monitor::{ContextMonitor, ContextUsage, MonitorConfig};
-pub use summarizer::{CompactConfig, CompactResult, ConversationSummarizer, SummarizerConfig};
+pub use monitor::{context_limit, should_compact, usage_stats, format_usage, ContextUsage};
+pub use summarizer::{compact, CompactConfig, CompactResult};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
