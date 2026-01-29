@@ -632,7 +632,7 @@ mod question_types_tests {
 }
 
 mod tool_result_format_tests {
-    use cowork_core::orchestration::ChatSession;
+    use cowork_core::session::ChatSession;
     use cowork_core::provider::{ChatRole, ToolCall};
 
     fn make_tool_call(id: &str, name: &str, args: serde_json::Value) -> ToolCall {

@@ -45,15 +45,9 @@ pub struct ToolRegistryBuilder {
     api_key: Option<String>,
     model_tiers: Option<ModelTiers>,
     web_search_config: Option<WebSearchConfig>,
-    include_filesystem: bool,
-    include_shell: bool,
-    include_web: bool,
-    include_notebook: bool,
-    include_lsp: bool,
+    /// Whether to include task/agent tools (requires provider_id)
     include_task: bool,
-    include_planning: bool,
-    include_interaction: bool,
-    include_mcp: bool,
+    /// Tool scope for subagent registries (uses simpler build_scoped)
     tool_scope: Option<ToolScope>,
     skill_registry: Option<Arc<SkillRegistry>>,
     plan_mode_state: Option<Arc<tokio::sync::RwLock<PlanModeState>>>,
@@ -76,15 +70,7 @@ impl ToolRegistryBuilder {
             api_key: None,
             model_tiers: None,
             web_search_config: None,
-            include_filesystem: true,
-            include_shell: true,
-            include_web: true,
-            include_notebook: true,
-            include_lsp: true,
             include_task: true,
-            include_planning: true,
-            include_interaction: true,
-            include_mcp: true,
             tool_scope: None,
             skill_registry: None,
             plan_mode_state: None,
@@ -149,63 +135,15 @@ impl ToolRegistryBuilder {
         self
     }
 
-    /// Enable/disable filesystem tools
-    pub fn with_filesystem(mut self, enabled: bool) -> Self {
-        self.include_filesystem = enabled;
-        self
-    }
-
-    /// Enable/disable shell tools
-    pub fn with_shell(mut self, enabled: bool) -> Self {
-        self.include_shell = enabled;
-        self
-    }
-
-    /// Enable/disable web tools
-    pub fn with_web(mut self, enabled: bool) -> Self {
-        self.include_web = enabled;
-        self
-    }
-
-    /// Enable/disable notebook tools
-    pub fn with_notebook(mut self, enabled: bool) -> Self {
-        self.include_notebook = enabled;
-        self
-    }
-
-    /// Enable/disable LSP tools
-    pub fn with_lsp(mut self, enabled: bool) -> Self {
-        self.include_lsp = enabled;
-        self
-    }
-
-    /// Enable/disable task/agent tools
+    /// Enable/disable task/agent tools (requires provider_id to be set)
     pub fn with_task(mut self, enabled: bool) -> Self {
         self.include_task = enabled;
-        self
-    }
-
-    /// Enable/disable planning tools
-    pub fn with_planning(mut self, enabled: bool) -> Self {
-        self.include_planning = enabled;
-        self
-    }
-
-    /// Enable/disable interaction tools (ask_user_question)
-    pub fn with_interaction(mut self, enabled: bool) -> Self {
-        self.include_interaction = enabled;
         self
     }
 
     /// Set the skill registry for the Skill tool
     pub fn with_skill_registry(mut self, registry: Arc<SkillRegistry>) -> Self {
         self.skill_registry = Some(registry);
-        self
-    }
-
-    /// Enable/disable MCP tools
-    pub fn with_mcp(mut self, enabled: bool) -> Self {
-        self.include_mcp = enabled;
         self
     }
 
@@ -224,95 +162,81 @@ impl ToolRegistryBuilder {
         let mut registry = ToolRegistry::new();
 
         // Filesystem tools
-        if self.include_filesystem {
-            registry.register(Arc::new(ReadFile::new(self.workspace.clone())));
-            registry.register(Arc::new(WriteFile::new(self.workspace.clone())));
-            registry.register(Arc::new(EditFile::new(self.workspace.clone())));
-            registry.register(Arc::new(GlobFiles::new(self.workspace.clone())));
-            registry.register(Arc::new(GrepFiles::new(self.workspace.clone())));
-        }
+        registry.register(Arc::new(ReadFile::new(self.workspace.clone())));
+        registry.register(Arc::new(WriteFile::new(self.workspace.clone())));
+        registry.register(Arc::new(EditFile::new(self.workspace.clone())));
+        registry.register(Arc::new(GlobFiles::new(self.workspace.clone())));
+        registry.register(Arc::new(GrepFiles::new(self.workspace.clone())));
 
         // Shell tools with shared process registry
-        if self.include_shell {
-            let shell_registry = Arc::new(ShellProcessRegistry::new());
-            registry.register(Arc::new(
-                ExecuteCommand::new(self.workspace.clone())
-                    .with_registry(shell_registry.clone())
-            ));
-            registry.register(Arc::new(KillShell::new(shell_registry)));
-        }
+        let shell_registry = Arc::new(ShellProcessRegistry::new());
+        registry.register(Arc::new(
+            ExecuteCommand::new(self.workspace.clone())
+                .with_registry(shell_registry.clone())
+        ));
+        registry.register(Arc::new(KillShell::new(shell_registry)));
 
         // Web tools
-        if self.include_web {
-            registry.register(Arc::new(WebFetch::new()));
+        registry.register(Arc::new(WebFetch::new()));
 
-            // Check if provider has built-in web search
-            let provider_has_native = self
-                .provider_id
+        // Check if provider has built-in web search
+        let provider_has_native = self
+            .provider_id
+            .as_ref()
+            .map(|p| supports_native_search(p))
+            .unwrap_or(false);
+
+        // Only register WebSearch (SerpAPI) if:
+        // 1. Provider does NOT have native search, AND
+        // 2. SerpAPI is configured
+        if !provider_has_native {
+            let is_configured = self
+                .web_search_config
                 .as_ref()
-                .map(|p| supports_native_search(p))
+                .map(|c| {
+                    let configured = c.is_configured();
+                    tracing::debug!(
+                        has_api_key = c.api_key.is_some(),
+                        is_configured = configured,
+                        "WebSearch SerpAPI config check"
+                    );
+                    configured
+                })
                 .unwrap_or(false);
 
-            // Only register WebSearch (SerpAPI) if:
-            // 1. Provider does NOT have native search, AND
-            // 2. SerpAPI is configured
-            if !provider_has_native {
-                let is_configured = self
-                    .web_search_config
-                    .as_ref()
-                    .map(|c| {
-                        let configured = c.is_configured();
-                        tracing::debug!(
-                            has_api_key = c.api_key.is_some(),
-                            is_configured = configured,
-                            "WebSearch SerpAPI config check"
-                        );
-                        configured
-                    })
-                    .unwrap_or(false);
-
-                if is_configured {
-                    tracing::info!("Registering WebSearch tool with SerpAPI");
-                    let web_search = if let Some(config) = self.web_search_config.clone() {
-                        WebSearch::with_config(config)
-                    } else {
-                        WebSearch::new()
-                    };
-                    registry.register(Arc::new(web_search));
+            if is_configured {
+                tracing::info!("Registering WebSearch tool with SerpAPI");
+                let web_search = if let Some(config) = self.web_search_config.clone() {
+                    WebSearch::with_config(config)
                 } else {
-                    tracing::debug!("WebSearch not registered: SerpAPI not configured");
-                }
+                    WebSearch::new()
+                };
+                registry.register(Arc::new(web_search));
             } else {
-                tracing::debug!("WebSearch not registered: provider has native search");
+                tracing::debug!("WebSearch not registered: SerpAPI not configured");
             }
+        } else {
+            tracing::debug!("WebSearch not registered: provider has native search");
         }
 
         // Notebook tools
-        if self.include_notebook {
-            registry.register(Arc::new(NotebookEdit::new(self.workspace.clone())));
-        }
+        registry.register(Arc::new(NotebookEdit::new(self.workspace.clone())));
 
         // Task management tools (TodoWrite is always available)
         registry.register(Arc::new(TodoWrite::new()));
 
         // Code intelligence tools
-        if self.include_lsp {
-            registry.register(Arc::new(LspTool::new(self.workspace.clone())));
-        }
+        registry.register(Arc::new(LspTool::new(self.workspace.clone())));
 
         // Interaction tools
-        if self.include_interaction {
-            registry.register(Arc::new(AskUserQuestion::new()));
-        }
+        registry.register(Arc::new(AskUserQuestion::new()));
 
         // Planning tools with shared state
-        if self.include_planning {
-            let plan_mode_state = self.plan_mode_state.clone().unwrap_or_else(||
-                Arc::new(tokio::sync::RwLock::new(PlanModeState::default()))
-            );
-            registry.register(Arc::new(EnterPlanMode::new(plan_mode_state.clone())));
-            registry.register(Arc::new(ExitPlanMode::new(plan_mode_state)));
-        }
+        let plan_mode_state = self.plan_mode_state.clone().unwrap_or_else(||
+            Arc::new(tokio::sync::RwLock::new(PlanModeState::default()))
+        );
+        registry.register(Arc::new(EnterPlanMode::new(plan_mode_state.clone())));
+        registry.register(Arc::new(ExitPlanMode::new(plan_mode_state)));
 
         // Agent/Task tools - require provider_id for full functionality
         if self.include_task
@@ -345,17 +269,16 @@ impl ToolRegistryBuilder {
         }
 
         // MCP tools - when an MCP manager is provided
-        if self.include_mcp
-            && let Some(ref mcp_manager) = self.mcp_manager {
-                let mcp_tools = create_mcp_tools(mcp_manager.clone());
-                for tool in mcp_tools {
-                    registry.register(tool);
-                }
-                tracing::info!(
-                    tool_count = registry.list().len(),
-                    "Registered MCP tools from server manager"
-                );
+        if let Some(ref mcp_manager) = self.mcp_manager {
+            let mcp_tools = create_mcp_tools(mcp_manager.clone());
+            for tool in mcp_tools {
+                registry.register(tool);
             }
+            tracing::info!(
+                tool_count = registry.list().len(),
+                "Registered MCP tools from server manager"
+            );
+        }
 
         registry
     }
@@ -538,22 +461,21 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_can_disable_tools() {
+    fn test_with_task_disabled() {
         let temp_dir = tempdir().unwrap();
         let registry = ToolRegistryBuilder::new(temp_dir.path().to_path_buf())
-            .with_filesystem(false)
-            .with_shell(false)
+            .with_provider("anthropic")
+            .with_api_key("test-key".to_string())
+            .with_task(false)
             .build();
 
-        // Filesystem tools should be missing
-        assert!(registry.get("Read").is_none());
-        assert!(registry.get("Write").is_none());
+        // Task tools should be missing when disabled
+        assert!(registry.get("Task").is_none());
+        assert!(registry.get("TaskOutput").is_none());
 
-        // Shell tools should be missing
-        assert!(registry.get("Bash").is_none());
-        assert!(registry.get("KillShell").is_none());
-
-        // But web tools should still be there
+        // But other tools should still be there
+        assert!(registry.get("Read").is_some());
+        assert!(registry.get("Bash").is_some());
         assert!(registry.get("WebFetch").is_some());
     }
 

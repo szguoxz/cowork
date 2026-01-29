@@ -50,12 +50,14 @@
 //! ```
 
 mod agent_loop;
+mod chat_session;
 mod manager;
 mod types;
 
 pub use agent_loop::{
     get_sessions_dir, list_saved_sessions, load_session, AgentLoop, SavedSession,
 };
+pub use chat_session::{ChatSession, ToolCallStatus};
 pub use manager::{OutputReceiver, SessionManager};
 pub use types::{
     QuestionInfo, QuestionOption, SessionConfig, SessionId, SessionInput, SessionOutput,

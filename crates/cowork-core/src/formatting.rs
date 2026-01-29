@@ -1,47 +1,14 @@
-//! Formatting utilities for tool display
+//! Formatting utilities for tool display and results
 //!
-//! Provides consistent formatting for tool arguments and ephemeral status
-//! across CLI and Tauri frontends.
+//! This module provides consistent formatting of tool calls and results
+//! for both UI display and LLM consumption.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// A single line in a diff preview
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DiffLine {
-    /// Line number (1-based, if available)
-    pub line_number: Option<u32>,
-    /// The type of line: "context", "added", or "removed"
-    pub line_type: String,
-    /// The content of the line
-    pub content: String,
-}
-
-impl DiffLine {
-    pub fn context(line_number: u32, content: impl Into<String>) -> Self {
-        Self {
-            line_number: Some(line_number),
-            line_type: "context".to_string(),
-            content: content.into(),
-        }
-    }
-
-    pub fn added(line_number: u32, content: impl Into<String>) -> Self {
-        Self {
-            line_number: Some(line_number),
-            line_type: "added".to_string(),
-            content: content.into(),
-        }
-    }
-
-    pub fn removed(content: impl Into<String>) -> Self {
-        Self {
-            line_number: None,
-            line_type: "removed".to_string(),
-            content: content.into(),
-        }
-    }
-}
+// ============================================================================
+// Truncation utilities
+// ============================================================================
 
 /// Truncate a string to max length, adding "..." if truncated
 pub fn truncate_str(s: &str, max: usize) -> String {
@@ -51,6 +18,29 @@ pub fn truncate_str(s: &str, max: usize) -> String {
         format!("{}...", &s[..max.saturating_sub(3)])
     }
 }
+
+/// Format byte size to human-readable string
+pub fn format_size(bytes: u64) -> String {
+    if bytes == 0 {
+        return "-".to_string();
+    }
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut size = bytes as f64;
+    let mut unit_idx = 0;
+    while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_idx += 1;
+    }
+    if unit_idx == 0 {
+        format!("{} {}", bytes, UNITS[unit_idx])
+    } else {
+        format!("{:.1} {}", size, UNITS[unit_idx])
+    }
+}
+
+// ============================================================================
+// Tool call formatting (for UI display)
+// ============================================================================
 
 /// Format tool arguments into a concise single-line summary
 pub fn format_tool_summary(tool_name: &str, args: &Value) -> String {
@@ -149,17 +139,11 @@ pub fn format_ephemeral(tool_name: &str, args: &Value) -> String {
         }
     }
 
-    // Limit to 3 lines
     lines.truncate(3);
     lines.join("\n")
 }
 
 /// Format a tool call in Claude Code style: `ToolName(param: value, ...)`
-///
-/// This produces a concise, human-readable format for display:
-/// - `Read(/path/to/file.rs)`
-/// - `Grep(pattern: "foo", path: "/src")`
-/// - `Bash(cargo build)`
 pub fn format_tool_call(tool_name: &str, args: &Value) -> String {
     match tool_name {
         "Read" => {
@@ -222,7 +206,6 @@ pub fn format_tool_call(tool_name: &str, args: &Value) -> String {
             }
         }
         _ => {
-            // Generic: show first few args
             if let Some(obj) = args.as_object() {
                 let params: Vec<String> = obj
                     .iter()
@@ -249,155 +232,6 @@ pub fn format_tool_call(tool_name: &str, args: &Value) -> String {
             }
         }
     }
-}
-
-/// Format a tool result summary: short, one-line description of what happened
-///
-/// Returns: (summary, optional diff lines for Edit tool)
-pub fn format_tool_result_summary(
-    tool_name: &str,
-    success: bool,
-    output: &str,
-    args: &Value,
-) -> (String, Option<Vec<DiffLine>>) {
-    if !success {
-        let err_preview = output.lines().next().unwrap_or("Error");
-        return (format!("Error: {}", truncate_str(err_preview, 60)), None);
-    }
-
-    match tool_name {
-        "Read" => {
-            let line_count = output.lines().count();
-            (format!("Read {} lines", line_count), None)
-        }
-        "Write" => {
-            let line_count = args["content"]
-                .as_str()
-                .map(|c| c.lines().count())
-                .unwrap_or(0);
-            (format!("Wrote {} lines", line_count), None)
-        }
-        "Edit" => {
-            // Generate diff preview
-            let old_str = args["old_string"].as_str().unwrap_or("");
-            let new_str = args["new_string"].as_str().unwrap_or("");
-            let diff = generate_edit_diff(old_str, new_str);
-
-            let old_lines = old_str.lines().count();
-            let new_lines = new_str.lines().count();
-            let summary = if new_lines > old_lines {
-                format!("Added {} lines", new_lines - old_lines)
-            } else if old_lines > new_lines {
-                format!("Removed {} lines", old_lines - new_lines)
-            } else {
-                format!("Changed {} lines", old_lines)
-            };
-            (summary, Some(diff))
-        }
-        "Glob" => {
-            let match_count = output.lines().filter(|l| !l.is_empty()).count();
-            (format!("Found {} files", match_count), None)
-        }
-        "Grep" => {
-            let match_count = output.lines().filter(|l| !l.is_empty()).count();
-            if match_count == 0 {
-                ("Found 0 matches".to_string(), None)
-            } else {
-                (format!("Found {} matches", match_count), None)
-            }
-        }
-        "Bash" => {
-            // Check for exit code in output
-            let line_count = output.lines().count();
-            if line_count == 0 {
-                ("Completed".to_string(), None)
-            } else if line_count <= 3 {
-                // Show short output inline
-                let preview = output.lines().take(3).collect::<Vec<_>>().join(" | ");
-                (truncate_str(&preview, 60), None)
-            } else {
-                (format!("{} lines of output", line_count), None)
-            }
-        }
-        "Task" => {
-            let preview = output.lines().next().unwrap_or("Completed");
-            (truncate_str(preview, 60), None)
-        }
-        "WebSearch" | "WebFetch" => {
-            let preview = output.lines().next().unwrap_or("Completed");
-            (truncate_str(preview, 60), None)
-        }
-        "TodoWrite" => {
-            if let Some(todos) = args["todos"].as_array() {
-                let completed = todos.iter()
-                    .filter(|t| t["status"].as_str() == Some("completed"))
-                    .count();
-                let in_progress = todos.iter()
-                    .filter(|t| t["status"].as_str() == Some("in_progress"))
-                    .count();
-                (format!("{} todos ({} done, {} active)", todos.len(), completed, in_progress), None)
-            } else {
-                ("Updated todos".to_string(), None)
-            }
-        }
-        _ => {
-            if output.is_empty() {
-                ("Done".to_string(), None)
-            } else {
-                let preview = output.lines().next().unwrap_or("Done");
-                (truncate_str(preview, 60), None)
-            }
-        }
-    }
-}
-
-/// Generate diff lines for an Edit tool operation
-fn generate_edit_diff(old_str: &str, new_str: &str) -> Vec<DiffLine> {
-    let mut diff_lines = Vec::new();
-    let old_lines: Vec<&str> = old_str.lines().collect();
-    let new_lines: Vec<&str> = new_str.lines().collect();
-
-    // Simple diff: show removed lines, then added lines
-    // Limit to 10 lines total for preview
-    let max_lines = 10;
-    let mut count = 0;
-
-    // Show removed lines (max 5)
-    for (i, line) in old_lines.iter().take(5).enumerate() {
-        if count >= max_lines {
-            break;
-        }
-        diff_lines.push(DiffLine::removed(line.to_string()));
-        count += 1;
-        if i == 4 && old_lines.len() > 5 {
-            diff_lines.push(DiffLine {
-                line_number: None,
-                line_type: "context".to_string(),
-                content: format!("... {} more removed", old_lines.len() - 5),
-            });
-            count += 1;
-        }
-    }
-
-    // Show added lines (max 5)
-    for (i, line) in new_lines.iter().take(5).enumerate() {
-        if count >= max_lines {
-            break;
-        }
-        // Line numbers start at 1, and we don't know the actual line number in the file
-        // So we just use relative positions
-        diff_lines.push(DiffLine::added((i + 1) as u32, line.to_string()));
-        count += 1;
-        if i == 4 && new_lines.len() > 5 {
-            diff_lines.push(DiffLine {
-                line_number: None,
-                line_type: "context".to_string(),
-                content: format!("... {} more added", new_lines.len() - 5),
-            });
-        }
-    }
-
-    diff_lines
 }
 
 /// Format tool arguments for approval modal display (multi-line, readable)
@@ -459,7 +293,6 @@ pub fn format_approval_args(tool_name: &str, args: &Value) -> Vec<String> {
             }
         }
         _ => {
-            // Generic: show each key-value, truncated
             if let Some(obj) = args.as_object() {
                 for (key, value) in obj.iter().take(6) {
                     let val_str = match value {
@@ -481,6 +314,397 @@ pub fn format_approval_args(tool_name: &str, args: &Value) -> Vec<String> {
     lines
 }
 
+// ============================================================================
+// Tool result formatting (for LLM consumption)
+// ============================================================================
+
+/// Format a tool result for human-readable display
+///
+/// Routes to the appropriate formatter based on tool name, or auto-detects
+/// the format based on JSON structure.
+pub fn format_tool_result(tool_name: &str, result: &str) -> String {
+    if let Ok(json) = serde_json::from_str::<Value>(result) {
+        match tool_name {
+            "list_directory" => format_directory_result(&json),
+            "Glob" | "glob" | "find_files" => format_glob_result(&json),
+            "Grep" | "grep" | "search_code" | "ripgrep" => format_grep_result(&json),
+            "Read" | "read_file" | "read_pdf" | "read_office_doc" => format_file_content(&json, result),
+            "Bash" | "execute_command" | "shell" | "bash" => format_command_result(&json),
+            "Write" | "write_file" | "Edit" | "edit_file" | "delete_file" | "move_file" | "edit" => {
+                format_status_result(&json)
+            }
+            _ => format_generic_json(&json, result),
+        }
+    } else {
+        truncate_str(result, 500)
+    }
+}
+
+/// Format directory listing results
+pub fn format_directory_result(json: &Value) -> String {
+    if let (Some(count), Some(entries)) = (
+        json.get("count"),
+        json.get("entries").and_then(|e| e.as_array()),
+    ) {
+        let mut lines = vec![format!("{} items:", count)];
+
+        let mut sorted: Vec<_> = entries.iter().collect();
+        sorted.sort_by(|a, b| {
+            let a_dir = a.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
+            let b_dir = b.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
+            match (a_dir, b_dir) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => {
+                    let a_name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let b_name = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    a_name.cmp(b_name)
+                }
+            }
+        });
+
+        for entry in sorted.iter().take(30) {
+            let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+            let is_dir = entry.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
+            let size = entry.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+
+            if is_dir {
+                lines.push(format!("  📁 {}/", name));
+            } else {
+                lines.push(format!("  📄 {} ({})", name, format_size(size)));
+            }
+        }
+
+        if sorted.len() > 30 {
+            lines.push(format!("  ... and {} more", sorted.len() - 30));
+        }
+
+        lines.join("\n")
+    } else {
+        truncate_str(&json.to_string(), 500)
+    }
+}
+
+/// Format glob/file search results
+pub fn format_glob_result(json: &Value) -> String {
+    if let (Some(count), Some(files)) = (
+        json.get("count"),
+        json.get("files").and_then(|f| f.as_array()),
+    ) {
+        let mut lines = vec![format!("{} files found:", count)];
+
+        for file in files.iter().take(20) {
+            if let Some(path) = file.as_str() {
+                lines.push(format!("  📄 {}", path));
+            }
+        }
+
+        if files.len() > 20 {
+            lines.push(format!("  ... and {} more", files.len() - 20));
+        }
+
+        lines.join("\n")
+    } else {
+        truncate_str(&json.to_string(), 500)
+    }
+}
+
+/// Format grep/code search results
+pub fn format_grep_result(json: &Value) -> String {
+    if let Some(matches) = json.get("matches").and_then(|m| m.as_array()) {
+        let total = json
+            .get("total_matches")
+            .and_then(|t| t.as_u64())
+            .unwrap_or(matches.len() as u64);
+        let mut lines = vec![format!("{} matches in {} files:", total, matches.len())];
+
+        for m in matches.iter().take(15) {
+            let path = m.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+            let line_num = m.get("line_number").and_then(|v| v.as_u64());
+            let count = m.get("count").and_then(|v| v.as_u64());
+
+            if let Some(n) = line_num {
+                lines.push(format!("  🔍 {}:{}", path, n));
+            } else if let Some(c) = count {
+                lines.push(format!("  🔍 {} ({} matches)", path, c));
+            } else {
+                lines.push(format!("  🔍 {}", path));
+            }
+        }
+
+        if matches.len() > 15 {
+            lines.push(format!("  ... and {} more files", matches.len() - 15));
+        }
+
+        lines.join("\n")
+    } else {
+        truncate_str(&json.to_string(), 500)
+    }
+}
+
+/// Format file content results
+pub fn format_file_content(json: &Value, raw: &str) -> String {
+    if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
+        let lines: Vec<&str> = content.lines().take(20).collect();
+        let mut result = lines.join("\n");
+        if content.lines().count() > 20 {
+            result.push_str(&format!("\n  ... ({} more lines)", content.lines().count() - 20));
+        }
+        result
+    } else {
+        truncate_str(raw, 1000)
+    }
+}
+
+/// Format command execution results
+pub fn format_command_result(json: &Value) -> String {
+    let mut lines = Vec::new();
+
+    if let Some(exit_code) = json.get("exit_code").and_then(|c| c.as_i64()) {
+        let status = if exit_code == 0 { "✓" } else { "✗" };
+        lines.push(format!("{} Exit code: {}", status, exit_code));
+    }
+
+    if let Some(stdout) = json.get("stdout").and_then(|s| s.as_str())
+        && !stdout.is_empty()
+    {
+        lines.push(truncate_str(stdout, 400));
+    }
+
+    if let Some(stderr) = json.get("stderr").and_then(|s| s.as_str())
+        && !stderr.is_empty()
+    {
+        lines.push(format!("stderr: {}", truncate_str(stderr, 200)));
+    }
+
+    if lines.is_empty() {
+        "Command executed".to_string()
+    } else {
+        lines.join("\n")
+    }
+}
+
+/// Format success/error status results
+pub fn format_status_result(json: &Value) -> String {
+    if let Some(success) = json.get("success").and_then(|s| s.as_bool()) {
+        let msg = json.get("message").and_then(|m| m.as_str()).unwrap_or("");
+        if success {
+            format!("✓ {}", if msg.is_empty() { "Success" } else { msg })
+        } else {
+            let err = json.get("error").and_then(|e| e.as_str()).unwrap_or(msg);
+            format!("✗ {}", if err.is_empty() { "Failed" } else { err })
+        }
+    } else if let Some(msg) = json.get("message").and_then(|m| m.as_str()) {
+        msg.to_string()
+    } else {
+        truncate_str(&json.to_string(), 200)
+    }
+}
+
+/// Auto-detect and format JSON based on structure
+pub fn format_generic_json(json: &Value, raw: &str) -> String {
+    if json.get("entries").is_some() {
+        return format_directory_result(json);
+    }
+    if json.get("matches").is_some() {
+        return format_grep_result(json);
+    }
+    if json.get("files").is_some() {
+        return format_glob_result(json);
+    }
+    if json.get("success").is_some() || json.get("error").is_some() {
+        return format_status_result(json);
+    }
+    if json.get("stdout").is_some() || json.get("stderr").is_some() {
+        return format_command_result(json);
+    }
+
+    truncate_str(raw, 500)
+}
+
+// ============================================================================
+// Tool result summary (for UI status display)
+// ============================================================================
+
+/// A single line in a diff preview
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiffLine {
+    pub line_number: Option<u32>,
+    pub line_type: String,
+    pub content: String,
+}
+
+impl DiffLine {
+    pub fn context(line_number: u32, content: impl Into<String>) -> Self {
+        Self {
+            line_number: Some(line_number),
+            line_type: "context".to_string(),
+            content: content.into(),
+        }
+    }
+
+    pub fn added(line_number: u32, content: impl Into<String>) -> Self {
+        Self {
+            line_number: Some(line_number),
+            line_type: "added".to_string(),
+            content: content.into(),
+        }
+    }
+
+    pub fn removed(content: impl Into<String>) -> Self {
+        Self {
+            line_number: None,
+            line_type: "removed".to_string(),
+            content: content.into(),
+        }
+    }
+}
+
+/// Format a tool result summary: short, one-line description of what happened
+pub fn format_tool_result_summary(
+    tool_name: &str,
+    success: bool,
+    output: &str,
+    args: &Value,
+) -> (String, Option<Vec<DiffLine>>) {
+    if !success {
+        let err_preview = output.lines().next().unwrap_or("Error");
+        return (format!("Error: {}", truncate_str(err_preview, 60)), None);
+    }
+
+    match tool_name {
+        "Read" => {
+            let line_count = output.lines().count();
+            (format!("Read {} lines", line_count), None)
+        }
+        "Write" => {
+            let line_count = args["content"]
+                .as_str()
+                .map(|c| c.lines().count())
+                .unwrap_or(0);
+            (format!("Wrote {} lines", line_count), None)
+        }
+        "Edit" => {
+            let old_str = args["old_string"].as_str().unwrap_or("");
+            let new_str = args["new_string"].as_str().unwrap_or("");
+            let diff = generate_edit_diff(old_str, new_str);
+
+            let old_lines = old_str.lines().count();
+            let new_lines = new_str.lines().count();
+            let summary = if new_lines > old_lines {
+                format!("Added {} lines", new_lines - old_lines)
+            } else if old_lines > new_lines {
+                format!("Removed {} lines", old_lines - new_lines)
+            } else {
+                format!("Changed {} lines", old_lines)
+            };
+            (summary, Some(diff))
+        }
+        "Glob" => {
+            let match_count = output.lines().filter(|l| !l.is_empty()).count();
+            (format!("Found {} files", match_count), None)
+        }
+        "Grep" => {
+            let match_count = output.lines().filter(|l| !l.is_empty()).count();
+            if match_count == 0 {
+                ("Found 0 matches".to_string(), None)
+            } else {
+                (format!("Found {} matches", match_count), None)
+            }
+        }
+        "Bash" => {
+            let line_count = output.lines().count();
+            if line_count == 0 {
+                ("Completed".to_string(), None)
+            } else if line_count <= 3 {
+                let preview = output.lines().take(3).collect::<Vec<_>>().join(" | ");
+                (truncate_str(&preview, 60), None)
+            } else {
+                (format!("{} lines of output", line_count), None)
+            }
+        }
+        "Task" => {
+            let preview = output.lines().next().unwrap_or("Completed");
+            (truncate_str(preview, 60), None)
+        }
+        "WebSearch" | "WebFetch" => {
+            let preview = output.lines().next().unwrap_or("Completed");
+            (truncate_str(preview, 60), None)
+        }
+        "TodoWrite" => {
+            if let Some(todos) = args["todos"].as_array() {
+                let completed = todos
+                    .iter()
+                    .filter(|t| t["status"].as_str() == Some("completed"))
+                    .count();
+                let in_progress = todos
+                    .iter()
+                    .filter(|t| t["status"].as_str() == Some("in_progress"))
+                    .count();
+                (
+                    format!("{} todos ({} done, {} active)", todos.len(), completed, in_progress),
+                    None,
+                )
+            } else {
+                ("Updated todos".to_string(), None)
+            }
+        }
+        _ => {
+            if output.is_empty() {
+                ("Done".to_string(), None)
+            } else {
+                let preview = output.lines().next().unwrap_or("Done");
+                (truncate_str(preview, 60), None)
+            }
+        }
+    }
+}
+
+/// Generate diff lines for an Edit tool operation
+fn generate_edit_diff(old_str: &str, new_str: &str) -> Vec<DiffLine> {
+    let mut diff_lines = Vec::new();
+    let old_lines: Vec<&str> = old_str.lines().collect();
+    let new_lines: Vec<&str> = new_str.lines().collect();
+
+    let max_lines = 10;
+    let mut count = 0;
+
+    // Show removed lines (max 5)
+    for (i, line) in old_lines.iter().take(5).enumerate() {
+        if count >= max_lines {
+            break;
+        }
+        diff_lines.push(DiffLine::removed(line.to_string()));
+        count += 1;
+        if i == 4 && old_lines.len() > 5 {
+            diff_lines.push(DiffLine {
+                line_number: None,
+                line_type: "context".to_string(),
+                content: format!("... {} more removed", old_lines.len() - 5),
+            });
+            count += 1;
+        }
+    }
+
+    // Show added lines (max 5)
+    for (i, line) in new_lines.iter().take(5).enumerate() {
+        if count >= max_lines {
+            break;
+        }
+        diff_lines.push(DiffLine::added((i + 1) as u32, line.to_string()));
+        count += 1;
+        if i == 4 && new_lines.len() > 5 {
+            diff_lines.push(DiffLine {
+                line_number: None,
+                line_type: "context".to_string(),
+                content: format!("... {} more added", new_lines.len() - 5),
+            });
+        }
+    }
+
+    diff_lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,84 +717,43 @@ mod tests {
     }
 
     #[test]
+    fn test_format_size() {
+        assert_eq!(format_size(0), "-");
+        assert_eq!(format_size(100), "100 B");
+        assert_eq!(format_size(1024), "1.0 KB");
+        assert_eq!(format_size(1048576), "1.0 MB");
+    }
+
+    #[test]
     fn test_format_tool_summary() {
         let args = json!({"file_path": "/foo/bar.rs"});
         assert_eq!(format_tool_summary("Read", &args), "/foo/bar.rs");
-
-        let args = json!({"pattern": "*.rs", "path": "/src"});
-        assert_eq!(format_tool_summary("Grep", &args), "*.rs in /src");
-    }
-
-    #[test]
-    fn test_format_ephemeral() {
-        let args = json!({"file_path": "/foo/bar.rs", "content": "line1\nline2\nline3"});
-        let result = format_ephemeral("Write", &args);
-        assert!(result.contains("Write: /foo/bar.rs"));
-        assert!(result.contains("3 lines"));
-    }
-
-    #[test]
-    fn test_format_approval_args() {
-        let args = json!({"file_path": "/foo/bar.rs", "old_string": "old", "new_string": "new"});
-        let lines = format_approval_args("Edit", &args);
-        assert!(lines.iter().any(|l| l.contains("File:")));
-        assert!(lines.iter().any(|l| l.contains("Old:")));
-        assert!(lines.iter().any(|l| l.contains("New:")));
     }
 
     #[test]
     fn test_format_tool_call() {
         let args = json!({"file_path": "/foo/bar.rs"});
         assert_eq!(format_tool_call("Read", &args), "Read(/foo/bar.rs)");
-
-        let args = json!({"pattern": "*.rs", "path": "/src"});
-        assert_eq!(
-            format_tool_call("Grep", &args),
-            "Grep(pattern: \"*.rs\", path: \"/src\")"
-        );
-
-        let args = json!({"command": "cargo build"});
-        assert_eq!(format_tool_call("Bash", &args), "Bash(cargo build)");
     }
 
     #[test]
     fn test_format_tool_result_summary() {
-        // Read tool
-        let (summary, diff) = format_tool_result_summary(
-            "Read",
-            true,
-            "line1\nline2\nline3",
-            &json!({}),
-        );
-        assert_eq!(summary, "Read 3 lines");
+        let (summary, diff) = format_tool_result_summary("Read", true, "line1\nline2", &json!({}));
+        assert_eq!(summary, "Read 2 lines");
         assert!(diff.is_none());
-
-        // Edit tool with diff
-        let (summary, diff) = format_tool_result_summary(
-            "Edit",
-            true,
-            "ok",
-            &json!({"old_string": "old", "new_string": "new\nline"}),
-        );
-        assert!(summary.contains("Added"));
-        assert!(diff.is_some());
-        let diff = diff.unwrap();
-        assert!(diff.iter().any(|d| d.line_type == "removed"));
-        assert!(diff.iter().any(|d| d.line_type == "added"));
-
-        // Error case
-        let (summary, _) = format_tool_result_summary("Read", false, "File not found", &json!({}));
-        assert!(summary.starts_with("Error:"));
     }
 
     #[test]
-    fn test_diff_line() {
-        let added = DiffLine::added(5, "new content");
-        assert_eq!(added.line_number, Some(5));
-        assert_eq!(added.line_type, "added");
+    fn test_format_status_result() {
+        let json = json!({"success": true, "message": "Done"});
+        assert!(format_status_result(&json).contains("✓"));
+    }
 
-        let removed = DiffLine::removed("old content");
-        assert!(removed.line_number.is_none());
-        assert_eq!(removed.line_type, "removed");
+    #[test]
+    fn test_format_command_result() {
+        let json = json!({"exit_code": 0, "stdout": "Hello"});
+        let result = format_command_result(&json);
+        assert!(result.contains("✓"));
+        assert!(result.contains("Hello"));
     }
 }

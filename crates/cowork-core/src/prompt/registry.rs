@@ -37,9 +37,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::prompt::agents::{AgentDefinition, AgentRegistry};
+use crate::prompt::agents::{AgentDefinition, parse_agent};
 use crate::prompt::builder::SkillDefinition;
-use crate::prompt::commands::{CommandDefinition, CommandRegistry};
+use crate::prompt::builtin;
+use crate::prompt::commands::{CommandDefinition, parse_command_named};
 use crate::prompt::hook_executor::load_hooks_config;
 use crate::prompt::hooks::HooksConfig;
 use crate::prompt::plugins::{DiscoverResult, PluginRegistry};
@@ -391,18 +392,32 @@ impl ComponentRegistry {
     /// Load built-in components (agents and commands)
     pub fn load_builtins(&mut self) {
         // Load built-in agents
-        let agent_registry = AgentRegistry::with_builtins();
-        for agent in agent_registry.list() {
-            self.agents.insert(agent.name().to_string(), agent.clone());
+        let builtin_agents = [
+            builtin::agents::EXPLORE,
+            builtin::agents::PLAN,
+            builtin::agents::BASH,
+            builtin::agents::GENERAL,
+        ];
+        for content in builtin_agents {
+            if let Ok(agent) = parse_agent(content, None, Scope::Builtin) {
+                self.agents.insert(agent.name().to_string(), agent);
+            }
         }
 
         // Load built-in commands
-        let command_registry = CommandRegistry::with_builtins();
-        for command in command_registry.list() {
-            self.commands.insert(command.name().to_string(), command.clone());
+        let builtin_commands: &[(&str, &str)] = &[
+            ("commit", builtin::commands::COMMIT),
+            ("commit-push-pr", builtin::commands::COMMIT_PUSH_PR),
+            ("clean_gone", builtin::commands::CLEAN_GONE),
+            ("code-review", builtin::commands::CODE_REVIEW),
+            ("feature-dev", builtin::commands::FEATURE_DEV),
+            ("review-pr", builtin::commands::REVIEW_PR),
+        ];
+        for (name, content) in builtin_commands {
+            if let Ok(cmd) = parse_command_named(content, name, None, Scope::Builtin) {
+                self.commands.insert(cmd.name().to_string(), cmd);
+            }
         }
-
-        // Note: Skills don't have built-ins currently
     }
 
     /// Load all components from the specified paths
@@ -779,26 +794,6 @@ impl ComponentRegistry {
         self.hooks.merge(config);
     }
 
-    // ================== Conversion ==================
-
-    /// Create an AgentRegistry view of the agents
-    pub fn to_agent_registry(&self) -> AgentRegistry {
-        let mut registry = AgentRegistry::new();
-        for agent in self.agents.values() {
-            registry.register(agent.clone());
-        }
-        registry
-    }
-
-    /// Create a CommandRegistry view of the commands
-    pub fn to_command_registry(&self) -> CommandRegistry {
-        let mut registry = CommandRegistry::new();
-        for command in self.commands.values() {
-            registry.register(command.clone());
-        }
-        registry
-    }
-
     // ================== Plugin Access ==================
 
     /// Get the plugin registry
@@ -1139,23 +1134,6 @@ mod tests {
             assert!(names.contains(&"review-pr"));
         }
 
-        #[test]
-        fn test_to_agent_registry() {
-            let registry = ComponentRegistry::with_builtins();
-            let agent_registry = registry.to_agent_registry();
-
-            assert!(agent_registry.get("Explore").is_some());
-            assert!(agent_registry.get("Plan").is_some());
-        }
-
-        #[test]
-        fn test_to_command_registry() {
-            let registry = ComponentRegistry::with_builtins();
-            let command_registry = registry.to_command_registry();
-
-            assert!(command_registry.get("commit").is_some());
-            assert!(command_registry.get("review-pr").is_some());
-        }
     }
 
     mod load_result_tests {

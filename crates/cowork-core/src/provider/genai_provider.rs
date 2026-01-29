@@ -551,19 +551,10 @@ impl GenAIProvider {
 
 }
 
-// Implement LlmProvider trait for compatibility with existing code
-impl super::LlmProvider for GenAIProvider {
-    fn name(&self) -> &str {
+impl GenAIProvider {
+    /// Get the provider name/ID
+    pub fn name(&self) -> &str {
         &self.provider_id
-    }
-
-    async fn health_check(&self) -> Result<bool> {
-        let messages = vec![ChatMessage::user("Hi")];
-
-        match self.chat(messages, None).await {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
     }
 }
 

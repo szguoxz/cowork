@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
+use crate::orchestration::system_prompt::DEFAULT_SYSTEM_PROMPT;
 use crate::provider::{
     ChatMessage, ToolCall, tool_result_message, assistant_with_tool_calls,
 };
@@ -45,7 +46,7 @@ impl ChatSession {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             messages: Vec::new(),
-            system_prompt: super::system_prompt::DEFAULT_SYSTEM_PROMPT.to_string(),
+            system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             tool_status: HashMap::new(),
         }
     }
