@@ -9,6 +9,28 @@ use crate::tools::{BoxFuture, Tool, ToolOutput};
 
 use super::{path_to_display, validate_path};
 
+/// Maximum tokens allowed in file read output (matches Claude Code's limit)
+const MAX_OUTPUT_TOKENS: usize = 25000;
+
+/// Estimate token count for a string
+/// Uses tiktoken if available, otherwise falls back to char/4 approximation
+#[cfg(feature = "tiktoken")]
+fn estimate_tokens(text: &str) -> usize {
+    use std::sync::OnceLock;
+    static BPE: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
+
+    let bpe = BPE.get_or_init(|| {
+        tiktoken_rs::cl100k_base().expect("Failed to load cl100k_base tokenizer")
+    });
+    bpe.encode_with_special_tokens(text).len()
+}
+
+#[cfg(not(feature = "tiktoken"))]
+fn estimate_tokens(text: &str) -> usize {
+    // Approximate: ~4 characters per token
+    text.len() / 4
+}
+
 /// Tool for reading file contents
 pub struct ReadFile {
     workspace: PathBuf,
@@ -82,37 +104,55 @@ impl Tool for ReadFile {
                 .map_err(ToolError::Io)?;
 
             // Handle offset and limit for large files
+            // Default to 2000 lines as per Claude Code behavior
+            const DEFAULT_LINE_LIMIT: usize = 2000;
+
             let offset = params["offset"].as_u64().unwrap_or(0) as usize;
-            let limit = params["limit"].as_u64().map(|l| l as usize);
+            let limit = params["limit"]
+                .as_u64()
+                .map(|l| l as usize)
+                .unwrap_or(DEFAULT_LINE_LIMIT);
 
             let lines: Vec<&str> = content.lines().collect();
             let total_lines = lines.len();
 
-            let output_lines: Vec<String> = lines
-                .into_iter()
-                .skip(offset)
-                .take(limit.unwrap_or(usize::MAX))
-                .enumerate()
-                .map(|(i, line)| {
-                    let line_num = offset + i + 1;
-                    // Truncate lines longer than 2000 chars
-                    let truncated = if line.len() > 2000 {
-                        format!("{}...", &line[..2000])
-                    } else {
-                        line.to_string()
-                    };
-                    format!("{:>6}\t{}", line_num, truncated)
-                })
-                .collect();
+            // Build output lines with line numbers
+            let mut output_lines: Vec<String> = Vec::new();
+            let mut token_count = 0;
+            let mut truncated_by_tokens = false;
+
+            for (i, line) in lines.into_iter().skip(offset).take(limit).enumerate() {
+                let line_num = offset + i + 1;
+                // Truncate lines longer than 2000 chars
+                let truncated = if line.len() > 2000 {
+                    format!("{}...", &line[..2000])
+                } else {
+                    line.to_string()
+                };
+                let formatted_line = format!("{:>6}\t{}", line_num, truncated);
+
+                // Check token limit before adding
+                let line_tokens = estimate_tokens(&formatted_line);
+                if token_count + line_tokens > MAX_OUTPUT_TOKENS {
+                    truncated_by_tokens = true;
+                    break;
+                }
+
+                token_count += line_tokens;
+                output_lines.push(formatted_line);
+            }
 
             let formatted_content = output_lines.join("\n");
+            let lines_returned = output_lines.len();
+            let has_more = offset + lines_returned < total_lines || truncated_by_tokens;
 
             Ok(ToolOutput::success(json!({
                 "content": formatted_content,
                 "path": path_to_display(&validated),
                 "total_lines": total_lines,
                 "offset": offset,
-                "lines_returned": output_lines.len()
+                "lines_returned": lines_returned,
+                "has_more": has_more
             })))
         })
     }
