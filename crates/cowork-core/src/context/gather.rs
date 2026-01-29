@@ -66,11 +66,6 @@ impl MemoryHierarchy {
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
     }
-
-    /// Get files from a specific tier
-    pub fn files_in_tier(&self, tier: MemoryTier) -> Vec<&MemoryFile> {
-        self.files.iter().filter(|f| f.tier == tier).collect()
-    }
 }
 
 /// Gathered project context

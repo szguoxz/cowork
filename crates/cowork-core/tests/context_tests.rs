@@ -180,7 +180,9 @@ mod memory_hierarchy_tests {
         let gatherer = ContextGatherer::new(dir.path().to_path_buf());
 
         let hierarchy = gatherer.gather_memory_hierarchy().await;
-        let project_files = hierarchy.files_in_tier(MemoryTier::Project);
+        let project_files: Vec<_> = hierarchy.files.iter()
+            .filter(|f| f.tier == MemoryTier::Project)
+            .collect();
 
         assert!(!project_files.is_empty(), "Should find project tier files");
         assert!(project_files[0].content.contains("Project Instructions"));
@@ -192,7 +194,9 @@ mod memory_hierarchy_tests {
         let gatherer = ContextGatherer::new(dir.path().to_path_buf());
 
         let hierarchy = gatherer.gather_memory_hierarchy().await;
-        let rules_files = hierarchy.files_in_tier(MemoryTier::Rules);
+        let rules_files: Vec<_> = hierarchy.files.iter()
+            .filter(|f| f.tier == MemoryTier::Rules)
+            .collect();
 
         assert_eq!(rules_files.len(), 2, "Should find 2 rule files");
     }

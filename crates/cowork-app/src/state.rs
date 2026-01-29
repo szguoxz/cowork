@@ -6,12 +6,10 @@ use parking_lot::RwLock;
 
 use cowork_core::provider::catalog;
 use cowork_core::session::SessionManager;
-use cowork_core::{Config, ConfigManager, Context};
+use cowork_core::{Config, ConfigManager};
 
 /// Global application state
 pub struct AppState {
-    /// Current execution context
-    pub context: Arc<RwLock<Context>>,
     /// Workspace root path
     pub workspace_path: PathBuf,
     /// Configuration manager

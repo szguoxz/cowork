@@ -13,7 +13,7 @@ use tauri::Manager;
 use parking_lot::RwLock;
 
 use cowork_core::session::{OutputReceiver, SessionManager, SessionOutput};
-use cowork_core::{ConfigManager, Context, Workspace};
+use cowork_core::ConfigManager;
 use state::AppState;
 
 const REPO_OWNER: &str = "szguoxz";
@@ -57,9 +57,6 @@ pub fn init_state(
     workspace_path: std::path::PathBuf,
     config_manager: ConfigManager,
 ) -> (AppState, OutputReceiver) {
-    let workspace = Workspace::new(&workspace_path);
-    let context = Context::new(workspace);
-
     // Wrap config manager in Arc<RwLock> for shared access
     let config_manager = Arc::new(RwLock::new(config_manager));
 
@@ -67,7 +64,6 @@ pub fn init_state(
     let (session_manager, output_rx) = SessionManager::new(workspace_path.clone());
 
     let state = AppState {
-        context: Arc::new(RwLock::new(context)),
         workspace_path,
         config_manager,
         session_manager: Arc::new(session_manager),
