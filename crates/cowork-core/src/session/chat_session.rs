@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::orchestration::system_prompt::DEFAULT_SYSTEM_PROMPT;
 use crate::provider::{
-    ChatMessage, ToolCall, tool_result_message, assistant_with_tool_calls,
+    ChatMessage, ContentPart, MessageContent, ToolCall, tool_result_message, assistant_with_tool_calls,
 };
+use super::ImageAttachment;
 
 /// Status of a tool call
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +65,20 @@ impl ChatSession {
     /// Add a user message
     pub fn add_user_message(&mut self, content: impl Into<String>) {
         self.messages.push(ChatMessage::user(content.into()));
+    }
+
+    /// Add a user message with image attachments
+    pub fn add_user_message_with_images(
+        &mut self,
+        content: impl Into<String>,
+        images: Vec<ImageAttachment>,
+    ) {
+        // Build content parts: text first, then images
+        let mut parts: Vec<ContentPart> = vec![ContentPart::Text(content.into())];
+        for img in images {
+            parts.push(ContentPart::from_binary_base64(&img.media_type, img.data, None));
+        }
+        self.messages.push(ChatMessage::user(MessageContent::from_parts(parts)));
     }
 
     /// Add an assistant message

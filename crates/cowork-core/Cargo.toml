@@ -44,6 +44,7 @@ url = "2"
 uuid.workspace = true
 chrono.workspace = true
 dirs = "6"
+base64 = "0.22"
 zip = "7"
 dunce = "1"  # Cross-platform canonicalize without UNC prefix on Windows
 sha2 = "0.10"

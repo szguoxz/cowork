@@ -89,85 +89,6 @@ pub enum ApprovalResponse {
     ApprovedForSession,
 }
 
-/// Policy for handling approval requests
-pub trait ApprovalPolicy: Send + Sync {
-    /// Check if an operation at this level requires approval
-    fn requires_approval(&self, level: &ApprovalLevel) -> bool;
-
-    /// Get the minimum level that requires approval
-    fn approval_threshold(&self) -> ApprovalLevel;
-}
-
-/// Default approval policy - approve Low and below
-#[derive(Debug, Clone, Default)]
-pub struct DefaultApprovalPolicy {
-    threshold: ApprovalLevel,
-}
-
-impl DefaultApprovalPolicy {
-    pub fn new() -> Self {
-        Self {
-            threshold: ApprovalLevel::Medium,
-        }
-    }
-
-    pub fn with_threshold(threshold: ApprovalLevel) -> Self {
-        Self { threshold }
-    }
-
-    /// Trust all operations (dangerous - use for testing only)
-    pub fn trust_all() -> Self {
-        Self {
-            threshold: ApprovalLevel::Critical,
-        }
-    }
-
-    /// Require approval for everything except reads
-    pub fn paranoid() -> Self {
-        Self {
-            threshold: ApprovalLevel::Low,
-        }
-    }
-}
-
-impl ApprovalPolicy for DefaultApprovalPolicy {
-    fn requires_approval(&self, level: &ApprovalLevel) -> bool {
-        level >= &self.threshold
-    }
-
-    fn approval_threshold(&self) -> ApprovalLevel {
-        self.threshold
-    }
-}
-
-/// Approval handler that prompts the user
-pub struct ApprovalHandler {
-    session_approvals: std::collections::HashSet<String>,
-}
-
-impl ApprovalHandler {
-    pub fn new(_policy: impl ApprovalPolicy + 'static) -> Self {
-        Self {
-            session_approvals: std::collections::HashSet::new(),
-        }
-    }
-
-    /// Check if an operation is pre-approved
-    pub fn is_pre_approved(&self, operation_id: &str) -> bool {
-        self.session_approvals.contains(operation_id)
-    }
-
-    /// Record a session-wide approval
-    pub fn approve_for_session(&mut self, operation_id: impl Into<String>) {
-        self.session_approvals.insert(operation_id.into());
-    }
-
-    /// Clear all session approvals
-    pub fn clear_session_approvals(&mut self) {
-        self.session_approvals.clear();
-    }
-}
-
 // ============================================================================
 // Tool Approval Configuration
 // ============================================================================
@@ -283,44 +204,34 @@ impl ToolApprovalConfig {
     /// Check if a tool should be auto-approved
     pub fn should_auto_approve(&self, tool_name: &str) -> bool {
         // Session-wide approval overrides everything
-        if self.session_approve_all {
+        if self.session_approve_all || self.session_approved.contains(tool_name) {
             return true;
         }
 
-        // Check session-approved tools
-        if self.session_approved.contains(tool_name) {
-            return true;
+        // Critical: require approval for everything
+        if self.level == ApprovalLevel::Critical {
+            return false;
         }
 
-        // Check based on approval level
-        // Higher levels are MORE restrictive (require approval for more tools)
-        match self.level {
-            ApprovalLevel::None => {
-                // None: auto-approve everything in auto_approve list
-                self.auto_approve.contains(tool_name)
-            }
-            ApprovalLevel::Low => {
-                // Low: auto-approve read-only tools in auto_approve list
-                self.auto_approve.contains(tool_name)
-            }
-            ApprovalLevel::Medium => {
-                // Medium: only auto-approve if in auto_approve AND not in always_require
-                self.auto_approve.contains(tool_name)
-                    && !self.always_require_approval.contains(tool_name)
-            }
-            ApprovalLevel::High => {
-                // High: only auto-approve read-only tools (those in auto_approve but not destructive)
-                self.auto_approve.contains(tool_name)
-                    && !self.always_require_approval.contains(tool_name)
-                    && !tool_name.contains("write")
-                    && !tool_name.contains("execute")
-                    && !tool_name.contains("delete")
-            }
-            ApprovalLevel::Critical => {
-                // Critical: require approval for everything
-                false
+        // Must be in auto_approve list
+        if !self.auto_approve.contains(tool_name) {
+            return false;
+        }
+
+        // Medium+: also check always_require_approval list
+        if self.level >= ApprovalLevel::Medium && self.always_require_approval.contains(tool_name) {
+            return false;
+        }
+
+        // High: additional checks for destructive-sounding tools
+        if self.level >= ApprovalLevel::High {
+            let name_lower = tool_name.to_lowercase();
+            if name_lower.contains("write") || name_lower.contains("execute") || name_lower.contains("delete") {
+                return false;
             }
         }
+
+        true
     }
 
     /// Check if a tool needs user approval

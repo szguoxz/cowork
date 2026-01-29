@@ -60,6 +60,6 @@ pub use agent_loop::{
 pub use chat_session::{ChatSession, ToolCallStatus};
 pub use manager::{OutputReceiver, SessionManager};
 pub use types::{
-    QuestionInfo, QuestionOption, SessionConfig, SessionId, SessionInput, SessionOutput,
-    SessionRegistry,
+    ImageAttachment, QuestionInfo, QuestionOption, SessionConfig, SessionId, SessionInput,
+    SessionOutput, SessionRegistry,
 };

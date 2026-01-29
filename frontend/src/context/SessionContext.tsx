@@ -4,6 +4,12 @@ import { listen } from '@tauri-apps/api/event'
 import type { LoopOutput, Session, SessionProvider as SessionProviderType } from '../bindings'
 import { createSession, generateSessionId } from '../bindings'
 
+/** Image data for sending with messages */
+export interface ImageData {
+  data: string      // Base64-encoded image data
+  media_type: string // MIME type: "image/png", "image/jpeg", etc.
+}
+
 interface SessionContextType {
   sessions: Map<string, Session>
   activeSessionId: string | null
@@ -18,6 +24,7 @@ interface SessionContextType {
 
   // Message sending
   sendMessage: (content: string, sessionId?: string) => Promise<void>
+  sendMessageWithImages: (content: string, images: ImageData[], sessionId?: string) => Promise<void>
 
   // Tool approval
   approveTool: (toolId: string, sessionId?: string) => Promise<void>
@@ -436,6 +443,16 @@ export function SessionProvider({ children }: SessionProviderProps) {
     await invoke('send_message', { content, sessionId: targetId })
   }, [activeSessionId, updateSession])
 
+  // Message sending with images
+  const sendMessageWithImages = useCallback(async (content: string, images: ImageData[], sessionId?: string) => {
+    const targetId = sessionId || activeSessionId
+    if (!targetId) throw new Error('No active session')
+
+    // Set turnStart for elapsed time tracking
+    updateSession(targetId, s => ({ ...s, error: null, turnStart: Date.now() }))
+    await invoke('send_message_with_images', { content, images, sessionId: targetId })
+  }, [activeSessionId, updateSession])
+
   // Tool approval
   const approveTool = useCallback(async (toolId: string, sessionId?: string) => {
     const targetId = sessionId || activeSessionId
@@ -516,6 +533,7 @@ export function SessionProvider({ children }: SessionProviderProps) {
     closeSession,
     updateSessionProvider,
     sendMessage,
+    sendMessageWithImages,
     approveTool,
     rejectTool,
     approveToolForSession,

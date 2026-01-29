@@ -17,7 +17,7 @@ use std::path::Path;
 use tauri::State;
 
 use cowork_core::config::McpServerConfig;
-use cowork_core::session::{SessionInput, SessionOutput};
+use cowork_core::session::{ImageAttachment, SessionInput, SessionOutput};
 use cowork_core::skills::installer::{InstallLocation, SkillInstaller};
 
 use crate::state::AppState;
@@ -85,6 +85,15 @@ pub async fn start_loop(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Image data from the frontend
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ImageData {
+    /// Base64-encoded image data
+    pub data: String,
+    /// MIME type (e.g., "image/png", "image/jpeg")
+    pub media_type: String,
+}
+
 /// Send a message to a session
 ///
 /// If session_id is not provided, uses "default".
@@ -100,6 +109,41 @@ pub async fn send_message(
     state
         .session_manager
         .push_message(&session_id, SessionInput::user_message(content))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Send a message with image attachments to a session
+///
+/// Images should be base64-encoded with their MIME types.
+/// If session_id is not provided, uses "default".
+#[tauri::command]
+pub async fn send_message_with_images(
+    content: String,
+    images: Vec<ImageData>,
+    session_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let session_id = session_id.unwrap_or_else(|| "default".to_string());
+    tracing::info!(
+        "send_message_with_images to session '{}': {} chars, {} images",
+        session_id,
+        content.len(),
+        images.len()
+    );
+
+    // Convert ImageData to ImageAttachment
+    let attachments: Vec<ImageAttachment> = images
+        .into_iter()
+        .map(|img| ImageAttachment::new(img.data, img.media_type))
+        .collect();
+
+    state
+        .session_manager
+        .push_message(
+            &session_id,
+            SessionInput::user_message_with_images(content, attachments),
+        )
         .await
         .map_err(|e| e.to_string())
 }

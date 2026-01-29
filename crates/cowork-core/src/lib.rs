@@ -21,7 +21,7 @@ pub mod skills;
 pub mod tools;
 pub mod update;
 
-pub use approval::{ApprovalLevel, ApprovalPolicy, ApprovalRequest, ToolApprovalConfig};
+pub use approval::{ApprovalLevel, ApprovalRequest, ToolApprovalConfig};
 pub use config::{defaults, Config, ConfigManager, McpServerConfig, ModelTiers, ProviderConfig};
 // Context exports moved to context module
 pub use mcp_manager::{McpServerInfo, McpServerManager, McpServerStatus, McpToolInfo};
@@ -48,8 +48,8 @@ pub use orchestration::{
 
 // Session exports (unified agent loop architecture)
 pub use session::{
-    AgentLoop, ChatSession, QuestionInfo, QuestionOption, SessionConfig, SessionId,
-    SessionInput, SessionManager, SessionOutput, SessionRegistry, ToolCallStatus,
+    AgentLoop, ChatSession, ImageAttachment, QuestionInfo, QuestionOption, SessionConfig,
+    SessionId, SessionInput, SessionManager, SessionOutput, SessionRegistry, ToolCallStatus,
 };
 
 // Formatting exports (consolidated)

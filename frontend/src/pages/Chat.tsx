@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Loader2, X, AlertCircle, Sparkles, Square } from 'lucide-react'
+import { Send, Loader2, X, AlertCircle, Sparkles, Square, Paperclip } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import SessionTabs from '../components/SessionTabs'
 import ApprovalModal from '../components/ApprovalModal'
 import QuestionModal from '../components/QuestionModal'
 import ToolCallMessage from '../components/ToolCallMessage'
 import ToolResultMessage from '../components/ToolResultMessage'
-import { useSession } from '../context/SessionContext'
+import { useSession, ImageData } from '../context/SessionContext'
 
 export default function Chat() {
   const {
@@ -18,6 +18,7 @@ export default function Chat() {
     createNewSession,
     closeSession,
     sendMessage,
+    sendMessageWithImages,
     approveTool,
     rejectTool,
     approveToolForSession,
@@ -29,7 +30,9 @@ export default function Chat() {
 
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [pendingImages, setPendingImages] = useState<ImageData[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const session = getActiveSession()
   const messages = session?.messages || []
@@ -50,16 +53,65 @@ export default function Chat() {
     }
   }, [session?.error])
 
+  // Convert File to base64 ImageData
+  const fileToImageData = async (file: File): Promise<ImageData> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = reader.result as string
+        // Remove data URL prefix (e.g., "data:image/png;base64,")
+        const base64 = result.split(',')[1]
+        resolve({
+          data: base64,
+          media_type: file.type || 'image/png'
+        })
+      }
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+  }
+
+  // Handle file selection
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files) return
+
+    const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'))
+    if (imageFiles.length === 0) return
+
+    try {
+      const newImages = await Promise.all(imageFiles.map(fileToImageData))
+      setPendingImages(prev => [...prev, ...newImages])
+    } catch (err) {
+      console.error('Failed to read image:', err)
+      setError('Failed to read image file')
+    }
+
+    // Reset input so same file can be selected again
+    e.target.value = ''
+  }
+
+  // Remove a pending image
+  const removeImage = (index: number) => {
+    setPendingImages(prev => prev.filter((_, i) => i !== index))
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim() || modal) return
 
     const userMessage = input
+    const images = [...pendingImages]
     setInput('')
+    setPendingImages([])
     setError(null)
 
     try {
-      await sendMessage(userMessage)
+      if (images.length > 0) {
+        await sendMessageWithImages(userMessage, images)
+      } else {
+        await sendMessage(userMessage)
+      }
     } catch (err) {
       console.error('Send error:', err)
       setError(String(err))
@@ -273,12 +325,57 @@ export default function Chat() {
 
       {/* Input */}
       <form onSubmit={handleSubmit} className="p-4 border-t border-border bg-card/50">
+        {/* Image Previews */}
+        {pendingImages.length > 0 && (
+          <div className="flex gap-2 mb-3 flex-wrap">
+            {pendingImages.map((img, i) => (
+              <div key={i} className="relative group">
+                <img
+                  src={`data:${img.media_type};base64,${img.data}`}
+                  alt={`Attachment ${i + 1}`}
+                  className="w-16 h-16 object-cover rounded-lg border border-border"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeImage(i)}
+                  className="absolute -top-2 -right-2 w-5 h-5 bg-error text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="flex gap-3">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+
+          {/* Attachment button */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="lg"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!!modal}
+            className="px-3"
+            title="Attach images"
+          >
+            <Paperclip className="w-5 h-5" />
+          </Button>
+
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={modal ? "Waiting for response..." : "Type a message..."}
+            placeholder={modal ? "Waiting for response..." : pendingImages.length > 0 ? "Add a message about these images..." : "Type a message..."}
             disabled={!!modal}
             className="flex-1 rounded-xl border border-border bg-background px-4 py-3 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
           />
