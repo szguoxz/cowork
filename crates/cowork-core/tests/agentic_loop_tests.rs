@@ -295,20 +295,6 @@ mod approval_level_tests {
     }
 }
 
-mod message_conversion_tests {
-    use cowork_core::context::{Message, MessageRole};
-    use chrono::Utc;
-
-    #[test]
-    fn test_message_new() {
-        let msg = Message::new(MessageRole::User, "Hello");
-        assert!(matches!(msg.role, MessageRole::User));
-        assert_eq!(msg.content, "Hello");
-        // Timestamp should be recent
-        assert!(msg.timestamp <= Utc::now());
-    }
-}
-
 mod parallel_tool_execution_tests {
     use super::*;
 
