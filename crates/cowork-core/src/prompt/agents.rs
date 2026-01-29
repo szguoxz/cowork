@@ -24,14 +24,12 @@
 //! You are a file search specialist...
 //! ```
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::prompt::parser::{parse_frontmatter, parse_tool_list, ParseError, ParsedDocument};
 use crate::prompt::types::{ModelPreference, Scope, ToolRestrictions, ToolSpec};
-use crate::prompt::builtin;
 
 /// Context mode for agents - how they receive conversation context
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -352,156 +350,6 @@ pub fn load_agent_from_file(path: &Path, scope: Scope) -> Result<AgentDefinition
     parse_agent(&content, Some(path.to_path_buf()), scope)
 }
 
-/// Registry for managing agent definitions
-#[derive(Debug, Default)]
-pub struct AgentRegistry {
-    /// Registered agents by name
-    agents: HashMap<String, AgentDefinition>,
-}
-
-impl AgentRegistry {
-    /// Create a new empty registry
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Create a new registry with built-in agents loaded
-    pub fn with_builtins() -> Self {
-        let mut registry = Self::new();
-        registry.load_builtins();
-        registry
-    }
-
-    /// Load all built-in agents
-    pub fn load_builtins(&mut self) {
-        // Load Explore agent
-        if let Ok(agent) = parse_agent(builtin::agents::EXPLORE, None, Scope::Builtin) {
-            self.register(agent);
-        }
-
-        // Load Plan agent
-        if let Ok(agent) = parse_agent(builtin::agents::PLAN, None, Scope::Builtin) {
-            self.register(agent);
-        }
-
-        // Load Bash agent
-        if let Ok(agent) = parse_agent(builtin::agents::BASH, None, Scope::Builtin) {
-            self.register(agent);
-        }
-
-        // Load General agent
-        if let Ok(agent) = parse_agent(builtin::agents::GENERAL, None, Scope::Builtin) {
-            self.register(agent);
-        }
-    }
-
-    /// Register an agent definition
-    ///
-    /// If an agent with the same name exists, it will be replaced only if
-    /// the new agent has higher priority (lower scope value).
-    pub fn register(&mut self, agent: AgentDefinition) {
-        let name = agent.name().to_string();
-
-        // Check if we should replace existing
-        if let Some(existing) = self.agents.get(&name) {
-            // Only replace if new agent has higher priority
-            if !agent.scope.overrides(&existing.scope) {
-                return;
-            }
-        }
-
-        self.agents.insert(name, agent);
-    }
-
-    /// Get an agent by name
-    pub fn get(&self, name: &str) -> Option<&AgentDefinition> {
-        self.agents.get(name)
-    }
-
-    /// List all registered agents
-    pub fn list(&self) -> impl Iterator<Item = &AgentDefinition> {
-        self.agents.values()
-    }
-
-    /// List agent names
-    pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.agents.keys().map(|s| s.as_str())
-    }
-
-    /// Get the number of registered agents
-    pub fn len(&self) -> usize {
-        self.agents.len()
-    }
-
-    /// Check if the registry is empty
-    pub fn is_empty(&self) -> bool {
-        self.agents.is_empty()
-    }
-
-    /// Load agents from a directory
-    ///
-    /// Scans the directory for `.md` files and attempts to parse each as an agent.
-    /// Invalid files are logged and skipped.
-    pub fn load_from_directory(&mut self, dir: &Path, scope: Scope) -> std::io::Result<usize> {
-        if !dir.exists() {
-            return Ok(0);
-        }
-
-        let mut loaded = 0;
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            // Only process .md files
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
-                continue;
-            }
-
-            match load_agent_from_file(&path, scope) {
-                Ok(agent) => {
-                    self.register(agent);
-                    loaded += 1;
-                }
-                Err(e) => {
-                    // Log but don't fail on individual agent errors
-                    tracing::warn!("Failed to load agent from {}: {}", path.display(), e);
-                }
-            }
-        }
-
-        Ok(loaded)
-    }
-
-    /// Discover and load agents from standard locations
-    ///
-    /// Loads from:
-    /// 1. Built-in agents (if not already loaded)
-    /// 2. User agents from `~/.claude/agents/`
-    /// 3. Project agents from `.claude/agents/`
-    ///
-    /// Higher priority sources override lower priority ones.
-    pub fn discover(&mut self, project_root: Option<&Path>) -> std::io::Result<()> {
-        // Load built-ins first (lowest priority)
-        if self.is_empty() {
-            self.load_builtins();
-        }
-
-        // Load user agents
-        if let Some(home) = dirs::home_dir() {
-            let user_agents_dir = home.join(".claude").join("agents");
-            let _ = self.load_from_directory(&user_agents_dir, Scope::User);
-        }
-
-        // Load project agents (highest priority among filesystem)
-        if let Some(root) = project_root {
-            let project_agents_dir = root.join(".claude").join("agents");
-            let _ = self.load_from_directory(&project_agents_dir, Scope::Project);
-        }
-
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,6 +497,7 @@ mod tests {
 
     mod parse_agent_tests {
         use super::*;
+        use crate::prompt::builtin;
 
         #[test]
         fn test_parse_minimal_agent() {
@@ -769,100 +618,6 @@ Read-only agent.
             assert!(agent.is_tool_allowed("Read", &json!({})));
             assert!(agent.is_tool_allowed("Glob", &json!({})));
             assert!(!agent.is_tool_allowed("Write", &json!({})));
-        }
-    }
-
-    mod agent_registry_tests {
-        use super::*;
-
-        #[test]
-        fn test_new_registry() {
-            let registry = AgentRegistry::new();
-            assert!(registry.is_empty());
-            assert_eq!(registry.len(), 0);
-        }
-
-        #[test]
-        fn test_with_builtins() {
-            let registry = AgentRegistry::with_builtins();
-            assert!(!registry.is_empty());
-            assert!(registry.len() >= 4);
-
-            // Check built-in agents are loaded
-            assert!(registry.get("Explore").is_some());
-            assert!(registry.get("Plan").is_some());
-            assert!(registry.get("Bash").is_some());
-            assert!(registry.get("general-purpose").is_some());
-        }
-
-        #[test]
-        fn test_register_and_get() {
-            let mut registry = AgentRegistry::new();
-
-            let agent = parse_agent(
-                "---\nname: TestAgent\n---\n\nPrompt",
-                None,
-                Scope::Project,
-            )
-            .unwrap();
-
-            registry.register(agent);
-
-            let retrieved = registry.get("TestAgent").unwrap();
-            assert_eq!(retrieved.name(), "TestAgent");
-        }
-
-        #[test]
-        fn test_scope_priority() {
-            let mut registry = AgentRegistry::new();
-
-            // Register a builtin agent
-            let builtin_agent = parse_agent(
-                "---\nname: TestAgent\ndescription: Builtin version\n---\n\nBuiltin",
-                None,
-                Scope::Builtin,
-            )
-            .unwrap();
-            registry.register(builtin_agent);
-
-            // Try to register a user agent with same name (should override)
-            let user_agent = parse_agent(
-                "---\nname: TestAgent\ndescription: User version\n---\n\nUser",
-                None,
-                Scope::User,
-            )
-            .unwrap();
-            registry.register(user_agent);
-
-            let agent = registry.get("TestAgent").unwrap();
-            assert_eq!(agent.description(), "User version");
-
-            // Try to register another builtin (should NOT override user)
-            let another_builtin = parse_agent(
-                "---\nname: TestAgent\ndescription: Another builtin\n---\n\nBuiltin2",
-                None,
-                Scope::Builtin,
-            )
-            .unwrap();
-            registry.register(another_builtin);
-
-            let agent = registry.get("TestAgent").unwrap();
-            assert_eq!(agent.description(), "User version");
-        }
-
-        #[test]
-        fn test_list_agents() {
-            let registry = AgentRegistry::with_builtins();
-            let agents: Vec<_> = registry.list().collect();
-            assert!(agents.len() >= 4);
-        }
-
-        #[test]
-        fn test_names() {
-            let registry = AgentRegistry::with_builtins();
-            let names: Vec<_> = registry.names().collect();
-            assert!(names.contains(&"Explore"));
-            assert!(names.contains(&"Plan"));
         }
     }
 

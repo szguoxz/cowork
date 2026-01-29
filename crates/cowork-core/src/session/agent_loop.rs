@@ -16,11 +16,12 @@ use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
 
 use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
+use super::ChatSession;
 use crate::approval::ToolApprovalConfig;
 use crate::formatting::{format_tool_call, format_tool_result_summary};
 use crate::context::{compact, context_limit, usage_stats};
 use crate::error::Result;
-use crate::orchestration::{ChatSession, ToolRegistryBuilder};
+use crate::orchestration::ToolRegistryBuilder;
 use crate::prompt::{HookContext, HookEvent, HookExecutor, HooksConfig};
 use crate::provider::{ChatMessage, GenAIProvider, ToolCall};
 use crate::skills::SkillRegistry;

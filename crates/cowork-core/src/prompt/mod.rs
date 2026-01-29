@@ -54,7 +54,6 @@ pub mod commands;
 pub mod hook_executor;
 pub mod hooks;
 pub mod parser;
-pub mod pipeline;
 pub mod plugins;
 pub mod registry;
 pub mod substitution;
@@ -74,23 +73,18 @@ pub use hook_executor::{HookContext, HookError, HookExecutor, load_hooks_config,
 
 // Re-export agent types
 pub use agents::{
-    AgentColor, AgentDefinition, AgentError, AgentMetadata, AgentRegistry,
+    AgentColor, AgentDefinition, AgentError, AgentMetadata,
     ContextMode, parse_agent, load_agent_from_file,
 };
 
 // Re-export command types
 pub use commands::{
-    CommandDefinition, CommandError, CommandMetadata, CommandRegistry,
+    CommandDefinition, CommandError, CommandMetadata,
     parse_command, parse_command_named, load_command_from_file,
 };
 
 // Re-export builder types
 pub use builder::{AssembledPrompt, AssemblyMetadata, PromptBuilder, SkillDefinition};
-
-// Re-export pipeline types
-pub use pipeline::{
-    HookResults, InputType, PipelineConfig, PipelineError, ProcessedInput, PromptPipeline,
-};
 
 // Re-export registry types
 pub use registry::{

@@ -128,25 +128,6 @@ fn test_tool_registry_builder_with_empty_mcp_manager() {
 }
 
 #[test]
-fn test_tool_registry_builder_mcp_disabled() {
-    let temp_dir = tempdir().unwrap();
-    let manager = Arc::new(McpServerManager::new());
-
-    let registry = ToolRegistryBuilder::new(temp_dir.path().to_path_buf())
-        .with_mcp_manager(manager)
-        .with_mcp(false) // Explicitly disabled
-        .build();
-
-    // Should have built-in tools
-    assert!(registry.get("Read").is_some());
-
-    // No MCP tools even if manager was provided
-    let all_tools = registry.list();
-    let mcp_tools: Vec<_> = all_tools.iter().filter(|t| t.name.starts_with("mcp__")).collect();
-    assert!(mcp_tools.is_empty());
-}
-
-#[test]
 fn test_mcp_tool_approval_level() {
     use cowork_core::approval::ApprovalLevel;
 

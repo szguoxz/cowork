@@ -178,7 +178,6 @@ pub fn create_provider_from_provider_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::LlmProvider;
     use tempfile::tempdir;
 
     fn write_test_config(config_path: &std::path::Path) {

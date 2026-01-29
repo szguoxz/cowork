@@ -42,20 +42,20 @@ pub use prompt::{
 
 // Orchestration exports
 pub use orchestration::{
-    create_standard_tool_registry, format_command_result, format_directory_result,
-    format_file_content, format_generic_json, format_glob_result, format_grep_result, format_size,
-    format_status_result, format_tool_result, format_tool_result_for_llm, truncate_result,
-    ChatSession, SystemPrompt, ToolCallStatus, ToolRegistryBuilder,
+    create_standard_tool_registry, format_tool_result_for_llm,
+    SystemPrompt, ToolRegistryBuilder,
 };
 
 // Session exports (unified agent loop architecture)
 pub use session::{
-    AgentLoop, QuestionInfo, QuestionOption, SessionConfig, SessionId,
-    SessionInput, SessionManager, SessionOutput, SessionRegistry,
+    AgentLoop, ChatSession, QuestionInfo, QuestionOption, SessionConfig, SessionId,
+    SessionInput, SessionManager, SessionOutput, SessionRegistry, ToolCallStatus,
 };
 
-// Formatting exports (shared between CLI and Tauri)
+// Formatting exports (consolidated)
 pub use formatting::{
-    format_approval_args, format_ephemeral, format_tool_call, format_tool_result_summary,
-    format_tool_summary, truncate_str, DiffLine,
+    format_approval_args, format_command_result, format_directory_result, format_ephemeral,
+    format_file_content, format_generic_json, format_glob_result, format_grep_result,
+    format_size, format_status_result, format_tool_call, format_tool_result,
+    format_tool_result_summary, format_tool_summary, truncate_str, DiffLine,
 };

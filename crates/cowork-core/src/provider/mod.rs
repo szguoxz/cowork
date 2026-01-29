@@ -29,8 +29,6 @@ pub use model_listing::{get_known_models, get_model_context_limit, ModelInfo};
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
-
 // Re-export ChatRole from genai as our Role type
 pub use genai::chat::ChatRole;
 
@@ -84,16 +82,6 @@ pub fn append_message_text(msg: &mut ChatMessage, text: &str) {
     msg.content = msg.content.clone().append(ContentPart::Text(text.to_string()));
 }
 
-/// Trait for LLM providers (simplified - mainly for health checks)
-#[allow(async_fn_in_trait)]
-pub trait LlmProvider: Send + Sync {
-    /// Provider name (e.g., "openai", "anthropic")
-    fn name(&self) -> &str;
-
-    /// Check if the provider is available
-    async fn health_check(&self) -> Result<bool>;
-}
-
 /// Provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
@@ -114,35 +102,6 @@ impl Default for ProviderConfig {
             model: catalog::default_model("anthropic").unwrap_or("claude-sonnet-4-5-20250929").to_string(),
             default_max_tokens: 4096,
         }
-    }
-}
-
-/// Placeholder provider for development/testing
-pub struct MockProvider {
-    name: String,
-}
-
-impl MockProvider {
-    pub fn new() -> Self {
-        Self {
-            name: "mock".to_string(),
-        }
-    }
-}
-
-impl Default for MockProvider {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LlmProvider for MockProvider {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    async fn health_check(&self) -> Result<bool> {
-        Ok(true)
     }
 }
 

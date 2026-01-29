@@ -39,14 +39,12 @@
 //! /review-pr 123
 //! ```
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::prompt::parser::{parse_frontmatter, parse_tool_list, ParseError, ParsedDocument};
 use crate::prompt::types::{Scope, ToolRestrictions, ToolSpec};
-use crate::prompt::builtin;
 
 /// Command metadata from YAML frontmatter
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,198 +293,6 @@ pub fn load_command_from_file(path: &Path, scope: Scope) -> Result<CommandDefini
     parse_command(&content, Some(path.to_path_buf()), scope)
 }
 
-/// Registry for managing command definitions
-#[derive(Debug, Default)]
-pub struct CommandRegistry {
-    /// Registered commands by name
-    commands: HashMap<String, CommandDefinition>,
-}
-
-impl CommandRegistry {
-    /// Create a new empty registry
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Create a new registry with built-in commands loaded
-    pub fn with_builtins() -> Self {
-        let mut registry = Self::new();
-        registry.load_builtins();
-        registry
-    }
-
-    /// Load all built-in commands
-    pub fn load_builtins(&mut self) {
-        let builtins: &[(&str, &str)] = &[
-            ("commit", builtin::commands::COMMIT),
-            ("commit-push-pr", builtin::commands::COMMIT_PUSH_PR),
-            ("clean_gone", builtin::commands::CLEAN_GONE),
-            ("code-review", builtin::commands::CODE_REVIEW),
-            ("feature-dev", builtin::commands::FEATURE_DEV),
-            ("review-pr", builtin::commands::REVIEW_PR),
-        ];
-
-        for (name, content) in builtins {
-            if let Ok(cmd) = parse_command_named(content, name, None, Scope::Builtin) {
-                self.register(cmd);
-            }
-        }
-    }
-
-    /// Register a command definition
-    ///
-    /// If a command with the same name exists, it will be replaced only if
-    /// the new command has higher priority (lower scope value).
-    pub fn register(&mut self, command: CommandDefinition) {
-        let name = command.name().to_string();
-
-        // Check if we should replace existing
-        if let Some(existing) = self.commands.get(&name) {
-            // Only replace if new command has higher priority
-            if !command.scope.overrides(&existing.scope) {
-                return;
-            }
-        }
-
-        self.commands.insert(name, command);
-    }
-
-    /// Get a command by name
-    pub fn get(&self, name: &str) -> Option<&CommandDefinition> {
-        // Support both with and without leading slash
-        let name = name.trim_start_matches('/');
-        self.commands.get(name)
-    }
-
-    /// List all registered commands
-    pub fn list(&self) -> impl Iterator<Item = &CommandDefinition> {
-        self.commands.values()
-    }
-
-    /// List command names
-    pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.commands.keys().map(|s| s.as_str())
-    }
-
-    /// Get the number of registered commands
-    pub fn len(&self) -> usize {
-        self.commands.len()
-    }
-
-    /// Check if the registry is empty
-    pub fn is_empty(&self) -> bool {
-        self.commands.is_empty()
-    }
-
-    /// Load commands from a directory
-    ///
-    /// Scans the directory for `.md` files and attempts to parse each as a command.
-    /// Invalid files are logged and skipped.
-    pub fn load_from_directory(&mut self, dir: &Path, scope: Scope) -> std::io::Result<usize> {
-        if !dir.exists() {
-            return Ok(0);
-        }
-
-        let mut loaded = 0;
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            // Only process .md files
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
-                continue;
-            }
-
-            match load_command_from_file(&path, scope) {
-                Ok(command) => {
-                    self.register(command);
-                    loaded += 1;
-                }
-                Err(e) => {
-                    // Log but don't fail on individual command errors
-                    tracing::warn!("Failed to load command from {}: {}", path.display(), e);
-                }
-            }
-        }
-
-        Ok(loaded)
-    }
-
-    /// Discover and load commands from standard locations
-    ///
-    /// Loads from:
-    /// 1. Built-in commands (if not already loaded)
-    /// 2. User commands from `~/.claude/commands/`
-    /// 3. Project commands from `.claude/commands/`
-    ///
-    /// Higher priority sources override lower priority ones.
-    pub fn discover(&mut self, project_root: Option<&Path>) -> std::io::Result<()> {
-        // Load built-ins first (lowest priority)
-        if self.is_empty() {
-            self.load_builtins();
-        }
-
-        // Load user commands
-        if let Some(home) = dirs::home_dir() {
-            let user_commands_dir = home.join(".claude").join("commands");
-            let _ = self.load_from_directory(&user_commands_dir, Scope::User);
-        }
-
-        // Load project commands (highest priority among filesystem)
-        if let Some(root) = project_root {
-            let project_commands_dir = root.join(".claude").join("commands");
-            let _ = self.load_from_directory(&project_commands_dir, Scope::Project);
-        }
-
-        Ok(())
-    }
-
-    /// Parse a user input to extract command and arguments
-    ///
-    /// Returns `Some((command_name, arguments))` if input starts with `/`,
-    /// otherwise returns `None`.
-    pub fn parse_invocation(input: &str) -> Option<(&str, &str)> {
-        let input = input.trim();
-        if !input.starts_with('/') {
-            return None;
-        }
-
-        let input = &input[1..]; // Remove leading /
-
-        // Split on first whitespace
-        if let Some(space_idx) = input.find(char::is_whitespace) {
-            let command = &input[..space_idx];
-            let args = input[space_idx..].trim();
-            Some((command, args))
-        } else {
-            Some((input, ""))
-        }
-    }
-
-    /// Execute a command invocation, returning the expanded prompt
-    ///
-    /// # Arguments
-    /// * `input` - User input (e.g., "/commit -m 'Fix bug'")
-    ///
-    /// # Returns
-    /// * `Ok(Some(expanded_content))` - Command found and expanded
-    /// * `Ok(None)` - Input is not a command invocation
-    /// * `Err(CommandError)` - Command not found or execution error
-    pub fn execute(&self, input: &str) -> Result<Option<String>, CommandError> {
-        let (command_name, arguments) = match Self::parse_invocation(input) {
-            Some(parsed) => parsed,
-            None => return Ok(None),
-        };
-
-        let command = self
-            .get(command_name)
-            .ok_or_else(|| CommandError::NotFound(command_name.to_string()))?;
-
-        let expanded = command.substitute_arguments(arguments);
-        Ok(Some(expanded))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,178 +528,6 @@ Content
         }
     }
 
-    mod command_registry_tests {
-        use super::*;
-
-        #[test]
-        fn test_new_registry() {
-            let registry = CommandRegistry::new();
-            assert!(registry.is_empty());
-            assert_eq!(registry.len(), 0);
-        }
-
-        #[test]
-        fn test_register_and_get() {
-            let mut registry = CommandRegistry::new();
-
-            let cmd = parse_command(
-                "---\nname: test-cmd\n---\n\nPrompt",
-                None,
-                Scope::Project,
-            )
-            .unwrap();
-
-            registry.register(cmd);
-
-            let retrieved = registry.get("test-cmd").unwrap();
-            assert_eq!(retrieved.name(), "test-cmd");
-        }
-
-        #[test]
-        fn test_get_with_slash() {
-            let mut registry = CommandRegistry::new();
-
-            let cmd = parse_command(
-                "---\nname: test\n---\n\nPrompt",
-                None,
-                Scope::Project,
-            )
-            .unwrap();
-
-            registry.register(cmd);
-
-            // Both with and without slash should work
-            assert!(registry.get("test").is_some());
-            assert!(registry.get("/test").is_some());
-        }
-
-        #[test]
-        fn test_scope_priority() {
-            let mut registry = CommandRegistry::new();
-
-            // Register a builtin command
-            let builtin_cmd = parse_command(
-                "---\nname: test\ndescription: Builtin version\n---\n\nBuiltin",
-                None,
-                Scope::Builtin,
-            )
-            .unwrap();
-            registry.register(builtin_cmd);
-
-            // Try to register a user command with same name (should override)
-            let user_cmd = parse_command(
-                "---\nname: test\ndescription: User version\n---\n\nUser",
-                None,
-                Scope::User,
-            )
-            .unwrap();
-            registry.register(user_cmd);
-
-            let cmd = registry.get("test").unwrap();
-            assert_eq!(cmd.description(), "User version");
-
-            // Try to register another builtin (should NOT override user)
-            let another_builtin = parse_command(
-                "---\nname: test\ndescription: Another builtin\n---\n\nBuiltin2",
-                None,
-                Scope::Builtin,
-            )
-            .unwrap();
-            registry.register(another_builtin);
-
-            let cmd = registry.get("test").unwrap();
-            assert_eq!(cmd.description(), "User version");
-        }
-
-        #[test]
-        fn test_list_commands() {
-            let mut registry = CommandRegistry::new();
-
-            registry.register(parse_command("---\nname: cmd1\n---\n\n1", None, Scope::Builtin).unwrap());
-            registry.register(parse_command("---\nname: cmd2\n---\n\n2", None, Scope::Builtin).unwrap());
-
-            let commands: Vec<_> = registry.list().collect();
-            assert_eq!(commands.len(), 2);
-        }
-
-        #[test]
-        fn test_names() {
-            let mut registry = CommandRegistry::new();
-
-            registry.register(parse_command("---\nname: alpha\n---\n\n1", None, Scope::Builtin).unwrap());
-            registry.register(parse_command("---\nname: beta\n---\n\n2", None, Scope::Builtin).unwrap());
-
-            let names: Vec<_> = registry.names().collect();
-            assert!(names.contains(&"alpha"));
-            assert!(names.contains(&"beta"));
-        }
-    }
-
-    mod parse_invocation_tests {
-        use super::*;
-
-        #[test]
-        fn test_parse_simple_command() {
-            let result = CommandRegistry::parse_invocation("/commit");
-            assert_eq!(result, Some(("commit", "")));
-        }
-
-        #[test]
-        fn test_parse_command_with_args() {
-            let result = CommandRegistry::parse_invocation("/pr --draft");
-            assert_eq!(result, Some(("pr", "--draft")));
-        }
-
-        #[test]
-        fn test_parse_command_with_long_args() {
-            let result = CommandRegistry::parse_invocation("/review-pr 123 --verbose --output json");
-            assert_eq!(result, Some(("review-pr", "123 --verbose --output json")));
-        }
-
-        #[test]
-        fn test_parse_non_command() {
-            let result = CommandRegistry::parse_invocation("regular message");
-            assert_eq!(result, None);
-        }
-
-        #[test]
-        fn test_parse_with_whitespace() {
-            let result = CommandRegistry::parse_invocation("  /commit  arg1 arg2  ");
-            assert_eq!(result, Some(("commit", "arg1 arg2")));
-        }
-    }
-
-    mod execute_tests {
-        use super::*;
-
-        #[test]
-        fn test_execute_command() {
-            let mut registry = CommandRegistry::new();
-            registry.register(parse_command(
-                "---\nname: greet\n---\n\nHello $ARGUMENTS!",
-                None,
-                Scope::Builtin,
-            ).unwrap());
-
-            let result = registry.execute("/greet World").unwrap();
-            assert_eq!(result, Some("Hello World!".to_string()));
-        }
-
-        #[test]
-        fn test_execute_non_command() {
-            let registry = CommandRegistry::new();
-            let result = registry.execute("regular message").unwrap();
-            assert_eq!(result, None);
-        }
-
-        #[test]
-        fn test_execute_unknown_command() {
-            let registry = CommandRegistry::new();
-            let result = registry.execute("/unknown");
-            assert!(matches!(result, Err(CommandError::NotFound(_))));
-        }
-    }
-
     mod serialization_tests {
         use super::*;
 
@@ -939,21 +573,7 @@ Content
 
     mod builtin_command_tests {
         use super::*;
-
-        #[test]
-        fn test_with_builtins() {
-            let registry = CommandRegistry::with_builtins();
-            assert!(!registry.is_empty());
-            assert_eq!(registry.len(), 6);
-
-            // Check built-in commands are loaded
-            assert!(registry.get("commit").is_some());
-            assert!(registry.get("commit-push-pr").is_some());
-            assert!(registry.get("clean_gone").is_some());
-            assert!(registry.get("code-review").is_some());
-            assert!(registry.get("feature-dev").is_some());
-            assert!(registry.get("review-pr").is_some());
-        }
+        use crate::prompt::builtin;
 
         #[test]
         fn test_parse_commit_command() {
@@ -984,69 +604,20 @@ Content
         }
 
         #[test]
-        fn test_execute_builtin_command() {
-            let registry = CommandRegistry::with_builtins();
-
-            // Execute /feature-dev with arguments (feature-dev has $ARGUMENTS)
-            let result = registry.execute("/feature-dev Add dark mode").unwrap();
-            assert!(result.is_some());
-            let content = result.unwrap();
-            assert!(content.contains("Add dark mode"));
-        }
-
-        #[test]
-        fn test_builtin_command_help_text() {
-            let registry = CommandRegistry::with_builtins();
-
-            let commit = registry.get("commit").unwrap();
-            let help = commit.help_text();
-            assert!(help.contains("/commit"));
-            assert!(help.contains("Create a git commit"));
-
-            let feature = registry.get("feature-dev").unwrap();
-            let help = feature.help_text();
-            assert!(help.contains("/feature-dev"));
+        fn test_argument_substitution_in_command() {
+            let cmd = parse_command(
+                "---\nname: greet\n---\n\nHello $ARGUMENTS!",
+                None,
+                Scope::Builtin,
+            ).unwrap();
+            let result = cmd.substitute_arguments("World");
+            assert_eq!(result, "Hello World!");
         }
     }
 
     mod filesystem_tests {
         use super::*;
         use tempfile::TempDir;
-
-        fn create_command_file(dir: &Path, name: &str, content: &str) {
-            std::fs::create_dir_all(dir).unwrap();
-            std::fs::write(dir.join(format!("{}.md", name)), content).unwrap();
-        }
-
-        #[test]
-        fn test_load_from_directory() {
-            let dir = TempDir::new().unwrap();
-
-            create_command_file(
-                dir.path(),
-                "my-command",
-                r#"---
-name: my-command
-description: My custom command
----
-
-Do something.
-"#,
-            );
-
-            let mut registry = CommandRegistry::new();
-            let loaded = registry.load_from_directory(dir.path(), Scope::User).unwrap();
-
-            assert_eq!(loaded, 1);
-            assert!(registry.get("my-command").is_some());
-        }
-
-        #[test]
-        fn test_load_from_nonexistent_directory() {
-            let mut registry = CommandRegistry::new();
-            let loaded = registry.load_from_directory(Path::new("/nonexistent"), Scope::User).unwrap();
-            assert_eq!(loaded, 0);
-        }
 
         #[test]
         fn test_load_command_from_file() {
