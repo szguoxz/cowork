@@ -133,26 +133,6 @@ pub fn hide_std_console_window(_cmd: &mut std::process::Command) {
     // No-op on non-Windows platforms
 }
 
-/// Create a std::process::Command for shell execution with hidden console
-///
-/// This is the synchronous version for use with std::process::Command.
-pub fn std_shell_command(command: &str) -> std::process::Command {
-    #[cfg(windows)]
-    {
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.args(["/C", command]);
-        hide_std_console_window(&mut cmd);
-        cmd
-    }
-
-    #[cfg(not(windows))]
-    {
-        let mut cmd = std::process::Command::new("sh");
-        cmd.arg("-c").arg(command);
-        cmd
-    }
-}
-
 /// Create a std::process::Command for direct program execution with hidden console
 pub fn std_direct_command(program: &str) -> std::process::Command {
     let mut cmd = std::process::Command::new(program);

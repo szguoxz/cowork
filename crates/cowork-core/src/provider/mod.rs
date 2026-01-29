@@ -84,18 +84,6 @@ pub fn append_message_text(msg: &mut ChatMessage, text: &str) {
     msg.content = msg.content.clone().append(ContentPart::Text(text.to_string()));
 }
 
-/// Parse a role string into ChatRole
-pub fn parse_role(s: &str) -> ChatRole {
-    match s {
-        "user" => ChatRole::User,
-        "assistant" => ChatRole::Assistant,
-        "system" => ChatRole::System,
-        "tool" => ChatRole::Tool,
-        _ => ChatRole::User, // Default for unknown roles
-    }
-}
-
-
 /// Trait for LLM providers (simplified - mainly for health checks)
 #[allow(async_fn_in_trait)]
 pub trait LlmProvider: Send + Sync {

@@ -67,35 +67,9 @@ impl MemoryHierarchy {
         self.files.is_empty()
     }
 
-    /// Get the number of memory files
-    pub fn file_count(&self) -> usize {
-        self.files.len()
-    }
-
     /// Get files from a specific tier
     pub fn files_in_tier(&self, tier: MemoryTier) -> Vec<&MemoryFile> {
         self.files.iter().filter(|f| f.tier == tier).collect()
-    }
-
-    /// Format as a summary string
-    pub fn summary(&self) -> String {
-        if self.files.is_empty() {
-            return "No memory files found.".to_string();
-        }
-
-        let mut summary = format!("Memory hierarchy: {} files, {} bytes total\n", self.files.len(), self.total_size);
-
-        for tier in [MemoryTier::Enterprise, MemoryTier::Project, MemoryTier::Rules, MemoryTier::User] {
-            let tier_files: Vec<_> = self.files.iter().filter(|f| f.tier == tier).collect();
-            if !tier_files.is_empty() {
-                summary.push_str(&format!("\n  [{}]:\n", tier));
-                for file in tier_files {
-                    summary.push_str(&format!("    - {} ({} bytes)\n", file.path.display(), file.size));
-                }
-            }
-        }
-
-        summary
     }
 }
 
@@ -452,52 +426,6 @@ impl ContextGatherer {
         }
 
         found
-    }
-
-    /// Format context as a system prompt section
-    pub fn format_as_prompt(&self, context: &ProjectContext) -> String {
-        let mut sections = Vec::new();
-
-        // CLAUDE.md content takes priority
-        if let Some(ref claude_md) = context.claude_md {
-            sections.push(format!("=== Project Instructions (CLAUDE.md) ===\n{}", claude_md));
-        }
-
-        // Project info
-        let mut project_info = Vec::new();
-        if let Some(ref pt) = context.project_type {
-            project_info.push(format!("Project: {}", pt));
-        }
-        if let Some(ref lang) = context.main_language {
-            project_info.push(format!("Language: {}", lang));
-        }
-        if !context.key_files.is_empty() {
-            project_info.push(format!("Key files: {}", context.key_files.join(", ")));
-        }
-
-        if !project_info.is_empty() {
-            sections.push(format!("=== Project Info ===\n{}", project_info.join("\n")));
-        }
-
-        // Git info
-        if context.git_branch.is_some() || context.git_status.is_some() {
-            let mut git_info = Vec::new();
-            if let Some(ref branch) = context.git_branch {
-                git_info.push(format!("Branch: {}", branch));
-            }
-            if let Some(ref status) = context.git_status {
-                git_info.push(format!("Status: {}", status));
-            }
-            if !context.recent_commits.is_empty() {
-                git_info.push(format!(
-                    "Recent commits:\n  {}",
-                    context.recent_commits.join("\n  ")
-                ));
-            }
-            sections.push(format!("=== Git Info ===\n{}", git_info.join("\n")));
-        }
-
-        sections.join("\n\n")
     }
 }
 
