@@ -14,7 +14,7 @@ use crate::mcp_manager::McpServerManager;
 use crate::orchestration::ToolScope;
 use crate::prompt::ComponentRegistry;
 
-use super::approval::{ApprovalGate, ApprovalSender};
+use super::approval::ApprovalSender;
 
 /// Unique identifier for a session
 pub type SessionId = String;
@@ -594,8 +594,8 @@ pub struct SessionConfig {
     pub session_registry: Option<SessionRegistry>,
     /// MCP server manager for external tool integration
     pub mcp_manager: Option<Arc<McpServerManager>>,
-    /// Parent's approval channel (for subagents to share)
-    pub parent_approval_channel: Option<(ApprovalSender, ApprovalGate)>,
+    /// Parent's approval channel sender (for subagents to share)
+    pub parent_approval_channel: Option<ApprovalSender>,
 }
 
 impl Default for SessionConfig {
@@ -707,9 +707,9 @@ impl SessionConfig {
         self
     }
 
-    /// Set parent's approval channel (for subagents to share)
-    pub fn with_parent_approval_channel(mut self, tx: ApprovalSender, gate: ApprovalGate) -> Self {
-        self.parent_approval_channel = Some((tx, gate));
+    /// Set parent's approval channel sender (for subagents to share)
+    pub fn with_parent_approval_channel(mut self, tx: ApprovalSender) -> Self {
+        self.parent_approval_channel = Some(tx);
         self
     }
 }

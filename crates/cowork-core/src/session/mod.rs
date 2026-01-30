@@ -53,13 +53,13 @@ mod agent_loop;
 pub mod approval;
 mod chat_session;
 mod manager;
+mod persistence;
 mod types;
 
-pub use agent_loop::{
-    get_sessions_dir, list_saved_sessions, load_session, AgentLoop, SavedSession,
-};
+pub use agent_loop::AgentLoop;
+pub use persistence::{get_sessions_dir, list_saved_sessions, load_session, SavedSession};
 pub use approval::{
-    approval_channel, ApprovalGate, ApprovalReceiver, ApprovalRequest, ApprovalResponse,
+    approval_channel, ApprovalReceiver, ApprovalRequest, ApprovalResponse,
     ApprovalSender, QuestionResponse, ToolExecutionContext,
 };
 pub use chat_session::{ChatSession, ToolCallStatus};

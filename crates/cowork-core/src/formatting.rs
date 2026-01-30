@@ -38,6 +38,144 @@ pub fn format_size(bytes: u64) -> String {
     }
 }
 
+/// Truncate a tool result to prevent context overflow
+///
+/// Large tool outputs (e.g., listing 3000+ files) can exceed the model's
+/// context limit in a single response. This function truncates results
+/// to a safe size while preserving useful information.
+///
+/// For JSON results, we truncate safely by summarizing the structure
+/// rather than cutting mid-string which would produce invalid JSON.
+pub fn truncate_tool_result(result: &str, max_size: usize) -> String {
+    if result.len() <= max_size {
+        return result.to_string();
+    }
+
+    let trimmed = result.trim();
+
+    // Check if this looks like JSON
+    if (trimmed.starts_with('{') && trimmed.ends_with('}'))
+        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+    {
+        // Try to parse and summarize the JSON safely
+        if let Ok(json) = serde_json::from_str::<Value>(trimmed) {
+            return truncate_json_value(&json, max_size);
+        }
+        // If parsing fails, it might be malformed JSON - fall through to line-based truncation
+    }
+
+    // For non-JSON or malformed JSON, truncate at line boundaries to avoid breaking structure
+    truncate_at_line_boundary(result, max_size)
+}
+
+/// Truncate a JSON value safely, preserving valid JSON structure
+fn truncate_json_value(value: &Value, max_size: usize) -> String {
+    match value {
+        Value::Array(arr) => {
+            // For arrays, include first N elements that fit
+            let mut result = Vec::new();
+            let mut current_size = 2; // Account for [ ]
+
+            for (i, item) in arr.iter().enumerate() {
+                let item_str = serde_json::to_string(item).unwrap_or_default();
+                let item_size = item_str.len() + 2; // +2 for comma and space
+
+                if current_size + item_size > max_size && !result.is_empty() {
+                    // Add truncation notice
+                    let remaining = arr.len() - i;
+                    let notice = format!(
+                        "\n\n[Array truncated - showing {} of {} items, {} more not shown]",
+                        i, arr.len(), remaining
+                    );
+                    let partial_json = serde_json::to_string_pretty(&Value::Array(result))
+                        .unwrap_or_else(|_| "[]".to_string());
+                    return format!("{}{}", partial_json, notice);
+                }
+
+                result.push(item.clone());
+                current_size += item_size;
+            }
+
+            serde_json::to_string_pretty(&Value::Array(result)).unwrap_or_else(|_| "[]".to_string())
+        }
+        Value::Object(obj) => {
+            // For objects, include first N key-value pairs that fit
+            let mut result = serde_json::Map::new();
+            let mut current_size = 2; // Account for { }
+
+            for (i, (key, val)) in obj.iter().enumerate() {
+                let pair_str = format!("\"{}\": {}", key, serde_json::to_string(val).unwrap_or_default());
+                let pair_size = pair_str.len() + 2; // +2 for comma and space
+
+                if current_size + pair_size > max_size && !result.is_empty() {
+                    let remaining = obj.len() - i;
+                    let notice = format!(
+                        "\n\n[Object truncated - showing {} of {} keys, {} more not shown]",
+                        i, obj.len(), remaining
+                    );
+                    let partial_json = serde_json::to_string_pretty(&Value::Object(result))
+                        .unwrap_or_else(|_| "{}".to_string());
+                    return format!("{}{}", partial_json, notice);
+                }
+
+                result.insert(key.clone(), val.clone());
+                current_size += pair_size;
+            }
+
+            serde_json::to_string_pretty(&Value::Object(result)).unwrap_or_else(|_| "{}".to_string())
+        }
+        Value::String(s) => {
+            // For large strings, truncate the string content
+            if s.len() > max_size {
+                let truncate_at = s
+                    .char_indices()
+                    .take_while(|(i, _)| *i < max_size - 50)
+                    .last()
+                    .map(|(i, c)| i + c.len_utf8())
+                    .unwrap_or(max_size - 50);
+                format!(
+                    "\"{}...\"\n\n[String truncated - {} chars total]",
+                    &s[..truncate_at],
+                    s.len()
+                )
+            } else {
+                serde_json::to_string(value).unwrap_or_default()
+            }
+        }
+        _ => serde_json::to_string(value).unwrap_or_default(),
+    }
+}
+
+/// Truncate at a line boundary to avoid breaking mid-line or mid-string
+fn truncate_at_line_boundary(result: &str, max_size: usize) -> String {
+    let mut truncate_at = 0;
+    let mut last_newline = 0;
+
+    for (i, c) in result.char_indices() {
+        if i >= max_size {
+            break;
+        }
+        if c == '\n' {
+            last_newline = i;
+        }
+        truncate_at = i + c.len_utf8();
+    }
+
+    // Prefer truncating at last newline if it's reasonably close
+    let cut_point = if last_newline > max_size / 2 {
+        last_newline
+    } else {
+        truncate_at
+    };
+
+    format!(
+        "{}\n\n[Result truncated - {} chars total, showing first {}]",
+        &result[..cut_point],
+        result.len(),
+        cut_point
+    )
+}
+
 // ============================================================================
 // Tool call formatting (for UI display)
 // ============================================================================
@@ -755,5 +893,67 @@ mod tests {
         let result = format_command_result(&json);
         assert!(result.contains("✓"));
         assert!(result.contains("Hello"));
+    }
+
+    #[test]
+    fn test_truncate_tool_result_json_array() {
+        // Create a large JSON array
+        let items: Vec<serde_json::Value> = (0..100)
+            .map(|i| json!({"id": i, "name": format!("item_{}", i)}))
+            .collect();
+        let json_str = serde_json::to_string(&items).unwrap();
+
+        // Truncate to a small size
+        let truncated = truncate_tool_result(&json_str, 500);
+
+        // Should be valid JSON or have a truncation notice
+        assert!(truncated.contains("[Array truncated") || truncated.len() <= 500);
+        // Should not have broken JSON (no unmatched quotes in the JSON portion)
+        if let Some(json_end) = truncated.find("\n\n[Array truncated") {
+            let json_part = &truncated[..json_end];
+            assert!(serde_json::from_str::<serde_json::Value>(json_part).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_truncate_tool_result_json_object() {
+        // Create a large JSON object
+        let mut obj = serde_json::Map::new();
+        for i in 0..50 {
+            obj.insert(
+                format!("key_{}", i),
+                json!({"value": format!("some_long_value_{}", i)}),
+            );
+        }
+        let json_str = serde_json::to_string(&serde_json::Value::Object(obj)).unwrap();
+
+        let truncated = truncate_tool_result(&json_str, 500);
+
+        assert!(truncated.contains("[Object truncated") || truncated.len() <= 500);
+    }
+
+    #[test]
+    fn test_truncate_tool_result_plain_text() {
+        let text = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n";
+        let repeated = text.repeat(100);
+
+        let truncated = truncate_tool_result(&repeated, 100);
+
+        // Should have truncation notice
+        assert!(truncated.contains("[Result truncated"));
+        // Should be shorter than original
+        assert!(truncated.len() < repeated.len());
+        // Should not cut in the middle of "line" word (indicating mid-line cut)
+        let content_end = truncated.find("\n\n[Result truncated").unwrap_or(truncated.len());
+        let content = &truncated[..content_end];
+        // Content should not end with partial "lin" (mid-word)
+        assert!(!content.ends_with("lin"), "Should not cut mid-word");
+    }
+
+    #[test]
+    fn test_truncate_tool_result_small_input() {
+        let small = "small result";
+        let result = truncate_tool_result(small, 1000);
+        assert_eq!(result, small);
     }
 }

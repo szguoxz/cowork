@@ -25,7 +25,7 @@ use crate::prompt::{
     builtin, parse_frontmatter, AgentDefinition, ComponentRegistry, ModelPreference,
 };
 use crate::session::{
-    AgentLoop, ApprovalGate, ApprovalSender, SessionConfig, SessionInput, SessionOutput,
+    AgentLoop, ApprovalSender, SessionConfig, SessionInput, SessionOutput,
     SessionRegistry,
 };
 
@@ -55,8 +55,8 @@ pub struct AgentExecutionConfig {
     pub parent_session_id: Option<String>,
     /// Shared session registry for subagent approval routing
     pub session_registry: Option<SessionRegistry>,
-    /// Parent's approval channel (for subagents to share)
-    pub parent_approval_channel: Option<(ApprovalSender, ApprovalGate)>,
+    /// Parent's approval channel sender (for subagents to share)
+    pub parent_approval_channel: Option<ApprovalSender>,
 }
 
 impl AgentExecutionConfig {
@@ -333,8 +333,8 @@ pub async fn run_subagent(
     }
 
     // Pass parent's approval channel so subagent shares it
-    if let Some((ref tx, ref gate)) = config.parent_approval_channel {
-        session_config = session_config.with_parent_approval_channel(tx.clone(), gate.clone());
+    if let Some(ref tx) = config.parent_approval_channel {
+        session_config = session_config.with_parent_approval_channel(tx.clone());
     }
 
     // Create channels

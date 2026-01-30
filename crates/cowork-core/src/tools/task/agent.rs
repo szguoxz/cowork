@@ -292,8 +292,8 @@ impl Tool for TaskTool {
     }
 
     fn execute(&self, params: Value, ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
-        // Get parent's approval channel so subagents can share it
-        let (parent_approval_tx, parent_approval_gate) = ctx.approval_channel();
+        // Get parent's approval sender so subagents can share it
+        let parent_approval_tx = ctx.approval_sender();
 
         Box::pin(async move {
         let description = params["description"]
@@ -385,7 +385,7 @@ impl Tool for TaskTool {
         config.session_registry = self.session_registry.clone();
 
         // Share parent's approval channel with subagent
-        config.parent_approval_channel = Some((parent_approval_tx, parent_approval_gate));
+        config.parent_approval_channel = Some(parent_approval_tx);
 
         if run_in_background {
             // Start agent in background

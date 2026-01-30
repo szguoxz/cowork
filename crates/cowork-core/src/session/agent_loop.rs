@@ -16,14 +16,14 @@ use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
 
 use super::approval::{
-    approval_channel, ApprovalGate, ApprovalReceiver, ApprovalRequest, ApprovalResponse,
+    approval_channel, ApprovalReceiver, ApprovalRequest, ApprovalResponse,
     ApprovalSender, QuestionResponse, ToolExecutionContext,
 };
 use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
 use super::ChatSession;
 use crate::context::{compact, context_limit, usage_stats};
 use crate::error::Result;
-use crate::formatting::{format_tool_call, format_tool_result_summary};
+use crate::formatting::{format_tool_call, format_tool_result_summary, truncate_tool_result};
 use crate::orchestration::ToolRegistryBuilder;
 use crate::prompt::{HookContext, HookEvent, HookExecutor, HooksConfig};
 use crate::provider::{ChatMessage, GenAIProvider, ToolCall};
@@ -129,16 +129,7 @@ async fn execute_tool_task(
     }
 }
 
-/// Saved session state for persistence
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SavedSession {
-    pub id: String,
-    pub name: String,
-    /// Messages stored using genai's ChatMessage directly
-    pub messages: Vec<ChatMessage>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
+use super::persistence::{get_sessions_dir, SavedSession};
 
 /// User input with optional image attachments
 type UserInput = (String, Vec<super::ImageAttachment>);
@@ -147,18 +138,16 @@ type UserInput = (String, Vec<super::ImageAttachment>);
 pub struct AgentLoop {
     /// Session identifier
     session_id: SessionId,
-    /// Message receiver (questions from user, with optional images)
+    /// Message receiver (user text messages with optional images)
     message_rx: mpsc::UnboundedReceiver<UserInput>,
-    /// Answer receiver (approvals/answers from user)
-    answer_rx: mpsc::UnboundedReceiver<SessionInput>,
+    /// Control receiver (approvals, rejections, question answers, cancel)
+    control_rx: mpsc::UnboundedReceiver<SessionInput>,
     /// Output sender
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
     /// Approval channel sender (passed to tools and subagents)
     approval_tx: ApprovalSender,
     /// Approval channel receiver (for handling approval requests from tools)
     approval_rx: ApprovalReceiver,
-    /// Approval gate (mutex to serialize approval requests)
-    approval_gate: ApprovalGate,
     /// LLM provider
     provider: GenAIProvider,
     /// Chat session with message history
@@ -197,15 +186,15 @@ impl AgentLoop {
     ) -> Result<Self> {
         // Create internal channels for dispatching
         let (message_tx, message_rx) = mpsc::unbounded_channel();
-        let (answer_tx, answer_rx) = mpsc::unbounded_channel();
+        let (control_tx, control_rx) = mpsc::unbounded_channel();
 
         // Create approval channel for tools to request approval
         // Subagents use parent's channel; main sessions create their own
-        let (approval_tx, approval_rx, approval_gate) = if let Some((parent_tx, parent_gate)) = config.parent_approval_channel {
+        let (approval_tx, approval_rx) = if let Some(parent_tx) = config.parent_approval_channel {
             // Subagent: use parent's channel for tool requests
             // Create a dummy local receiver (won't receive - parent handles approvals)
-            let (_dummy_tx, dummy_rx, _dummy_gate) = approval_channel();
-            (parent_tx, dummy_rx, parent_gate)
+            let (_dummy_tx, dummy_rx) = approval_channel();
+            (parent_tx, dummy_rx)
         } else {
             // Main session: create own channel
             approval_channel()
@@ -260,10 +249,10 @@ impl AgentLoop {
                         )).await;
                         debug!("Plan mode set to {} for session {}", active, sid_for_dispatcher);
                     }
-                    // All other inputs are answers/approvals
+                    // All other inputs are control messages (approvals, answers, cancel)
                     input => {
-                        if let Err(e) = answer_tx.send(input) {
-                            error!("Dispatcher: failed to send answer/approval (receiver dropped?): {:?}", e);
+                        if let Err(e) = control_tx.send(input) {
+                            error!("Dispatcher: failed to send control message (receiver dropped?): {:?}", e);
                             break;
                         }
                     }
@@ -355,11 +344,10 @@ impl AgentLoop {
         Ok(Self {
             session_id,
             message_rx,
-            answer_rx,
+            control_rx,
             output_tx,
             approval_tx,
             approval_rx,
-            approval_gate,
             provider,
             session,
             tool_registry,
@@ -547,7 +535,6 @@ impl AgentLoop {
                     let arguments = tool_call.fn_arguments.clone();
                     let ctx = ToolExecutionContext::new(
                         self.approval_tx.clone(),
-                        self.approval_gate.clone(),
                         id.clone(),
                         name.clone(),
                     );
@@ -611,7 +598,7 @@ impl AgentLoop {
                     }
 
                     // Non-blocking check for cancellation while tools are running
-                    input = self.answer_rx.recv() => {
+                    input = self.control_rx.recv() => {
                         match input {
                             Some(SessionInput::Cancel) => {
                                 self.handle_cancel_cleanup(&tool_calls, &mut completed_tool_ids, &mut join_set).await;
@@ -921,7 +908,7 @@ impl AgentLoop {
     /// Uses try_recv() to non-blocking check for a Cancel input.
     fn check_cancelled(&mut self) -> bool {
         loop {
-            match self.answer_rx.try_recv() {
+            match self.control_rx.try_recv() {
                 Ok(SessionInput::Cancel) => return true,
                 Ok(other) => {
                     // Log and discard unexpected inputs during cancel check
@@ -952,7 +939,7 @@ impl AgentLoop {
 
         // Wait for user response
         loop {
-            match self.answer_rx.recv().await {
+            match self.control_rx.recv().await {
                 Some(SessionInput::ApproveTool { .. }) => {
                     let _ = response_tx.send(ApprovalResponse::Approved);
                     return Ok(());
@@ -1003,7 +990,7 @@ impl AgentLoop {
 
         // Wait for user answer
         loop {
-            match self.answer_rx.recv().await {
+            match self.control_rx.recv().await {
                 Some(SessionInput::AnswerQuestion { answers, .. }) => {
                     let _ = response_tx.send(QuestionResponse { answers });
                     return Ok(());
@@ -1128,259 +1115,9 @@ impl AgentLoop {
     }
 }
 
-/// Get the sessions directory path
-pub fn get_sessions_dir() -> Result<PathBuf> {
-    let base = dirs::data_dir()
-        .map(|p| p.join("cowork"))
-        .unwrap_or_else(|| PathBuf::from(".cowork"));
-    Ok(base.join("sessions"))
-}
-
-/// Load a saved session by ID
-pub fn load_session(session_id: &str) -> Result<Option<SavedSession>> {
-    let path = get_sessions_dir()?.join(format!("{}.json", session_id));
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let json = std::fs::read_to_string(&path)?;
-    let saved: SavedSession = serde_json::from_str(&json)?;
-    Ok(Some(saved))
-}
-
-/// List all saved sessions
-pub fn list_saved_sessions() -> Result<Vec<SavedSession>> {
-    let sessions_dir = get_sessions_dir()?;
-    if !sessions_dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut sessions = Vec::new();
-    for entry in std::fs::read_dir(&sessions_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "json") {
-            match std::fs::read_to_string(&path) {
-                Ok(json) => match serde_json::from_str::<SavedSession>(&json) {
-                    Ok(session) => sessions.push(session),
-                    Err(e) => warn!("Failed to parse session {:?}: {}", path, e),
-                },
-                Err(e) => warn!("Failed to read session {:?}: {}", path, e),
-            }
-        }
-    }
-
-    // Sort by updated_at descending (most recent first)
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    Ok(sessions)
-}
-
-/// Truncate a tool result to prevent context overflow
-///
-/// Large tool outputs (e.g., listing 3000+ files) can exceed the model's
-/// context limit in a single response. This function truncates results
-/// to a safe size while preserving useful information.
-///
-/// For JSON results, we truncate safely by summarizing the structure
-/// rather than cutting mid-string which would produce invalid JSON.
-fn truncate_tool_result(result: &str, max_size: usize) -> String {
-    if result.len() <= max_size {
-        return result.to_string();
-    }
-
-    let trimmed = result.trim();
-
-    // Check if this looks like JSON
-    if (trimmed.starts_with('{') && trimmed.ends_with('}'))
-        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
-    {
-        // Try to parse and summarize the JSON safely
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            return truncate_json_value(&json, max_size);
-        }
-        // If parsing fails, it might be malformed JSON - fall through to line-based truncation
-    }
-
-    // For non-JSON or malformed JSON, truncate at line boundaries to avoid breaking structure
-    truncate_at_line_boundary(result, max_size)
-}
-
-/// Truncate a JSON value safely, preserving valid JSON structure
-fn truncate_json_value(value: &serde_json::Value, max_size: usize) -> String {
-    use serde_json::Value;
-
-    match value {
-        Value::Array(arr) => {
-            // For arrays, include first N elements that fit
-            let mut result = Vec::new();
-            let mut current_size = 2; // Account for [ ]
-
-            for (i, item) in arr.iter().enumerate() {
-                let item_str = serde_json::to_string(item).unwrap_or_default();
-                let item_size = item_str.len() + 2; // +2 for comma and space
-
-                if current_size + item_size > max_size && !result.is_empty() {
-                    // Add truncation notice
-                    let remaining = arr.len() - i;
-                    let notice = format!(
-                        "\n\n[Array truncated - showing {} of {} items, {} more not shown]",
-                        i, arr.len(), remaining
-                    );
-                    let partial_json = serde_json::to_string_pretty(&Value::Array(result))
-                        .unwrap_or_else(|_| "[]".to_string());
-                    return format!("{}{}", partial_json, notice);
-                }
-
-                result.push(item.clone());
-                current_size += item_size;
-            }
-
-            serde_json::to_string_pretty(&Value::Array(result)).unwrap_or_else(|_| "[]".to_string())
-        }
-        Value::Object(obj) => {
-            // For objects, include first N key-value pairs that fit
-            let mut result = serde_json::Map::new();
-            let mut current_size = 2; // Account for { }
-
-            for (i, (key, val)) in obj.iter().enumerate() {
-                let pair_str = format!("\"{}\": {}", key, serde_json::to_string(val).unwrap_or_default());
-                let pair_size = pair_str.len() + 2; // +2 for comma and space
-
-                if current_size + pair_size > max_size && !result.is_empty() {
-                    let remaining = obj.len() - i;
-                    let notice = format!(
-                        "\n\n[Object truncated - showing {} of {} keys, {} more not shown]",
-                        i, obj.len(), remaining
-                    );
-                    let partial_json = serde_json::to_string_pretty(&Value::Object(result))
-                        .unwrap_or_else(|_| "{}".to_string());
-                    return format!("{}{}", partial_json, notice);
-                }
-
-                result.insert(key.clone(), val.clone());
-                current_size += pair_size;
-            }
-
-            serde_json::to_string_pretty(&Value::Object(result)).unwrap_or_else(|_| "{}".to_string())
-        }
-        Value::String(s) => {
-            // For large strings, truncate the string content
-            if s.len() > max_size {
-                let truncate_at = s
-                    .char_indices()
-                    .take_while(|(i, _)| *i < max_size - 50)
-                    .last()
-                    .map(|(i, c)| i + c.len_utf8())
-                    .unwrap_or(max_size - 50);
-                format!(
-                    "\"{}...\"\n\n[String truncated - {} chars total]",
-                    &s[..truncate_at],
-                    s.len()
-                )
-            } else {
-                serde_json::to_string(value).unwrap_or_default()
-            }
-        }
-        _ => serde_json::to_string(value).unwrap_or_default(),
-    }
-}
-
-/// Truncate at a line boundary to avoid breaking mid-line or mid-string
-fn truncate_at_line_boundary(result: &str, max_size: usize) -> String {
-    let mut truncate_at = 0;
-    let mut last_newline = 0;
-
-    for (i, c) in result.char_indices() {
-        if i >= max_size {
-            break;
-        }
-        if c == '\n' {
-            last_newline = i;
-        }
-        truncate_at = i + c.len_utf8();
-    }
-
-    // Prefer truncating at last newline if it's reasonably close
-    let cut_point = if last_newline > max_size / 2 {
-        last_newline
-    } else {
-        truncate_at
-    };
-
-    format!(
-        "{}\n\n[Result truncated - {} chars total, showing first {}]",
-        &result[..cut_point],
-        result.len(),
-        cut_point
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::approval::ToolApprovalConfig;
-
-    #[test]
-    fn test_truncate_tool_result_json_array() {
-        // Create a large JSON array
-        let items: Vec<serde_json::Value> = (0..100)
-            .map(|i| serde_json::json!({"id": i, "name": format!("item_{}", i)}))
-            .collect();
-        let json = serde_json::to_string(&items).unwrap();
-
-        // Truncate to a small size
-        let truncated = truncate_tool_result(&json, 500);
-
-        // Should be valid JSON or have a truncation notice
-        assert!(truncated.contains("[Array truncated") || truncated.len() <= 500);
-        // Should not have broken JSON (no unmatched quotes in the JSON portion)
-        if let Some(json_end) = truncated.find("\n\n[Array truncated") {
-            let json_part = &truncated[..json_end];
-            assert!(serde_json::from_str::<serde_json::Value>(json_part).is_ok());
-        }
-    }
-
-    #[test]
-    fn test_truncate_tool_result_json_object() {
-        // Create a large JSON object
-        let mut obj = serde_json::Map::new();
-        for i in 0..50 {
-            obj.insert(
-                format!("key_{}", i),
-                serde_json::json!({"value": format!("some_long_value_{}", i)}),
-            );
-        }
-        let json = serde_json::to_string(&serde_json::Value::Object(obj)).unwrap();
-
-        let truncated = truncate_tool_result(&json, 500);
-
-        assert!(truncated.contains("[Object truncated") || truncated.len() <= 500);
-    }
-
-    #[test]
-    fn test_truncate_tool_result_plain_text() {
-        let text = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n";
-        let repeated = text.repeat(100);
-
-        let truncated = truncate_tool_result(&repeated, 100);
-
-        // Should have truncation notice
-        assert!(truncated.contains("[Result truncated"));
-        // Should be shorter than original
-        assert!(truncated.len() < repeated.len());
-        // Should not cut in the middle of "line" word (indicating mid-line cut)
-        let content_end = truncated.find("\n\n[Result truncated").unwrap_or(truncated.len());
-        let content = &truncated[..content_end];
-        // Content should not end with partial "lin" (mid-word)
-        assert!(!content.ends_with("lin"), "Should not cut mid-word");
-    }
-
-    #[test]
-    fn test_truncate_tool_result_small_input() {
-        let small = "small result";
-        let result = truncate_tool_result(small, 1000);
-        assert_eq!(result, small);
-    }
 
     #[test]
     fn test_tool_categorization() {

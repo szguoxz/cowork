@@ -1,26 +1,22 @@
 //! Approval channel for tool execution
 //!
 //! This module provides a channel-based mechanism for tools to request user approval
-//! during execution. The approval channel serializes all approval requests, ensuring
-//! only one approval modal is shown at a time.
+//! during execution.
 //!
 //! ## Design
 //!
-//! - Tools send approval requests through a shared channel
-//! - A mutex ensures only one request is in-flight at a time
-//! - The agent loop handles the single active request
+//! - Tools send approval requests through a shared mpsc channel
+//! - Each request includes a oneshot channel for the response
+//! - The agent loop processes requests sequentially (FIFO)
 //! - Auto-approve logic is centralized in the handler
 //! - Subagents share the same approval channel as their parent
 //!
-//! ## Serialization
-//!
-//! The `ApprovalGate` mutex ensures that even with concurrent tool execution,
-//! only one tool can be waiting for approval at a time. Other tools block at
-//! the gate until the current approval is resolved.
+//! Serialization is achieved naturally: the mpsc channel queues requests,
+//! the agent loop handles one at a time, and each tool waits on its own
+//! oneshot receiver for the response.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot};
 
 use super::types::QuestionInfo;
 
@@ -62,18 +58,9 @@ pub type ApprovalSender = mpsc::UnboundedSender<ApprovalRequest>;
 /// Receiver half of the approval channel
 pub type ApprovalReceiver = mpsc::UnboundedReceiver<ApprovalRequest>;
 
-/// Gate to serialize approval requests
-///
-/// Only one tool can hold this gate at a time. This ensures that even with
-/// concurrent tool execution, approval requests are serialized and the frontend
-/// only sees one request at a time.
-pub type ApprovalGate = Arc<Mutex<()>>;
-
-/// Create a new approval channel and gate
-pub fn approval_channel() -> (ApprovalSender, ApprovalReceiver, ApprovalGate) {
-    let (tx, rx) = mpsc::unbounded_channel();
-    let gate = Arc::new(Mutex::new(()));
-    (tx, rx, gate)
+/// Create a new approval channel
+pub fn approval_channel() -> (ApprovalSender, ApprovalReceiver) {
+    mpsc::unbounded_channel()
 }
 
 /// Context passed to tools during execution
@@ -84,8 +71,6 @@ pub fn approval_channel() -> (ApprovalSender, ApprovalReceiver, ApprovalGate) {
 pub struct ToolExecutionContext {
     /// Channel to request approval
     approval_tx: ApprovalSender,
-    /// Gate to serialize approval requests
-    approval_gate: ApprovalGate,
     /// Tool call ID (for this execution)
     pub tool_call_id: String,
     /// Tool name
@@ -96,13 +81,11 @@ impl ToolExecutionContext {
     /// Create a new tool execution context
     pub fn new(
         approval_tx: ApprovalSender,
-        approval_gate: ApprovalGate,
         tool_call_id: String,
         tool_name: String,
     ) -> Self {
         Self {
             approval_tx,
-            approval_gate,
             tool_call_id,
             tool_name,
         }
@@ -114,10 +97,9 @@ impl ToolExecutionContext {
     /// fail with "Session cancelled". Use this for standalone tool execution
     /// outside of an agent loop (e.g., CLI commands).
     pub fn standalone(tool_call_id: impl Into<String>, tool_name: impl Into<String>) -> Self {
-        let (tx, _rx, gate) = approval_channel();
+        let (tx, _rx) = approval_channel();
         Self {
             approval_tx: tx,
-            approval_gate: gate,
             tool_call_id: tool_call_id.into(),
             tool_name: tool_name.into(),
         }
@@ -128,7 +110,7 @@ impl ToolExecutionContext {
     /// This spawns a background task to automatically approve any approval
     /// or question requests. Useful for testing tools that require approval.
     pub fn test_auto_approve(tool_call_id: impl Into<String>, tool_name: impl Into<String>) -> Self {
-        let (tx, mut rx, gate) = approval_channel();
+        let (tx, mut rx) = approval_channel();
 
         // Spawn a task to auto-approve all requests
         tokio::spawn(async move {
@@ -148,7 +130,6 @@ impl ToolExecutionContext {
 
         Self {
             approval_tx: tx,
-            approval_gate: gate,
             tool_call_id: tool_call_id.into(),
             tool_name: tool_name.into(),
         }
@@ -158,17 +139,13 @@ impl ToolExecutionContext {
     ///
     /// Returns Ok(()) if approved, Err with reason if rejected.
     ///
-    /// This method acquires the approval gate to ensure only one approval request
-    /// is in-flight at a time. Other tools calling this method will block until
-    /// the current approval is resolved.
+    /// Requests are queued in the channel and processed sequentially by
+    /// the agent loop. Each tool waits on its own oneshot for the response.
     pub async fn request_approval(
         &self,
         arguments: serde_json::Value,
         description: Option<String>,
     ) -> Result<(), String> {
-        // Acquire the gate - only one approval request at a time
-        let _guard = self.approval_gate.lock().await;
-
         let (response_tx, response_rx) = oneshot::channel();
 
         let request = ApprovalRequest::ToolApproval {
@@ -184,7 +161,7 @@ impl ToolExecutionContext {
             .send(request)
             .map_err(|_| "Session cancelled".to_string())?;
 
-        // Wait for response (gate is held until we get a response)
+        // Wait for response
         match response_rx.await {
             Ok(ApprovalResponse::Approved) => Ok(()),
             Ok(ApprovalResponse::Rejected { reason }) => {
@@ -192,22 +169,15 @@ impl ToolExecutionContext {
             }
             Err(_) => Err("Session cancelled".to_string()),
         }
-        // Gate is released here when _guard is dropped
     }
 
     /// Ask the user a question
     ///
     /// Returns the user's answers as a map of question header/id to answer.
-    ///
-    /// This method acquires the approval gate to ensure only one question
-    /// is in-flight at a time.
     pub async fn ask_question(
         &self,
         questions: Vec<QuestionInfo>,
     ) -> Result<HashMap<String, String>, String> {
-        // Acquire the gate - only one question at a time
-        let _guard = self.approval_gate.lock().await;
-
         let (response_tx, response_rx) = oneshot::channel();
 
         let request = ApprovalRequest::Question {
@@ -224,12 +194,11 @@ impl ToolExecutionContext {
             Ok(response) => Ok(response.answers),
             Err(_) => Err("Session cancelled".to_string()),
         }
-        // Gate is released here when _guard is dropped
     }
 
-    /// Get the approval sender and gate for passing to subagents
-    pub fn approval_channel(&self) -> (ApprovalSender, ApprovalGate) {
-        (self.approval_tx.clone(), self.approval_gate.clone())
+    /// Get the approval sender for passing to subagents
+    pub fn approval_sender(&self) -> ApprovalSender {
+        self.approval_tx.clone()
     }
 }
 
@@ -239,7 +208,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_approval_channel_creation() {
-        let (tx, mut rx, _gate) = approval_channel();
+        let (tx, mut rx) = approval_channel();
 
         // Send a test request
         let (response_tx, _response_rx) = oneshot::channel();
@@ -264,8 +233,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_context_request_approval() {
-        let (tx, mut rx, gate) = approval_channel();
-        let ctx = ToolExecutionContext::new(tx, gate, "call-456".to_string(), "Write".to_string());
+        let (tx, mut rx) = approval_channel();
+        let ctx = ToolExecutionContext::new(tx, "call-456".to_string(), "Write".to_string());
 
         // Spawn a task to approve the request
         tokio::spawn(async move {
@@ -285,8 +254,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_context_request_rejected() {
-        let (tx, mut rx, gate) = approval_channel();
-        let ctx = ToolExecutionContext::new(tx, gate, "call-789".to_string(), "Bash".to_string());
+        let (tx, mut rx) = approval_channel();
+        let ctx = ToolExecutionContext::new(tx, "call-789".to_string(), "Bash".to_string());
 
         // Spawn a task to reject the request
         tokio::spawn(async move {
@@ -309,8 +278,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_channel_closed_on_cancel() {
-        let (tx, rx, gate) = approval_channel();
-        let ctx = ToolExecutionContext::new(tx, gate, "call-999".to_string(), "Test".to_string());
+        let (tx, rx) = approval_channel();
+        let ctx = ToolExecutionContext::new(tx, "call-999".to_string(), "Test".to_string());
 
         // Drop the receiver to simulate session cancellation
         drop(rx);
