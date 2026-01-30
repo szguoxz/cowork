@@ -129,6 +129,20 @@ async fn execute_tool_task(
     }
 }
 
+/// Reject all pending approval and question requests
+fn reject_all_pending(
+    approvals: &mut std::collections::HashMap<String, tokio::sync::oneshot::Sender<ApprovalResponse>>,
+    questions: &mut std::collections::HashMap<String, tokio::sync::oneshot::Sender<QuestionResponse>>,
+    reason: &str,
+) {
+    for (_, tx) in approvals.drain() {
+        let _ = tx.send(ApprovalResponse::Rejected { reason: Some(reason.to_string()) });
+    }
+    for (_, tx) in questions.drain() {
+        let _ = tx.send(QuestionResponse { answers: std::collections::HashMap::new() });
+    }
+}
+
 use super::persistence::{get_sessions_dir, SavedSession};
 
 /// User input with optional image attachments
@@ -616,17 +630,7 @@ impl AgentLoop {
                                 }
                             }
                             Some(SessionInput::Cancel) => {
-                                // Reject all pending approvals/questions
-                                for (_, tx) in pending_approvals.drain() {
-                                    let _ = tx.send(ApprovalResponse::Rejected {
-                                        reason: Some("Cancelled by user".to_string()),
-                                    });
-                                }
-                                for (_, tx) in pending_questions.drain() {
-                                    let _ = tx.send(QuestionResponse {
-                                        answers: std::collections::HashMap::new(),
-                                    });
-                                }
+                                reject_all_pending(&mut pending_approvals, &mut pending_questions, "Cancelled by user");
                                 self.handle_cancel_cleanup(&tool_calls, &mut completed_tool_ids, &mut join_set).await;
                                 self.emit(SessionOutput::cancelled()).await;
                                 return Ok(());
@@ -635,17 +639,7 @@ impl AgentLoop {
                                 debug!("Unexpected control input: {:?}", other);
                             }
                             None => {
-                                // Channel closed - reject pending and return
-                                for (_, tx) in pending_approvals.drain() {
-                                    let _ = tx.send(ApprovalResponse::Rejected {
-                                        reason: Some("Session ended".to_string()),
-                                    });
-                                }
-                                for (_, tx) in pending_questions.drain() {
-                                    let _ = tx.send(QuestionResponse {
-                                        answers: std::collections::HashMap::new(),
-                                    });
-                                }
+                                reject_all_pending(&mut pending_approvals, &mut pending_questions, "Session ended");
                                 self.emit(SessionOutput::error("Session interrupted".to_string())).await;
                                 return Ok(());
                             }
