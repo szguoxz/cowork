@@ -127,24 +127,7 @@ fn test_tool_registry_builder_with_empty_mcp_manager() {
     assert!(mcp_tools.is_empty());
 }
 
-#[test]
-fn test_mcp_tool_approval_level() {
-    use cowork_core::approval::ApprovalLevel;
-
-    let manager = Arc::new(McpServerManager::new());
-
-    let tool_info = McpToolInfo {
-        name: "execute_script".to_string(),
-        description: "Execute arbitrary JavaScript".to_string(),
-        input_schema: serde_json::json!({}),
-        server: "browser".to_string(),
-    };
-
-    let wrapper = McpToolWrapper::new(tool_info, manager);
-
-    // MCP tools should require approval (Low level by default)
-    assert_eq!(wrapper.approval_level(), ApprovalLevel::Low);
-}
+// Note: approval_level() test removed - MCP tools now use the unified approval channel
 
 #[test]
 fn test_mcp_tool_definition_conversion() {

@@ -24,7 +24,10 @@ use crate::orchestration::ToolScope;
 use crate::prompt::{
     builtin, parse_frontmatter, AgentDefinition, ComponentRegistry, ModelPreference,
 };
-use crate::session::{AgentLoop, SessionConfig, SessionInput, SessionOutput, SessionRegistry};
+use crate::session::{
+    AgentLoop, ApprovalGate, ApprovalSender, SessionConfig, SessionInput, SessionOutput,
+    SessionRegistry,
+};
 
 /// Maximum result size for subagent output (to prevent context bloat)
 /// Results exceeding this will be truncated with a note
@@ -52,6 +55,8 @@ pub struct AgentExecutionConfig {
     pub parent_session_id: Option<String>,
     /// Shared session registry for subagent approval routing
     pub session_registry: Option<SessionRegistry>,
+    /// Parent's approval channel (for subagents to share)
+    pub parent_approval_channel: Option<(ApprovalSender, ApprovalGate)>,
 }
 
 impl AgentExecutionConfig {
@@ -66,6 +71,7 @@ impl AgentExecutionConfig {
             progress_tx: None,
             parent_session_id: None,
             session_registry: None,
+            parent_approval_channel: None,
         }
     }
 
@@ -313,7 +319,7 @@ pub async fn run_subagent(
 
     // Build SessionConfig: scoped tools, no hooks, no save
     // Use default approval config so Bash commands get parsed for safety
-    let session_config = SessionConfig::new(config.workspace.clone())
+    let mut session_config = SessionConfig::new(config.workspace.clone())
         .with_provider(&config.provider_id)
         .with_model(model_str)
         .with_system_prompt(system_prompt)
@@ -322,11 +328,14 @@ pub async fn run_subagent(
         .with_enable_hooks(false)
         .with_save_session(false);
 
-    let session_config = if let Some(ref key) = config.api_key {
-        session_config.with_api_key(key.clone())
-    } else {
-        session_config
-    };
+    if let Some(ref key) = config.api_key {
+        session_config = session_config.with_api_key(key.clone());
+    }
+
+    // Pass parent's approval channel so subagent shares it
+    if let Some((ref tx, ref gate)) = config.parent_approval_channel {
+        session_config = session_config.with_parent_approval_channel(tx.clone(), gate.clone());
+    }
 
     // Create channels
     let (input_tx, input_rx) = tokio::sync::mpsc::channel::<SessionInput>(32);

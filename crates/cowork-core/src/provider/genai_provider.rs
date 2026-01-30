@@ -78,16 +78,48 @@ fn is_json_parse_error(e: &genai::Error) -> bool {
 
 /// Extract detailed error information from a genai error
 ///
-/// Uses Debug format to capture full error details.
-/// Returns (error_message, full_debug_output)
+/// Extracts the raw HTTP response body from genai's error variants when available.
+/// Returns (error_message, raw_body_if_available)
 fn extract_genai_error_details(e: &genai::Error) -> (String, Option<String>) {
-    // Use Debug format to get all available error information
-    // This is version-agnostic and captures nested error details
-    let error_debug = format!("{:#?}", e);  // Pretty-printed debug
+    let error_msg = format!("{}", e);
 
-    // Always return the full debug output - it contains all available info
-    // including any embedded body, status codes, headers, etc.
-    (format!("{}", e), Some(error_debug))
+    // Try to extract the raw response body from webc errors
+    let raw_body = match e {
+        genai::Error::WebModelCall { webc_error, .. }
+        | genai::Error::WebAdapterCall { webc_error, .. } => {
+            extract_webc_body(webc_error)
+        }
+        // For other errors, include the Debug output as fallback
+        _ => Some(format!("{:#?}", e)),
+    };
+
+    (error_msg, raw_body)
+}
+
+/// Extract raw response body from webc::Error variants
+fn extract_webc_body(e: &genai::webc::Error) -> Option<String> {
+    match e {
+        genai::webc::Error::ResponseFailedStatus { status, body, headers } => {
+            Some(format!(
+                "HTTP {} - Headers: {:?}\n\nBody:\n{}",
+                status, headers, body
+            ))
+        }
+        genai::webc::Error::ResponseFailedInvalidJson { body, cause } => {
+            Some(format!(
+                "Invalid JSON - Parse error: {}\n\nRaw body:\n{}",
+                cause, body
+            ))
+        }
+        genai::webc::Error::ResponseFailedNotJson { content_type, body } => {
+            Some(format!(
+                "Not JSON (Content-Type: {})\n\nRaw body:\n{}",
+                content_type, body
+            ))
+        }
+        // For other webc errors (Reqwest, JsonValueExt), use Debug
+        _ => Some(format!("{:#?}", e)),
+    }
 }
 
 use crate::error::{Error, Result};

@@ -871,7 +871,8 @@ async fn run_bash_command_quiet(workspace: &Path, command: &str) -> anyhow::Resu
         "timeout": 120000
     });
 
-    let result = tool.execute(params).await?;
+    let ctx = cowork_core::session::ToolExecutionContext::standalone("cli-bash", "Bash");
+    let result = tool.execute(params, ctx).await?;
 
     let mut output = String::new();
     if result.success {

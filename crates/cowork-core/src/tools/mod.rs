@@ -3,8 +3,25 @@
 //! Tools are the actions that agents can take. Each tool has:
 //! - A name and description for the LLM
 //! - A JSON schema for parameters
-//! - An execute method
-//! - An approval level
+//! - An execute method that receives a `ToolExecutionContext` for requesting approval
+//!
+//! ## Approval Flow
+//!
+//! Tools that may need user approval (like Bash for dangerous commands) can use the
+//! `ToolExecutionContext` to request approval during execution:
+//!
+//! ```ignore
+//! async fn execute(&self, params: Value, ctx: ToolExecutionContext) -> Result<ToolOutput, ToolError> {
+//!     let command = params["command"].as_str().unwrap();
+//!
+//!     if is_dangerous(command) {
+//!         ctx.request_approval(params.clone(), Some("Run dangerous command")).await
+//!             .map_err(|e| ToolError::Rejected(e))?;
+//!     }
+//!
+//!     // Execute the command...
+//! }
+//! ```
 
 pub mod filesystem;
 pub mod interaction;
@@ -25,8 +42,8 @@ use std::pin::Pin;
 use std::future::Future;
 use std::sync::Arc;
 
-use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
+pub use crate::session::ToolExecutionContext;
 
 // Re-export genai's Tool as ToolDefinition to avoid conflict with our Tool trait
 pub use genai::chat::Tool as ToolDefinition;
@@ -83,21 +100,17 @@ pub trait Tool: Send + Sync {
     /// JSON schema for parameters
     fn parameters_schema(&self) -> Value;
 
-    /// Execute the tool with given parameters
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>>;
-
-    /// What level of approval this tool requires
-    fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::None
-    }
-
-    /// Human-readable description for the approval modal
+    /// Execute the tool with given parameters and execution context
     ///
-    /// Override this for tools with empty or non-descriptive arguments
-    /// to help users understand what they're approving.
-    fn approval_description(&self, _params: &Value) -> Option<String> {
-        None
-    }
+    /// The `ctx` provides access to the approval channel for tools that may need
+    /// user approval during execution. Tools can call `ctx.request_approval()`
+    /// to pause and wait for user confirmation before proceeding with dangerous
+    /// operations.
+    ///
+    /// # Arguments
+    /// * `params` - The tool parameters as JSON
+    /// * `ctx` - Execution context with approval channel
+    fn execute(&self, params: Value, ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>>;
 
     /// Convert to tool definition for LLM
     fn to_definition(&self) -> ToolDefinition {

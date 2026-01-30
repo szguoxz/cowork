@@ -7,10 +7,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::approval::ApprovalLevel;
 use crate::config::WebSearchConfig;
 use crate::error::ToolError;
-use crate::tools::{BoxFuture, Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolExecutionContext, ToolOutput};
 
 /// Search result from web search
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,7 +177,7 @@ impl Tool for WebSearch {
         })
     }
 
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, params: Value, _ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             let query = params["query"]
                 .as_str()
@@ -216,10 +215,6 @@ impl Tool for WebSearch {
                 Err(e) => Err(ToolError::ExecutionFailed(e)),
             }
         })
-    }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::None
     }
 }
 

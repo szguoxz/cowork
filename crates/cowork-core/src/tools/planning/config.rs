@@ -7,10 +7,9 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::approval::ApprovalLevel;
 use crate::config::ConfigManager;
 use crate::error::ToolError;
-use crate::tools::{BoxFuture, Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolExecutionContext, ToolOutput};
 
 /// Tool for managing configuration
 pub struct ConfigTool {
@@ -55,7 +54,7 @@ impl Tool for ConfigTool {
         })
     }
 
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, params: Value, _ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
         let setting = params["setting"]
             .as_str()
@@ -97,10 +96,6 @@ impl Tool for ConfigTool {
             Err(e) => Err(ToolError::InvalidParams(e)),
         }
             })
-    }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::Low
     }
 }
 

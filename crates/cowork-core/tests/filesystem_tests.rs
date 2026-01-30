@@ -2,11 +2,15 @@
 //!
 //! Tests for Read, Write, Edit, Glob, and Grep tools.
 
-use cowork_core::tools::Tool;
+use cowork_core::tools::{Tool, ToolExecutionContext};
 use cowork_core::tools::filesystem::{ReadFile, WriteFile, EditFile, GlobFiles, GrepFiles};
 use serde_json::json;
 use tempfile::TempDir;
 use std::fs;
+
+fn test_ctx() -> ToolExecutionContext {
+    ToolExecutionContext::standalone("test", "test")
+}
 
 /// Create a temporary test directory with sample files
 fn setup_test_dir() -> TempDir {
@@ -56,7 +60,7 @@ mod read_file_tests {
 
         let result = tool.execute(json!({
             "file_path": "src/main.rs"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok(), "Failed to read file: {:?}", result.err());
         let output = result.unwrap();
@@ -73,7 +77,7 @@ mod read_file_tests {
 
         let result = tool.execute(json!({
             "file_path": "nonexistent.txt"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_err(), "Should fail for nonexistent file");
     }
@@ -91,7 +95,7 @@ mod write_file_tests {
         let result = tool.execute(json!({
             "file_path": "new_file.txt",
             "content": content
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok(), "Failed to write file: {:?}", result.err());
 
@@ -108,7 +112,7 @@ mod write_file_tests {
         let result = tool.execute(json!({
             "file_path": "deep/nested/dir/file.txt",
             "content": "nested content"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok(), "Should create parent directories");
         assert!(dir.path().join("deep/nested/dir/file.txt").exists());
@@ -127,7 +131,7 @@ mod edit_file_tests {
             "file_path": "src/main.rs",
             "old_string": "Hello, world!",
             "new_string": "Hello, Rust!"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok(), "Edit failed: {:?}", result.err());
 
@@ -147,7 +151,7 @@ mod edit_file_tests {
             "old_string": "println!",
             "new_string": "debug_print!",
             "replace_all": true
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok(), "Replace all failed: {:?}", result.err());
 
@@ -168,7 +172,7 @@ mod glob_tests {
 
         let result = tool.execute(json!({
             "pattern": "**/*.rs"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok(), "Glob failed: {:?}", result.err());
         let output = result.unwrap();
@@ -182,7 +186,7 @@ mod glob_tests {
 
         let result = tool.execute(json!({
             "pattern": "**/*.xyz"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -200,7 +204,7 @@ mod grep_tests {
 
         let result = tool.execute(json!({
             "pattern": "fn main"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok(), "Grep failed: {:?}", result.err());
         let output = result.unwrap();
@@ -215,7 +219,7 @@ mod grep_tests {
         let result = tool.execute(json!({
             "pattern": "HELLO",
             "-i": true
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -229,7 +233,7 @@ mod grep_tests {
 
         let result = tool.execute(json!({
             "pattern": "fn\\s+\\w+"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok(), "Regex grep failed: {:?}", result.err());
     }

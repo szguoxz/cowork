@@ -50,12 +50,17 @@
 //! ```
 
 mod agent_loop;
+pub mod approval;
 mod chat_session;
 mod manager;
 mod types;
 
 pub use agent_loop::{
     get_sessions_dir, list_saved_sessions, load_session, AgentLoop, SavedSession,
+};
+pub use approval::{
+    approval_channel, ApprovalGate, ApprovalReceiver, ApprovalRequest, ApprovalResponse,
+    ApprovalSender, QuestionResponse, ToolExecutionContext,
 };
 pub use chat_session::{ChatSession, ToolCallStatus};
 pub use manager::{OutputReceiver, SessionManager};

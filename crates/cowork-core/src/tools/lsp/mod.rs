@@ -5,9 +5,8 @@
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
-use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{BoxFuture, Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolExecutionContext, ToolOutput};
 
 #[cfg(feature = "lsp")]
 mod client;
@@ -151,7 +150,7 @@ impl Tool for LspTool {
         })
     }
 
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, params: Value, _ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             let operation_str = params["operation"]
                 .as_str()
@@ -237,9 +236,5 @@ impl Tool for LspTool {
                 ))
             }
         })
-    }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::None
     }
 }

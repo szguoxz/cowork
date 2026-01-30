@@ -2,11 +2,16 @@
 //!
 //! Tests for ExecuteCommand and KillShell tools.
 
-use cowork_core::tools::Tool;
+use cowork_core::tools::{Tool, ToolExecutionContext};
 use cowork_core::tools::shell::{ExecuteCommand, KillShell, ShellProcessRegistry, ShellConfig, BackgroundShell, ShellStatus};
 use serde_json::json;
 use std::sync::Arc;
 use tempfile::TempDir;
+
+/// Create a test context that auto-approves Bash commands
+fn test_ctx() -> ToolExecutionContext {
+    ToolExecutionContext::test_auto_approve("test", "test")
+}
 
 /// Create a test workspace
 fn setup_workspace() -> TempDir {
@@ -25,7 +30,7 @@ mod execute_command_tests {
 
         let result = tool.execute(json!({
             "command": "echo 'Hello, Test!'"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok(), "Echo command failed: {:?}", result.err());
         let output = result.unwrap();
@@ -39,7 +44,7 @@ mod execute_command_tests {
 
         let result = tool.execute(json!({
             "command": "pwd"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -53,7 +58,7 @@ mod execute_command_tests {
 
         let result = tool.execute(json!({
             "command": "ls -la"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -67,7 +72,7 @@ mod execute_command_tests {
 
         let result = tool.execute(json!({
             "command": "cat test.txt"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -81,7 +86,7 @@ mod execute_command_tests {
 
         let result = tool.execute(json!({
             "command": "echo 'line1\nline2\nline3' | wc -l"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -95,7 +100,7 @@ mod execute_command_tests {
 
         let result = tool.execute(json!({
             "command": "cat nonexistent_file.txt"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok(), "Should return result even for failed command");
         let output = result.unwrap();
@@ -111,7 +116,7 @@ mod execute_command_tests {
 
         let result = tool.execute(json!({
             "command": "sudo ls"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_err(), "sudo should be blocked");
     }
@@ -129,7 +134,7 @@ mod background_execution_tests {
         let result = tool.execute(json!({
             "command": "sleep 1 && echo 'done'",
             "run_in_background": true
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok(), "Background execution failed: {:?}", result.err());
         let output = result.unwrap();
@@ -147,7 +152,7 @@ mod background_execution_tests {
         let result = exec_tool.execute(json!({
             "command": "sleep 60",
             "run_in_background": true
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -157,7 +162,7 @@ mod background_execution_tests {
             // Kill it
             let kill_result = kill_tool.execute(json!({
                 "shell_id": shell_id
-            })).await;
+            }), test_ctx()).await;
 
             assert!(kill_result.is_ok(), "Kill failed: {:?}", kill_result.err());
         }

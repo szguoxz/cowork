@@ -13,9 +13,8 @@ use tokio::sync::{mpsc, RwLock};
 
 use crate::session::{SessionOutput, SessionRegistry};
 
-use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{BoxFuture, Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolExecutionContext, ToolOutput};
 
 use super::executor::{self, AgentExecutionConfig};
 
@@ -292,7 +291,10 @@ impl Tool for TaskTool {
         })
     }
 
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, params: Value, ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        // Get parent's approval channel so subagents can share it
+        let (parent_approval_tx, parent_approval_gate) = ctx.approval_channel();
+
         Box::pin(async move {
         let description = params["description"]
             .as_str()
@@ -382,6 +384,9 @@ impl Tool for TaskTool {
         config.parent_session_id = self.parent_session_id.clone();
         config.session_registry = self.session_registry.clone();
 
+        // Share parent's approval channel with subagent
+        config.parent_approval_channel = Some((parent_approval_tx, parent_approval_gate));
+
         if run_in_background {
             // Start agent in background
             executor::execute_agent_background(
@@ -420,10 +425,6 @@ impl Tool for TaskTool {
             })))
         }
             })
-    }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::None
     }
 }
 
@@ -479,7 +480,7 @@ impl Tool for TaskOutputTool {
         })
     }
 
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, params: Value, _ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
         let task_id = params["task_id"]
             .as_str()
@@ -541,10 +542,6 @@ impl Tool for TaskOutputTool {
         }
             })
     }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::None
-    }
 }
 
 #[cfg(test)]
@@ -576,7 +573,7 @@ mod tests {
             "run_in_background": true
         });
 
-        let result = tool.execute(params).await.unwrap();
+        let result = tool.execute(params, ToolExecutionContext::standalone("test", "test")).await.unwrap();
         assert_eq!(result.content["status"].as_str(), Some("running"));
         assert!(result.content["output_file"].as_str().is_some());
         assert!(result.content["agent_id"].as_str().is_some());
@@ -610,7 +607,7 @@ mod tests {
             "resume": "resume-test-123"
         });
 
-        let result = tool.execute(params).await.unwrap();
+        let result = tool.execute(params, ToolExecutionContext::standalone("test", "test")).await.unwrap();
         assert_eq!(result.content["resumed"].as_bool(), Some(true));
         assert_eq!(result.content["agent_id"].as_str(), Some("resume-test-123"));
     }
@@ -640,7 +637,7 @@ mod tests {
             "block": false
         });
 
-        let output_result = output_tool.execute(output_params).await.unwrap();
+        let output_result = output_tool.execute(output_params, ToolExecutionContext::standalone("test", "test")).await.unwrap();
         assert_eq!(output_result.content["status"].as_str(), Some("completed"));
         assert_eq!(
             output_result.content["output"].as_str(),

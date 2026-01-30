@@ -63,6 +63,9 @@ pub enum ToolError {
     #[error("Resource not found: {0}")]
     ResourceNotFound(String),
 
+    #[error("Rejected by user: {0}")]
+    Rejected(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

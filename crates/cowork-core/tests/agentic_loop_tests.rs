@@ -2,13 +2,18 @@
 //!
 //! Tests for tool execution and registry.
 
-use cowork_core::tools::{Tool, ToolRegistry, ToolDefinition, ToolOutput};
+use cowork_core::tools::{ToolRegistry, ToolDefinition, ToolOutput, ToolExecutionContext};
 use cowork_core::tools::filesystem::{ReadFile, WriteFile, GlobFiles, GrepFiles};
 use cowork_core::tools::shell::ExecuteCommand;
 use serde_json::json;
 use tempfile::TempDir;
 use std::fs;
 use std::sync::Arc;
+
+/// Create a test execution context
+fn test_ctx() -> ToolExecutionContext {
+    ToolExecutionContext::standalone("test", "test")
+}
 
 /// Create a test workspace with sample files
 fn setup_workspace() -> TempDir {
@@ -100,7 +105,7 @@ mod tool_registry_tests {
         let tool = registry.get("Read").unwrap();
         let result = tool.execute(json!({
             "file_path": "README.md"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok(), "Read failed: {:?}", result.err());
         let output = result.unwrap();
@@ -175,7 +180,7 @@ mod tool_execution_tests {
         let tool = registry.get("Glob").unwrap();
         let result = tool.execute(json!({
             "pattern": "**/*.rs"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -190,7 +195,7 @@ mod tool_execution_tests {
         let tool = registry.get("Grep").unwrap();
         let result = tool.execute(json!({
             "pattern": "fn main"
-        })).await;
+        }), test_ctx()).await;
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -202,14 +207,15 @@ mod tool_execution_tests {
         let dir = setup_workspace();
         let registry = create_tool_registry(dir.path());
 
+        // Note: Bash tool now requires approval, which will fail in standalone context
+        // This test verifies the approval request path
         let tool = registry.get("Bash").unwrap();
         let result = tool.execute(json!({
             "command": "echo 'test'"
-        })).await;
+        }), test_ctx()).await;
 
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.success);
+        // The tool will fail because standalone context has no approval handler
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -220,7 +226,7 @@ mod tool_execution_tests {
         let tool = registry.get("Read").unwrap();
         let result = tool.execute(json!({
             "file_path": "nonexistent_file.txt"
-        })).await;
+        }), test_ctx()).await;
 
         // Should return an error
         assert!(result.is_err(), "Should fail for nonexistent file");
@@ -228,33 +234,7 @@ mod tool_execution_tests {
 }
 
 mod approval_level_tests {
-    use super::*;
     use cowork_core::approval::ApprovalLevel;
-
-    #[test]
-    fn test_read_file_approval() {
-        let dir = setup_workspace();
-        let tool = ReadFile::new(dir.path().to_path_buf());
-
-        let level = tool.approval_level();
-        assert!(
-            matches!(level, ApprovalLevel::None | ApprovalLevel::Low),
-            "Read should have low approval"
-        );
-    }
-
-    #[test]
-    fn test_write_file_approval() {
-        let dir = setup_workspace();
-        let tool = WriteFile::new(dir.path().to_path_buf());
-
-        let level = tool.approval_level();
-        // WriteFile has Low approval since it's less destructive than Edit or Delete
-        assert!(
-            matches!(level, ApprovalLevel::Low | ApprovalLevel::Medium | ApprovalLevel::High),
-            "Write should require some approval"
-        );
-    }
 
     #[test]
     fn test_approval_level_from_str() {
@@ -308,8 +288,8 @@ mod parallel_tool_execution_tests {
         let read_tool = registry.get("Read").unwrap();
 
         let (result1, result2) = tokio::join!(
-            read_tool.execute(json!({"file_path": "README.md"})),
-            read_tool.execute(json!({"file_path": "src/main.rs"}))
+            read_tool.execute(json!({"file_path": "README.md"}), test_ctx()),
+            read_tool.execute(json!({"file_path": "src/main.rs"}), test_ctx())
         );
 
         // Both should succeed
@@ -334,9 +314,9 @@ mod parallel_tool_execution_tests {
 
         // Execute Read, Glob, and Grep in parallel
         let (read_result, glob_result, grep_result) = tokio::join!(
-            read_tool.execute(json!({"file_path": "README.md"})),
-            glob_tool.execute(json!({"pattern": "**/*.rs"})),
-            grep_tool.execute(json!({"pattern": "fn main"}))
+            read_tool.execute(json!({"file_path": "README.md"}), test_ctx()),
+            glob_tool.execute(json!({"pattern": "**/*.rs"}), test_ctx()),
+            grep_tool.execute(json!({"pattern": "fn main"}), test_ctx())
         );
 
         // All should succeed
@@ -355,8 +335,8 @@ mod parallel_tool_execution_tests {
 
         // Execute one valid and one invalid read in parallel
         let (good_result, bad_result) = tokio::join!(
-            read_tool.execute(json!({"file_path": "README.md"})),
-            read_tool.execute(json!({"file_path": "nonexistent.txt"}))
+            read_tool.execute(json!({"file_path": "README.md"}), test_ctx()),
+            read_tool.execute(json!({"file_path": "nonexistent.txt"}), test_ctx())
         );
 
         // First should succeed
@@ -384,7 +364,7 @@ mod parallel_tool_execution_tests {
         let mut results: Vec<(String, String, bool)> = Vec::new();
 
         for (id, params) in tool_calls {
-            let result = read_tool.execute(params).await;
+            let result = read_tool.execute(params, test_ctx()).await;
             let (output, is_error) = match result {
                 Ok(output) => (output.content.to_string(), !output.success),
                 Err(e) => (format!("Error: {}", e), true),

@@ -3,9 +3,8 @@
 
 use serde_json::{json, Value};
 
-use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{BoxFuture, Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolExecutionContext, ToolOutput};
 
 /// Tool for fetching and processing web content
 pub struct WebFetch;
@@ -50,7 +49,7 @@ impl Tool for WebFetch {
         })
     }
 
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, params: Value, _ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
         let url = params["url"]
             .as_str()
@@ -137,10 +136,6 @@ impl Tool for WebFetch {
             "note": "Use the content above to answer the prompt"
         })))
             })
-    }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::None
     }
 }
 
