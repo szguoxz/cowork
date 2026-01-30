@@ -5,12 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, RwLock};
 
-use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{BoxFuture, Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolExecutionContext, ToolOutput};
 
 /// A single question option
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,72 +48,15 @@ pub struct QuestionMetadata {
     pub source: Option<String>,
 }
 
-/// Response from user
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuestionResponse {
-    pub id: String,
-    /// Map of question index to selected option(s)
-    pub answers: std::collections::HashMap<String, Vec<String>>,
-}
-
-/// Handler for user questions
-pub struct QuestionHandler {
-    pending_questions: Arc<RwLock<std::collections::HashMap<String, oneshot::Sender<QuestionResponse>>>>,
-    question_tx: mpsc::Sender<QuestionRequest>,
-}
-
-impl QuestionHandler {
-    pub fn new(question_tx: mpsc::Sender<QuestionRequest>) -> Self {
-        Self {
-            pending_questions: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            question_tx,
-        }
-    }
-
-    pub async fn ask(&self, request: QuestionRequest) -> Result<QuestionResponse, String> {
-        let (tx, rx) = oneshot::channel();
-
-        {
-            let mut pending = self.pending_questions.write().await;
-            pending.insert(request.id.clone(), tx);
-        }
-
-        self.question_tx
-            .send(request.clone())
-            .await
-            .map_err(|e| format!("Failed to send question: {}", e))?;
-
-        rx.await.map_err(|e| format!("Failed to receive answer: {}", e))
-    }
-
-    pub async fn answer(&self, response: QuestionResponse) -> Result<(), String> {
-        let mut pending = self.pending_questions.write().await;
-        if let Some(tx) = pending.remove(&response.id) {
-            tx.send(response)
-                .map_err(|_| "Failed to send response".to_string())
-        } else {
-            Err(format!("No pending question with id {}", response.id))
-        }
-    }
-}
-
 /// The canonical tool name, used for routing in agent_loop and approval config
 pub const NAME: &str = "AskUserQuestion";
 
 /// Tool for asking user questions
-pub struct AskUserQuestion {
-    handler: Option<Arc<QuestionHandler>>,
-}
+pub struct AskUserQuestion;
 
 impl AskUserQuestion {
     pub fn new() -> Self {
-        Self { handler: None }
-    }
-
-    pub fn with_handler(handler: Arc<QuestionHandler>) -> Self {
-        Self {
-            handler: Some(handler),
-        }
+        Self
     }
 }
 
@@ -207,7 +147,7 @@ impl Tool for AskUserQuestion {
         })
     }
 
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, params: Value, ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
         // Check if answers are already provided (from UI callback)
         if let Some(answers) = params.get("answers")
@@ -242,42 +182,29 @@ impl Tool for AskUserQuestion {
             }
         }
 
-        // Create question request
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let metadata = params
-            .get("metadata")
-            .and_then(|m| serde_json::from_value::<QuestionMetadata>(m.clone()).ok());
+        // Convert to QuestionInfo for the approval channel
+        let question_infos: Vec<crate::session::QuestionInfo> = questions
+            .iter()
+            .map(|q| crate::session::QuestionInfo {
+                question: q.question.clone(),
+                header: if q.header.is_empty() { None } else { Some(q.header.clone()) },
+                options: q.options.iter().map(|o| crate::session::QuestionOption {
+                    label: o.label.clone(),
+                    description: if o.description.is_empty() { None } else { Some(o.description.clone()) },
+                }).collect(),
+                multi_select: q.multi_select,
+            })
+            .collect();
 
-        let request = QuestionRequest {
-            id: request_id.clone(),
-            questions: questions.clone(),
-            metadata,
-        };
-
-        // If we have a handler, send the question and wait for response
-        if let Some(handler) = &self.handler {
-            match handler.ask(request).await {
-                Ok(response) => Ok(ToolOutput::success(json!({
-                    "answered": true,
-                    "request_id": request_id,
-                    "answers": response.answers
-                }))),
-                Err(e) => Err(ToolError::ExecutionFailed(e)),
-            }
-        } else {
-            // No handler - return pending status for UI to handle
-            Ok(ToolOutput::success(json!({
-                "pending": true,
-                "request_id": request_id,
-                "questions": questions,
-                "message": "Waiting for user response"
-            })))
+        // Ask questions through the approval channel
+        match ctx.ask_question(question_infos).await {
+            Ok(answers) => Ok(ToolOutput::success(json!({
+                "answered": true,
+                "answers": answers
+            }))),
+            Err(e) => Err(ToolError::ExecutionFailed(e)),
         }
             })
-    }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::None
     }
 }
 

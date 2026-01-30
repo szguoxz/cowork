@@ -3,9 +3,8 @@
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
-use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{BoxFuture, Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolExecutionContext, ToolOutput};
 
 use super::{normalize_path, path_to_display, validate_path};
 
@@ -46,7 +45,7 @@ impl Tool for WriteFile {
         })
     }
 
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, params: Value, _ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             let path_str = params["file_path"]
                 .as_str()
@@ -92,9 +91,5 @@ impl Tool for WriteFile {
                 "bytes_written": content.len()
             })))
         })
-    }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::Low
     }
 }

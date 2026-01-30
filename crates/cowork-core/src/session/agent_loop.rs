@@ -15,12 +15,15 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
 
+use super::approval::{
+    approval_channel, ApprovalGate, ApprovalReceiver, ApprovalRequest, ApprovalResponse,
+    ApprovalSender, QuestionResponse, ToolExecutionContext,
+};
 use super::types::{SessionConfig, SessionId, SessionInput, SessionOutput};
 use super::ChatSession;
-use crate::approval::ToolApprovalConfig;
-use crate::formatting::{format_tool_call, format_tool_result_summary};
 use crate::context::{compact, context_limit, usage_stats};
 use crate::error::Result;
+use crate::formatting::{format_tool_call, format_tool_result_summary};
 use crate::orchestration::ToolRegistryBuilder;
 use crate::prompt::{HookContext, HookEvent, HookExecutor, HooksConfig};
 use crate::provider::{ChatMessage, GenAIProvider, ToolCall};
@@ -91,14 +94,18 @@ type UserInput = (String, Vec<super::ImageAttachment>);
 pub struct AgentLoop {
     /// Session identifier
     session_id: SessionId,
-    /// Workspace path for resolving relative paths
-    workspace_path: std::path::PathBuf,
     /// Message receiver (questions from user, with optional images)
     message_rx: mpsc::UnboundedReceiver<UserInput>,
     /// Answer receiver (approvals/answers from user)
     answer_rx: mpsc::UnboundedReceiver<SessionInput>,
     /// Output sender
     output_tx: mpsc::Sender<(SessionId, SessionOutput)>,
+    /// Approval channel sender (passed to tools and subagents)
+    approval_tx: ApprovalSender,
+    /// Approval channel receiver (for handling approval requests from tools)
+    approval_rx: ApprovalReceiver,
+    /// Approval gate (mutex to serialize approval requests)
+    approval_gate: ApprovalGate,
     /// LLM provider
     provider: GenAIProvider,
     /// Chat session with message history
@@ -107,8 +114,6 @@ pub struct AgentLoop {
     tool_registry: ToolRegistry,
     /// Tool definitions for LLM
     tool_definitions: Vec<ToolDefinition>,
-    /// Tool approval configuration
-    approval_config: ToolApprovalConfig,
     /// Plan mode state (shared with EnterPlanMode/ExitPlanMode tools and /plan command)
     plan_mode_state: Arc<tokio::sync::RwLock<PlanModeState>>,
     /// Context limit for this provider/model
@@ -140,6 +145,18 @@ impl AgentLoop {
         // Create internal channels for dispatching
         let (message_tx, message_rx) = mpsc::unbounded_channel();
         let (answer_tx, answer_rx) = mpsc::unbounded_channel();
+
+        // Create approval channel for tools to request approval
+        // Subagents use parent's channel; main sessions create their own
+        let (approval_tx, approval_rx, approval_gate) = if let Some((parent_tx, parent_gate)) = config.parent_approval_channel {
+            // Subagent: use parent's channel for tool requests
+            // Create a dummy local receiver (won't receive - parent handles approvals)
+            let (_dummy_tx, dummy_rx, _dummy_gate) = approval_channel();
+            (parent_tx, dummy_rx, parent_gate)
+        } else {
+            // Main session: create own channel
+            approval_channel()
+        };
 
         // Create shared plan mode state
         let plan_mode_state = Arc::new(tokio::sync::RwLock::new(PlanModeState::default()));
@@ -284,15 +301,16 @@ impl AgentLoop {
 
         Ok(Self {
             session_id,
-            workspace_path: config.workspace_path.clone(),
             message_rx,
             answer_rx,
             output_tx,
+            approval_tx,
+            approval_rx,
+            approval_gate,
             provider,
             session,
             tool_registry,
             tool_definitions,
-            approval_config: config.approval_config,
             plan_mode_state,
             context_limit: ctx_limit,
             last_input_tokens: 0,
@@ -347,29 +365,15 @@ impl AgentLoop {
     async fn handle_user_message(
         &mut self,
         content: String,
-        mut images: Vec<super::ImageAttachment>,
+        images: Vec<super::ImageAttachment>,
     ) -> Result<()> {
-        // Parse @path patterns from the content to extract inline image references
-        let (cleaned_content, parsed_images) =
-            super::ImageAttachment::parse_from_text(&content, &self.workspace_path);
-
-        // Combine parsed images with any already-provided images
-        images.extend(parsed_images);
-
-        // Use cleaned content (with @paths removed) for display
-        let display_content = if images.is_empty() {
-            content.clone()
-        } else {
-            format!("{} [{} image(s)]", cleaned_content, images.len())
-        };
-
-        // Execute UserPromptSubmit hooks (on cleaned content)
-        let mut content_with_hooks = cleaned_content.clone();
+        // Execute UserPromptSubmit hooks
+        let mut content_with_hooks = content.clone();
         if self.hooks_enabled {
-            match self.run_user_prompt_hook(&cleaned_content) {
+            match self.run_user_prompt_hook(&content) {
                 Ok(Some(additional_context)) => {
                     // Append hook context to the message
-                    content_with_hooks = format!("{}\n\n<user-prompt-submit-hook>\n{}\n</user-prompt-submit-hook>", cleaned_content, additional_context);
+                    content_with_hooks = format!("{}\n\n<user-prompt-submit-hook>\n{}\n</user-prompt-submit-hook>", content, additional_context);
                 }
                 Err(block_reason) => {
                     // Hook blocked the message
@@ -382,7 +386,12 @@ impl AgentLoop {
         // Generate message ID
         let msg_id = uuid::Uuid::new_v4().to_string();
 
-        // Echo the user message (display content shows image count)
+        // Echo the user message (with image count if any)
+        let display_content = if images.is_empty() {
+            content.clone()
+        } else {
+            format!("{} [{} image(s)]", content, images.len())
+        };
         self.emit(SessionOutput::user_message(&msg_id, &display_content))
             .await;
 
@@ -491,33 +500,20 @@ impl AgentLoop {
             let tool_calls = response.tool_calls.clone();
             self.session.add_assistant_message(&content, tool_calls.clone());
 
-            // Partition: auto-approved vs needs interaction (approval or question)
-            let mut auto_approved = Vec::new();
-            let mut needs_interaction = Vec::new();
-
-            for tc in &tool_calls {
+            // Spawn ALL tools in parallel
+            let mut join_set: JoinSet<SpawnedToolResult> = JoinSet::new();
+            for tool_call in &tool_calls {
                 // Log warning if tool call has empty or null arguments
-                if tc.fn_arguments.is_null() ||
-                   (tc.fn_arguments.is_object() && tc.fn_arguments.as_object().map(|o| o.is_empty()).unwrap_or(false)) {
+                if tool_call.fn_arguments.is_null() ||
+                   (tool_call.fn_arguments.is_object() && tool_call.fn_arguments.as_object().map(|o| o.is_empty()).unwrap_or(false)) {
                     warn!(
-                        tool_name = %tc.fn_name,
-                        tool_id = %tc.call_id,
-                        arguments = ?tc.fn_arguments,
+                        tool_name = %tool_call.fn_name,
+                        tool_id = %tool_call.call_id,
+                        arguments = ?tool_call.fn_arguments,
                         "Tool call received with empty or null arguments"
                     );
                 }
-                if tc.fn_name == ASK_QUESTION_TOOL_NAME {
-                    needs_interaction.push(tc);
-                } else if self.approval_config.should_auto_approve_with_args(&tc.fn_name, &tc.fn_arguments) {
-                    auto_approved.push(tc);
-                } else {
-                    needs_interaction.push(tc);
-                }
-            }
 
-            // Spawn auto-approved tools in parallel
-            let mut join_set: JoinSet<SpawnedToolResult> = JoinSet::new();
-            for tool_call in &auto_approved {
                 // Emit tool_start (ephemeral) and tool_call (persistent) before spawning
                 self.emit_tool_execution_start(tool_call).await;
 
@@ -525,9 +521,15 @@ impl AgentLoop {
                     let id = tool_call.call_id.clone();
                     let name = tool_call.fn_name.clone();
                     let arguments = tool_call.fn_arguments.clone();
+                    let ctx = ToolExecutionContext::new(
+                        self.approval_tx.clone(),
+                        self.approval_gate.clone(),
+                        id.clone(),
+                        name.clone(),
+                    );
 
                     join_set.spawn(async move {
-                        match tool.execute(arguments.clone()).await {
+                        match tool.execute(arguments.clone(), ctx).await {
                             Ok(output) => {
                                 let output_str = output.content.to_string();
                                 let skill_name = output.metadata.get(crate::tools::skill::SKILL_NAME_KEY)
@@ -596,90 +598,136 @@ impl AgentLoop {
             // Track completed tool IDs for cancel cleanup
             let mut completed_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-            // Process interaction tools (while spawned tasks run in background)
-            for (tool_idx, tool_call) in needs_interaction.iter().enumerate() {
-                if tool_call.fn_name == ASK_QUESTION_TOOL_NAME {
-                    if let Some(questions) = self.parse_questions(&tool_call.fn_arguments) {
-                        self.emit(SessionOutput::Question {
-                            request_id: tool_call.call_id.clone(),
-                            questions,
-                            subagent_id: None,
-                        }).await;
-
-                        // Wait for answer (loop to handle unexpected messages)
-                        loop {
-                            match self.answer_rx.recv().await {
-                                Some(SessionInput::AnswerQuestion { answers, .. }) => {
-                                    let result = serde_json::json!({ "answered": true, "answers": answers });
-                                    self.session.add_tool_result(&tool_call.call_id, result.to_string(), false);
-                                    self.emit(SessionOutput::tool_done(&tool_call.call_id, ASK_QUESTION_TOOL_NAME, true, result.to_string())).await;
-                                    completed_tool_ids.insert(tool_call.call_id.clone());
-                                    break;
-                                }
-                                Some(SessionInput::Cancel) => {
-                                    // Cancelled - add results for remaining tools to keep message history valid
-                                    self.handle_cancel_cleanup(&tool_calls, &needs_interaction, tool_idx, &mut completed_tool_ids, &mut join_set).await;
-                                    self.emit(SessionOutput::cancelled()).await;
-                                    return Ok(());
-                                }
-                                Some(other) => {
-                                    warn!("Unexpected input while waiting for answer: {:?}", other);
-                                }
-                                None => {
-                                    // Channel closed unexpectedly
-                                    warn!("Answer channel closed while waiting for question response");
-                                    self.emit(SessionOutput::error("Session interrupted: input channel closed".to_string())).await;
-                                    return Ok(());
-                                }
+            // Process tools: collect results and handle approval/question requests
+            // Uses select! to handle tool completion, approval requests, and cancellation
+            loop {
+                tokio::select! {
+                    // Handle tool completion
+                    result = join_set.join_next() => {
+                        match result {
+                            Some(Ok(res)) => {
+                                completed_tool_ids.insert(res.id.clone());
+                                self.finalize_spawned_tool(res).await;
+                            }
+                            Some(Err(e)) => {
+                                // JoinError - task panicked or was cancelled
+                                error!("Tool task failed: {:?}", e);
+                            }
+                            None => {
+                                // JoinSet is empty - all tools completed
+                                break;
                             }
                         }
                     }
-                } else {
-                    // Needs approval - get description from tool if available
-                    let description = self.tool_registry
-                        .get(&tool_call.fn_name)
-                        .and_then(|tool| tool.approval_description(&tool_call.fn_arguments));
-                    self.emit(SessionOutput::tool_pending(&tool_call.call_id, &tool_call.fn_name, tool_call.fn_arguments.clone(), description)).await;
 
-                    // Wait for approval/rejection (loop to handle unexpected messages)
-                    loop {
-                        match self.answer_rx.recv().await {
-                            Some(SessionInput::ApproveTool { .. }) => {
-                                self.execute_tool(tool_call).await;
-                                completed_tool_ids.insert(tool_call.call_id.clone());
-                                break;
+                    // Handle approval/question requests from tools
+                    request = self.approval_rx.recv() => {
+                        match request {
+                            Some(ApprovalRequest::ToolApproval { tool_call_id, tool_name, arguments, description, response_tx }) => {
+                                // Emit pending status to frontend
+                                self.emit(SessionOutput::tool_pending(&tool_call_id, &tool_name, arguments, description)).await;
+
+                                // Wait for user response
+                                let response = loop {
+                                    match self.answer_rx.recv().await {
+                                        Some(SessionInput::ApproveTool { .. }) => {
+                                            break ApprovalResponse::Approved;
+                                        }
+                                        Some(SessionInput::RejectTool { reason, .. }) => {
+                                            break ApprovalResponse::Rejected { reason };
+                                        }
+                                        Some(SessionInput::Cancel) => {
+                                            // Send rejection to unblock the tool, then handle cancel
+                                            let _ = response_tx.send(ApprovalResponse::Rejected {
+                                                reason: Some("Cancelled by user".to_string()),
+                                            });
+                                            self.handle_cancel_cleanup(&tool_calls, &mut completed_tool_ids, &mut join_set).await;
+                                            self.emit(SessionOutput::cancelled()).await;
+                                            return Ok(());
+                                        }
+                                        Some(other) => {
+                                            warn!("Unexpected input while waiting for approval: {:?}", other);
+                                        }
+                                        None => {
+                                            // Channel closed - session ended
+                                            let _ = response_tx.send(ApprovalResponse::Rejected {
+                                                reason: Some("Session ended".to_string()),
+                                            });
+                                            return Ok(());
+                                        }
+                                    }
+                                };
+
+                                // Send response back to tool
+                                let _ = response_tx.send(response);
                             }
-                            Some(SessionInput::RejectTool { reason, .. }) => {
-                                let reason = reason.unwrap_or_else(|| "Rejected by user".to_string());
-                                self.session.add_tool_result(&tool_call.call_id, &reason, true);
-                                self.emit(SessionOutput::tool_done(&tool_call.call_id, &tool_call.fn_name, false, reason)).await;
-                                completed_tool_ids.insert(tool_call.call_id.clone());
-                                break;
+
+                            Some(ApprovalRequest::Question { request_id, questions, response_tx }) => {
+                                // Emit question to frontend
+                                self.emit(SessionOutput::Question {
+                                    request_id: request_id.clone(),
+                                    questions,
+                                    subagent_id: None,
+                                }).await;
+
+                                // Wait for user answer
+                                let response = loop {
+                                    match self.answer_rx.recv().await {
+                                        Some(SessionInput::AnswerQuestion { answers, .. }) => {
+                                            break QuestionResponse { answers };
+                                        }
+                                        Some(SessionInput::Cancel) => {
+                                            // Send empty response to unblock the tool
+                                            let _ = response_tx.send(QuestionResponse {
+                                                answers: std::collections::HashMap::new(),
+                                            });
+                                            self.handle_cancel_cleanup(&tool_calls, &mut completed_tool_ids, &mut join_set).await;
+                                            self.emit(SessionOutput::cancelled()).await;
+                                            return Ok(());
+                                        }
+                                        Some(other) => {
+                                            warn!("Unexpected input while waiting for question answer: {:?}", other);
+                                        }
+                                        None => {
+                                            // Channel closed
+                                            let _ = response_tx.send(QuestionResponse {
+                                                answers: std::collections::HashMap::new(),
+                                            });
+                                            return Ok(());
+                                        }
+                                    }
+                                };
+
+                                // Send answer back to tool
+                                let _ = response_tx.send(response);
                             }
+
+                            None => {
+                                // Approval channel closed - shouldn't happen normally
+                                error!("Approval channel closed unexpectedly");
+                            }
+                        }
+                    }
+
+                    // Non-blocking check for cancellation while tools are running
+                    input = self.answer_rx.recv() => {
+                        match input {
                             Some(SessionInput::Cancel) => {
-                                // Cancelled - add results for remaining tools to keep message history valid
-                                self.handle_cancel_cleanup(&tool_calls, &needs_interaction, tool_idx, &mut completed_tool_ids, &mut join_set).await;
+                                self.handle_cancel_cleanup(&tool_calls, &mut completed_tool_ids, &mut join_set).await;
                                 self.emit(SessionOutput::cancelled()).await;
                                 return Ok(());
                             }
                             Some(other) => {
-                                warn!("Unexpected input while waiting for approval: {:?}", other);
+                                // Unexpected input while tools are running - log and ignore
+                                debug!("Unexpected input while tools running: {:?}", other);
                             }
                             None => {
-                                // Channel closed unexpectedly
-                                warn!("Answer channel closed while waiting for tool approval");
-                                self.emit(SessionOutput::error("Session interrupted: input channel closed".to_string())).await;
+                                // Channel closed
+                                self.emit(SessionOutput::error("Session interrupted".to_string())).await;
                                 return Ok(());
                             }
                         }
                     }
-                }
-            }
-
-            // Collect results from spawned auto-approved tools
-            while let Some(result) = join_set.join_next().await {
-                if let Ok(res) = result {
-                    self.finalize_spawned_tool(res).await;
                 }
             }
         }
@@ -747,147 +795,6 @@ impl AgentLoop {
             }),
             Err(e) => Err(crate::error::Error::Provider(e.to_string())),
         }
-    }
-
-    /// Execute a single tool
-    async fn execute_tool(&mut self, tool_call: &ToolCall) {
-        // Execute PreToolUse hooks
-        if self.hooks_enabled {
-            match self.run_pre_tool_hook(&tool_call.fn_name, &tool_call.fn_arguments) {
-                Err(block_reason) => {
-                    // Hook blocked the tool execution
-                    warn!("Tool {} blocked by hook: {}", tool_call.fn_name, block_reason);
-                    let error_msg = format!("Tool blocked: {}", block_reason);
-                    self.session.add_tool_result(&tool_call.call_id, &error_msg, true);
-                    self.emit(SessionOutput::tool_done(
-                        &tool_call.call_id,
-                        &tool_call.fn_name,
-                        false,
-                        &error_msg,
-                    ))
-                    .await;
-                    // Also emit tool_result for the blocked case
-                    self.emit(SessionOutput::tool_result(
-                        &tool_call.call_id,
-                        &tool_call.fn_name,
-                        false,
-                        &error_msg,
-                        format!("Blocked: {}", block_reason),
-                        None,
-                    ))
-                    .await;
-                    return;
-                }
-                Ok(Some(ctx)) => {
-                    debug!("PreToolUse hook added context for {}: {} chars", tool_call.fn_name, ctx.len());
-                }
-                Ok(None) => {}
-            }
-        }
-
-        // Emit tool start (ephemeral) and tool call (persistent)
-        self.emit_tool_execution_start(&tool_call).await;
-
-        // Find and execute the tool
-        let (result, inject_message) = if let Some(tool) = self.tool_registry.get(&tool_call.fn_name) {
-            match tool.execute(tool_call.fn_arguments.clone()).await {
-                Ok(tool_output) => {
-                    let inject = tool_output.metadata.get(crate::tools::skill::INJECT_AS_MESSAGE)
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    let skill_name = tool_output.metadata.get(crate::tools::skill::SKILL_NAME_KEY)
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let output_str = tool_output.content.to_string();
-                    debug!(
-                        "Tool {} completed: {} chars",
-                        tool_call.fn_name,
-                        output_str.len()
-                    );
-                    let inject_info = if inject { Some((output_str.clone(), skill_name)) } else { None };
-                    ((true, output_str), inject_info)
-                }
-                Err(e) => {
-                    debug!("Tool {} failed: {}", tool_call.fn_name, e);
-                    ((false, format!("Error: {}", e)), None)
-                }
-            }
-        } else {
-            ((false, format!("Unknown tool: {}", tool_call.fn_name)), None)
-        };
-
-        // Handle skill message injection
-        if let Some((content, skill_name)) = inject_message {
-            let name = skill_name.as_deref().unwrap_or("unknown");
-            let brief_result = format!("Skill '{}' loaded. Follow the instructions below.", name);
-
-            self.session.add_tool_result(&tool_call.call_id, &brief_result, false);
-
-            self.emit(SessionOutput::tool_done(
-                &tool_call.call_id,
-                &tool_call.fn_name,
-                true,
-                brief_result,
-            ))
-            .await;
-
-            // Inject skill content as a user message with command-name tag
-            let injected = format!("<command-name>/{}</command-name>\n\n{}", name, content);
-            self.session.add_user_message(&injected);
-            return;
-        }
-
-        // Execute PostToolUse hooks
-        let mut final_result = result.clone();
-        if self.hooks_enabled
-            && let Some(additional_context) = self.run_post_tool_hook(&tool_call.fn_name, &tool_call.fn_arguments, &result.1)
-        {
-            // Append hook context to the tool result
-            final_result.1 = format!("{}\n\n<post-tool-hook>\n{}\n</post-tool-hook>", result.1, additional_context);
-        }
-
-        // Truncate large results to prevent context overflow
-        let truncated_result = truncate_tool_result(&final_result.1, MAX_TOOL_RESULT_SIZE);
-        if truncated_result.len() < final_result.1.len() {
-            info!(
-                "Truncated {} result from {} to {} chars",
-                tool_call.fn_name,
-                final_result.1.len(),
-                truncated_result.len()
-            );
-        }
-
-        // Generate summary and diff for tool result
-        let (summary, diff_preview) = format_tool_result_summary(
-            &tool_call.fn_name,
-            final_result.0,
-            &truncated_result,
-            &tool_call.fn_arguments,
-        );
-
-        // Add tool result to session with proper error flag (truncated to prevent context overflow)
-        let is_error = !final_result.0;
-        self.session.add_tool_result(&tool_call.call_id, &truncated_result, is_error);
-
-        // Emit tool done (ephemeral, with truncated result)
-        self.emit(SessionOutput::tool_done(
-            &tool_call.call_id,
-            &tool_call.fn_name,
-            final_result.0,
-            &truncated_result,
-        ))
-        .await;
-
-        // Emit tool result (persistent message)
-        self.emit(SessionOutput::tool_result(
-            &tool_call.call_id,
-            &tool_call.fn_name,
-            final_result.0,
-            &truncated_result,
-            summary,
-            diff_preview,
-        ))
-        .await;
     }
 
     /// Finalize a spawned tool execution result
@@ -970,42 +877,6 @@ impl AgentLoop {
             diff_preview,
         ))
         .await;
-    }
-
-    /// Parse questions from AskUserQuestion tool arguments
-    fn parse_questions(
-        &self,
-        args: &serde_json::Value,
-    ) -> Option<Vec<super::types::QuestionInfo>> {
-        let questions_arr = args.get("questions")?.as_array()?;
-        let mut result = Vec::new();
-
-        for q in questions_arr {
-            let question = q.get("question")?.as_str()?.to_string();
-            let header = q.get("header").and_then(|h| h.as_str()).map(|s| s.to_string());
-            let multi_select = q.get("multiSelect").and_then(|m| m.as_bool()).unwrap_or(false);
-
-            let options = q.get("options")?.as_array()?;
-            let mut parsed_options = Vec::new();
-
-            for opt in options {
-                let label = opt.get("label")?.as_str()?.to_string();
-                let description = opt
-                    .get("description")
-                    .and_then(|d| d.as_str())
-                    .map(|s| s.to_string());
-                parsed_options.push(super::types::QuestionOption { label, description });
-            }
-
-            result.push(super::types::QuestionInfo {
-                question,
-                header,
-                options: parsed_options,
-                multi_select,
-            });
-        }
-
-        Some(result)
     }
 
     // ========================================================================
@@ -1132,16 +1003,6 @@ impl AgentLoop {
         }
     }
 
-    /// Execute PreToolUse hooks
-    ///
-    /// Returns Ok(Some(ctx)) if additional context should be added
-    /// Returns Ok(None) if no context
-    /// Returns Err if the tool should be blocked
-    fn run_pre_tool_hook(&self, tool_name: &str, args: &serde_json::Value) -> std::result::Result<Option<String>, String> {
-        let context = HookContext::pre_tool_use(&self.session_id, tool_name, args.clone());
-        self.execute_hooks(HookEvent::PreToolUse, &context)
-    }
-
     /// Execute PostToolUse hooks
     fn run_post_tool_hook(&self, tool_name: &str, args: &serde_json::Value, result: &str) -> Option<String> {
         let context = HookContext::post_tool_use(&self.session_id, tool_name, args.clone(), result);
@@ -1171,17 +1032,17 @@ impl AgentLoop {
         }
     }
 
-    /// Handle cancellation cleanup - add "Cancelled" results for all pending tools
-    /// to keep the message history valid for Claude's strict sequencing requirements.
+    /// Handle cancellation cleanup
+    ///
+    /// Collects any completed results, aborts remaining tasks, and adds "Cancelled"
+    /// results for all tools that didn't complete.
     async fn handle_cancel_cleanup(
         &mut self,
         all_tool_calls: &[ToolCall],
-        needs_interaction: &[&ToolCall],
-        current_interaction_idx: usize,
         completed_tool_ids: &mut std::collections::HashSet<String>,
         join_set: &mut JoinSet<SpawnedToolResult>,
     ) {
-        // First, collect any completed results from the JoinSet
+        // Collect any completed results from the JoinSet
         while let Some(result) = join_set.try_join_next() {
             if let Ok(res) = result {
                 completed_tool_ids.insert(res.id.clone());
@@ -1206,11 +1067,6 @@ impl AgentLoop {
                     None,
                 )).await;
             }
-        }
-
-        // Clear the modal state for current and remaining interaction tools
-        for tc in needs_interaction.iter().skip(current_interaction_idx) {
-            debug!("Cancelled tool {} before completion", tc.call_id);
         }
     }
 
@@ -1465,6 +1321,7 @@ fn truncate_at_line_boundary(result: &str, max_size: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::approval::ToolApprovalConfig;
 
     #[test]
     fn test_truncate_tool_result_json_array() {

@@ -5,10 +5,9 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::tools::process_utils::{shell_command, shell_command_background};
-use crate::tools::{BoxFuture, Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolExecutionContext, ToolOutput};
 
 use super::{BackgroundShell, ShellConfig, ShellProcessRegistry, ShellStatus};
 
@@ -141,7 +140,7 @@ impl Tool for ExecuteCommand {
         })
     }
 
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, params: Value, ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             let command = params["command"]
                 .as_str()
@@ -150,15 +149,20 @@ impl Tool for ExecuteCommand {
             let timeout_ms = params["timeout"].as_u64().unwrap_or(120000);
             let timeout_secs = (timeout_ms / 1000).min(600);
             let run_in_background = params["run_in_background"].as_bool().unwrap_or(false);
-            let _description = params["description"].as_str().unwrap_or("");
+            let description = params["description"].as_str().map(|s| s.to_string());
 
-            // Security check
+            // Security check - blocked commands are rejected immediately without approval
             if self.is_command_blocked(command) {
                 return Err(ToolError::PermissionDenied(format!(
                     "Command contains blocked pattern: {}",
                     command
                 )));
             }
+
+            // Request approval for command execution
+            ctx.request_approval(params.clone(), description)
+                .await
+                .map_err(ToolError::Rejected)?;
 
             let working_dir = if let Some(dir) = params["working_dir"].as_str() {
                 self.workspace.join(dir)
@@ -235,9 +239,5 @@ impl Tool for ExecuteCommand {
                 "success": output.status.success()
             })))
         })
-    }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::Medium
     }
 }

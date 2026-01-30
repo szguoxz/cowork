@@ -4,9 +4,13 @@
 //! Note: Full integration tests require actual PDF/Office files.
 
 use cowork_core::tools::filesystem::ReadFile;
-use cowork_core::tools::Tool;
+use cowork_core::tools::{Tool, ToolExecutionContext};
 use serde_json::json;
 use tempfile::TempDir;
+
+fn test_ctx() -> ToolExecutionContext {
+    ToolExecutionContext::standalone("test", "test")
+}
 
 /// Create a temporary test directory
 fn setup_test_dir() -> TempDir {
@@ -24,7 +28,7 @@ mod read_pdf_tests {
         let result = tool
             .execute(json!({
                 "file_path": "nonexistent.pdf"
-            }))
+            }), test_ctx())
             .await;
 
         assert!(result.is_err());
@@ -41,7 +45,7 @@ mod read_pdf_tests {
         let result = tool
             .execute(json!({
                 "file_path": "fake.pdf"
-            }))
+            }), test_ctx())
             .await;
 
         // Should fail because the content is not a valid PDF
@@ -60,7 +64,7 @@ mod read_office_tests {
         let result = tool
             .execute(json!({
                 "file_path": "nonexistent.docx"
-            }))
+            }), test_ctx())
             .await;
 
         assert!(result.is_err());
@@ -74,7 +78,7 @@ mod read_office_tests {
         let result = tool
             .execute(json!({
                 "file_path": "nonexistent.xlsx"
-            }))
+            }), test_ctx())
             .await;
 
         assert!(result.is_err());
@@ -88,7 +92,7 @@ mod read_office_tests {
         let result = tool
             .execute(json!({
                 "file_path": "nonexistent.pptx"
-            }))
+            }), test_ctx())
             .await;
 
         assert!(result.is_err());
@@ -104,7 +108,7 @@ mod read_office_tests {
         let result = tool
             .execute(json!({
                 "file_path": "test.txt"
-            }))
+            }), test_ctx())
             .await;
 
         assert!(result.is_ok());
@@ -126,7 +130,7 @@ mod read_office_tests {
         let result = tool
             .execute(json!({
                 "file_path": "fake.docx"
-            }))
+            }), test_ctx())
             .await;
 
         // Should fail with a document extraction error (not a text file error)

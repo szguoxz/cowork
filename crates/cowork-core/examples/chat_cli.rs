@@ -10,7 +10,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use cowork_core::provider::{GenAIProvider, ChatMessage};
-use cowork_core::tools::ToolRegistry;
+use cowork_core::tools::{ToolRegistry, ToolExecutionContext};
 use cowork_core::tools::filesystem::{ReadFile, WriteFile, GlobFiles, GrepFiles};
 use cowork_core::tools::shell::ExecuteCommand;
 
@@ -107,7 +107,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if approval.trim().to_lowercase() == "y" {
                             // Execute tool
                             if let Some(tool) = tool_registry.get(&call.fn_name) {
-                                match tool.execute(call.fn_arguments.clone()).await {
+                                let ctx = ToolExecutionContext::standalone(&call.call_id, &call.fn_name);
+                                match tool.execute(call.fn_arguments.clone(), ctx).await {
                                     Ok(output) => {
                                         println!("  Result: {}",
                                             if output.content.to_string().len() > 200 {

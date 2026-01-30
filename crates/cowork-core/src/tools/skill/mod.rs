@@ -12,12 +12,11 @@ use std::sync::Arc;
 use regex::Regex;
 use serde_json::Value;
 
-use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
 use crate::prompt::builtin::claude_code::tools::SKILL as SKILL_DESCRIPTION;
 use crate::prompt::substitution::substitute_commands;
 use crate::skills::SkillRegistry;
-use crate::tools::{BoxFuture, Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolExecutionContext, ToolOutput};
 
 /// Metadata key signaling the agent loop to inject content as a user message
 pub const INJECT_AS_MESSAGE: &str = "inject_as_message";
@@ -73,7 +72,7 @@ impl Tool for SkillTool {
         })
     }
 
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, params: Value, _ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             let skill_name = params
                 .get("skill")
@@ -147,10 +146,6 @@ impl Tool for SkillTool {
 
             Ok(output)
         })
-    }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        ApprovalLevel::None
     }
 }
 

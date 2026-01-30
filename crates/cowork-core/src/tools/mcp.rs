@@ -10,8 +10,7 @@ use serde_json::Value;
 
 use crate::error::ToolError;
 use crate::mcp_manager::{McpServerManager, McpToolInfo};
-use crate::tools::{BoxFuture, Tool, ToolOutput};
-use crate::approval::ApprovalLevel;
+use crate::tools::{BoxFuture, Tool, ToolExecutionContext, ToolOutput};
 
 /// Wrapper that exposes an MCP tool as a Cowork Tool
 pub struct McpToolWrapper {
@@ -64,7 +63,7 @@ impl Tool for McpToolWrapper {
         self.tool_info.input_schema.clone()
     }
 
-    fn execute(&self, params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, params: Value, _ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             // Call the MCP server through the manager
             let result = self.manager.call_tool(
@@ -126,12 +125,6 @@ impl Tool for McpToolWrapper {
                 }
             }
         })
-    }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        // MCP tools are external, so require approval by default
-        // This could be made configurable per-server in the future
-        ApprovalLevel::Low
     }
 }
 
@@ -196,23 +189,6 @@ mod tests {
         let manager = Arc::new(McpServerManager::new());
         let tools = create_mcp_tools(manager);
         assert!(tools.is_empty());
-    }
-
-    #[test]
-    fn test_mcp_tool_approval_level() {
-        let manager = Arc::new(McpServerManager::new());
-
-        let tool_info = McpToolInfo {
-            name: "test".to_string(),
-            description: "Test".to_string(),
-            input_schema: serde_json::json!({}),
-            server: "test-server".to_string(),
-        };
-
-        let wrapper = McpToolWrapper::new(tool_info, manager);
-
-        // MCP tools should require approval
-        assert_eq!(wrapper.approval_level(), ApprovalLevel::Low);
     }
 
     #[test]

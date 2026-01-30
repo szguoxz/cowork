@@ -28,6 +28,7 @@ fn test_config() -> SessionConfig {
         save_session: true,
         session_registry: None,
         mcp_manager: None,
+        parent_approval_channel: None,
     }
 }
 

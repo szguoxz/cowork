@@ -6,9 +6,8 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::approval::ApprovalLevel;
 use crate::error::ToolError;
-use crate::tools::{BoxFuture, Tool, ToolOutput};
+use crate::tools::{BoxFuture, Tool, ToolExecutionContext, ToolOutput};
 
 use super::plan_mode::{get_plans_dir, PlanModeState};
 
@@ -46,7 +45,7 @@ impl Tool for EnterPlanMode {
         })
     }
 
-    fn execute(&self, _params: Value) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+    fn execute(&self, _params: Value, _ctx: ToolExecutionContext) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             let mut state = self.state.write().await;
 
@@ -79,14 +78,5 @@ impl Tool for EnterPlanMode {
                 "plan_file": plan_file.to_string_lossy()
             })))
         })
-    }
-
-    fn approval_level(&self) -> ApprovalLevel {
-        // Requires user approval to enter plan mode
-        ApprovalLevel::Low
-    }
-
-    fn approval_description(&self, _params: &serde_json::Value) -> Option<String> {
-        Some("Entering plan mode".to_string())
     }
 }
