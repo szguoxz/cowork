@@ -76,6 +76,59 @@ struct SpawnedToolResult {
     subagent_info: Option<SubagentSpawnInfo>,
 }
 
+/// Execute a tool and build the result
+async fn execute_tool_task(
+    tool: std::sync::Arc<dyn crate::tools::Tool>,
+    id: String,
+    name: String,
+    arguments: serde_json::Value,
+    ctx: ToolExecutionContext,
+) -> SpawnedToolResult {
+    match tool.execute(arguments.clone(), ctx).await {
+        Ok(output) => {
+            let output_str = output.content.to_string();
+            let skill_name = output.metadata.get(crate::tools::skill::SKILL_NAME_KEY)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            // Check if this skill should spawn a subagent
+            let spawn_subagent = output.metadata.get(crate::tools::skill::SPAWN_SUBAGENT)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            let (inject_info, subagent_info) = if spawn_subagent {
+                let agent_type = output.metadata.get(crate::tools::skill::SUBAGENT_TYPE)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("general-purpose")
+                    .to_string();
+                let model = output.metadata.get(crate::tools::skill::MODEL_OVERRIDE)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                (None, Some(SubagentSpawnInfo {
+                    prompt: output_str.clone(),
+                    skill_name: skill_name.clone().unwrap_or_default(),
+                    agent_type,
+                    model,
+                }))
+            } else {
+                let inject = output.metadata.get(crate::tools::skill::INJECT_AS_MESSAGE)
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let inject_info = if inject { Some((output_str.clone(), skill_name)) } else { None };
+                (inject_info, None)
+            };
+
+            SpawnedToolResult { id, name, arguments, success: true, output: output_str, inject_info, subagent_info }
+        }
+        Err(e) => SpawnedToolResult {
+            id, name, arguments, success: false,
+            output: format!("Error: {}", e),
+            inject_info: None, subagent_info: None,
+        }
+    }
+}
+
 /// Saved session state for persistence
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedSession {
@@ -527,66 +580,7 @@ impl AgentLoop {
                         id.clone(),
                         name.clone(),
                     );
-
-                    join_set.spawn(async move {
-                        match tool.execute(arguments.clone(), ctx).await {
-                            Ok(output) => {
-                                let output_str = output.content.to_string();
-                                let skill_name = output.metadata.get(crate::tools::skill::SKILL_NAME_KEY)
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-
-                                // Check if this skill should spawn a subagent
-                                let spawn_subagent = output.metadata.get(crate::tools::skill::SPAWN_SUBAGENT)
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
-
-                                let (inject_info, subagent_info) = if spawn_subagent {
-                                    // Extract subagent configuration
-                                    let agent_type = output.metadata.get(crate::tools::skill::SUBAGENT_TYPE)
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("general-purpose")
-                                        .to_string();
-                                    let model = output.metadata.get(crate::tools::skill::MODEL_OVERRIDE)
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string());
-
-                                    (None, Some(SubagentSpawnInfo {
-                                        prompt: output_str.clone(),
-                                        skill_name: skill_name.clone().unwrap_or_default(),
-                                        agent_type,
-                                        model,
-                                    }))
-                                } else {
-                                    // Check for inline injection
-                                    let inject = output.metadata.get(crate::tools::skill::INJECT_AS_MESSAGE)
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(false);
-                                    let inject_info = if inject { Some((output_str.clone(), skill_name)) } else { None };
-                                    (inject_info, None)
-                                };
-
-                                SpawnedToolResult {
-                                    id,
-                                    name,
-                                    arguments,
-                                    success: true,
-                                    output: output_str,
-                                    inject_info,
-                                    subagent_info,
-                                }
-                            }
-                            Err(e) => SpawnedToolResult {
-                                id,
-                                name,
-                                arguments,
-                                success: false,
-                                output: format!("Error: {}", e),
-                                inject_info: None,
-                                subagent_info: None,
-                            }
-                        }
-                    });
+                    join_set.spawn(execute_tool_task(tool, id, name, arguments, ctx));
                 } else {
                     // Tool not found - handle immediately
                     let error_msg = format!("Unknown tool: {}", tool_call.fn_name);
@@ -624,86 +618,22 @@ impl AgentLoop {
                     request = self.approval_rx.recv() => {
                         match request {
                             Some(ApprovalRequest::ToolApproval { tool_call_id, tool_name, arguments, description, response_tx }) => {
-                                // Emit pending status to frontend
-                                self.emit(SessionOutput::tool_pending(&tool_call_id, &tool_name, arguments, description)).await;
-
-                                // Wait for user response
-                                let response = loop {
-                                    match self.answer_rx.recv().await {
-                                        Some(SessionInput::ApproveTool { .. }) => {
-                                            break ApprovalResponse::Approved;
-                                        }
-                                        Some(SessionInput::RejectTool { reason, .. }) => {
-                                            break ApprovalResponse::Rejected { reason };
-                                        }
-                                        Some(SessionInput::Cancel) => {
-                                            // Send rejection to unblock the tool, then handle cancel
-                                            let _ = response_tx.send(ApprovalResponse::Rejected {
-                                                reason: Some("Cancelled by user".to_string()),
-                                            });
-                                            self.handle_cancel_cleanup(&tool_calls, &mut completed_tool_ids, &mut join_set).await;
-                                            self.emit(SessionOutput::cancelled()).await;
-                                            return Ok(());
-                                        }
-                                        Some(other) => {
-                                            warn!("Unexpected input while waiting for approval: {:?}", other);
-                                        }
-                                        None => {
-                                            // Channel closed - session ended
-                                            let _ = response_tx.send(ApprovalResponse::Rejected {
-                                                reason: Some("Session ended".to_string()),
-                                            });
-                                            return Ok(());
-                                        }
-                                    }
-                                };
-
-                                // Send response back to tool
-                                let _ = response_tx.send(response);
+                                if self.wait_for_approval(
+                                    &tool_call_id, &tool_name, arguments, description, response_tx,
+                                    &tool_calls, &mut completed_tool_ids, &mut join_set,
+                                ).await.is_err() {
+                                    return Ok(());
+                                }
                             }
-
                             Some(ApprovalRequest::Question { request_id, questions, response_tx }) => {
-                                // Emit question to frontend
-                                self.emit(SessionOutput::Question {
-                                    request_id: request_id.clone(),
-                                    questions,
-                                    subagent_id: None,
-                                }).await;
-
-                                // Wait for user answer
-                                let response = loop {
-                                    match self.answer_rx.recv().await {
-                                        Some(SessionInput::AnswerQuestion { answers, .. }) => {
-                                            break QuestionResponse { answers };
-                                        }
-                                        Some(SessionInput::Cancel) => {
-                                            // Send empty response to unblock the tool
-                                            let _ = response_tx.send(QuestionResponse {
-                                                answers: std::collections::HashMap::new(),
-                                            });
-                                            self.handle_cancel_cleanup(&tool_calls, &mut completed_tool_ids, &mut join_set).await;
-                                            self.emit(SessionOutput::cancelled()).await;
-                                            return Ok(());
-                                        }
-                                        Some(other) => {
-                                            warn!("Unexpected input while waiting for question answer: {:?}", other);
-                                        }
-                                        None => {
-                                            // Channel closed
-                                            let _ = response_tx.send(QuestionResponse {
-                                                answers: std::collections::HashMap::new(),
-                                            });
-                                            return Ok(());
-                                        }
-                                    }
-                                };
-
-                                // Send answer back to tool
-                                let _ = response_tx.send(response);
+                                if self.wait_for_question_answer(
+                                    request_id, questions, response_tx,
+                                    &tool_calls, &mut completed_tool_ids, &mut join_set,
+                                ).await.is_err() {
+                                    return Ok(());
+                                }
                             }
-
                             None => {
-                                // Approval channel closed - shouldn't happen normally
                                 error!("Approval channel closed unexpectedly");
                             }
                         }
@@ -1028,6 +958,102 @@ impl AgentLoop {
                 }
                 Err(mpsc::error::TryRecvError::Empty) => return false,
                 Err(mpsc::error::TryRecvError::Disconnected) => return false,
+            }
+        }
+    }
+
+    /// Wait for user approval response
+    ///
+    /// Returns Ok(response) on approval/rejection, Err(()) on cancel/disconnect.
+    async fn wait_for_approval(
+        &mut self,
+        tool_call_id: &str,
+        tool_name: &str,
+        arguments: serde_json::Value,
+        description: Option<String>,
+        response_tx: tokio::sync::oneshot::Sender<ApprovalResponse>,
+        tool_calls: &[ToolCall],
+        completed_tool_ids: &mut std::collections::HashSet<String>,
+        join_set: &mut JoinSet<SpawnedToolResult>,
+    ) -> std::result::Result<(), ()> {
+        // Emit pending status to frontend
+        self.emit(SessionOutput::tool_pending(tool_call_id, tool_name, arguments, description)).await;
+
+        // Wait for user response
+        loop {
+            match self.answer_rx.recv().await {
+                Some(SessionInput::ApproveTool { .. }) => {
+                    let _ = response_tx.send(ApprovalResponse::Approved);
+                    return Ok(());
+                }
+                Some(SessionInput::RejectTool { reason, .. }) => {
+                    let _ = response_tx.send(ApprovalResponse::Rejected { reason });
+                    return Ok(());
+                }
+                Some(SessionInput::Cancel) => {
+                    let _ = response_tx.send(ApprovalResponse::Rejected {
+                        reason: Some("Cancelled by user".to_string()),
+                    });
+                    self.handle_cancel_cleanup(tool_calls, completed_tool_ids, join_set).await;
+                    self.emit(SessionOutput::cancelled()).await;
+                    return Err(());
+                }
+                Some(other) => {
+                    warn!("Unexpected input while waiting for approval: {:?}", other);
+                }
+                None => {
+                    let _ = response_tx.send(ApprovalResponse::Rejected {
+                        reason: Some("Session ended".to_string()),
+                    });
+                    return Err(());
+                }
+            }
+        }
+    }
+
+    /// Wait for user to answer a question
+    ///
+    /// Returns Ok(()) on answer, Err(()) on cancel/disconnect.
+    async fn wait_for_question_answer(
+        &mut self,
+        request_id: String,
+        questions: Vec<super::types::QuestionInfo>,
+        response_tx: tokio::sync::oneshot::Sender<QuestionResponse>,
+        tool_calls: &[ToolCall],
+        completed_tool_ids: &mut std::collections::HashSet<String>,
+        join_set: &mut JoinSet<SpawnedToolResult>,
+    ) -> std::result::Result<(), ()> {
+        // Emit question to frontend
+        self.emit(SessionOutput::Question {
+            request_id,
+            questions,
+            subagent_id: None,
+        }).await;
+
+        // Wait for user answer
+        loop {
+            match self.answer_rx.recv().await {
+                Some(SessionInput::AnswerQuestion { answers, .. }) => {
+                    let _ = response_tx.send(QuestionResponse { answers });
+                    return Ok(());
+                }
+                Some(SessionInput::Cancel) => {
+                    let _ = response_tx.send(QuestionResponse {
+                        answers: std::collections::HashMap::new(),
+                    });
+                    self.handle_cancel_cleanup(tool_calls, completed_tool_ids, join_set).await;
+                    self.emit(SessionOutput::cancelled()).await;
+                    return Err(());
+                }
+                Some(other) => {
+                    warn!("Unexpected input while waiting for question answer: {:?}", other);
+                }
+                None => {
+                    let _ = response_tx.send(QuestionResponse {
+                        answers: std::collections::HashMap::new(),
+                    });
+                    return Err(());
+                }
             }
         }
     }
