@@ -520,35 +520,6 @@ impl AgentLoop {
                 .await;
             }
 
-            // Check for tool calls
-            if response.tool_calls.is_empty() {
-                // Add final assistant message to session history (important for multi-turn conversations)
-                self.session.add_assistant_message(&content, Vec::new());
-
-                // Warn if content suggests the model intended to make tool calls but didn't
-                // This can happen when the response is truncated due to max_tokens
-                let content_lower = content.to_lowercase();
-                let suggests_action = content_lower.contains("let me ")
-                    || content_lower.contains("i'll ")
-                    || content_lower.contains("i will ")
-                    || content_lower.contains("now i'll ")
-                    || content_lower.contains("now let me ")
-                    || content_lower.contains("let's ")
-                    || content_lower.ends_with(":")
-                    || content_lower.ends_with("...");
-
-                if suggests_action && !content.is_empty() {
-                    warn!(
-                        content = %content,
-                        iteration = iteration,
-                        "Response has content suggesting tool usage but no tool calls - possible truncation"
-                    );
-                }
-
-                // No tool calls, we're done
-                break;
-            }
-
             // Add assistant message with tool calls
             let tool_calls = response.tool_calls.clone();
             self.session.add_assistant_message(&content, tool_calls.clone());
