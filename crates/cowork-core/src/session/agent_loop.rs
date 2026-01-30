@@ -460,12 +460,6 @@ impl AgentLoop {
                 ));
             }
 
-            // Check for cancellation before each iteration
-            if self.check_cancelled() {
-                self.emit(SessionOutput::cancelled()).await;
-                return Ok(());
-            }
-
             // Check and compact context if needed before calling LLM
             if let Err(e) = self.check_and_compact_context().await {
                 warn!("Context compaction failed: {}, continuing anyway", e);
@@ -547,11 +541,14 @@ impl AgentLoop {
                 }
             }
 
+            // Track pending approval/question requests by ID
+            let mut pending_approvals: std::collections::HashMap<String, tokio::sync::oneshot::Sender<ApprovalResponse>> = std::collections::HashMap::new();
+            let mut pending_questions: std::collections::HashMap<String, tokio::sync::oneshot::Sender<QuestionResponse>> = std::collections::HashMap::new();
+
             // Track completed tool IDs for cancel cleanup
             let mut completed_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-            // Process tools: collect results and handle approval/question requests
-            // Uses select! to handle tool completion, approval requests, and cancellation
+            // Process tools: single select! loop handles everything
             loop {
                 tokio::select! {
                     // Handle tool completion
@@ -562,7 +559,6 @@ impl AgentLoop {
                                 self.finalize_spawned_tool(res).await;
                             }
                             Some(Err(e)) => {
-                                // JoinError - task panicked or was cancelled
                                 error!("Tool task failed: {:?}", e);
                             }
                             None => {
@@ -576,20 +572,18 @@ impl AgentLoop {
                     request = self.approval_rx.recv() => {
                         match request {
                             Some(ApprovalRequest::ToolApproval { tool_call_id, tool_name, arguments, description, response_tx }) => {
-                                if self.wait_for_approval(
-                                    &tool_call_id, &tool_name, arguments, description, response_tx,
-                                    &tool_calls, &mut completed_tool_ids, &mut join_set,
-                                ).await.is_err() {
-                                    return Ok(());
-                                }
+                                // Store oneshot and emit pending event
+                                pending_approvals.insert(tool_call_id.clone(), response_tx);
+                                self.emit(SessionOutput::tool_pending(&tool_call_id, &tool_name, arguments, description)).await;
                             }
                             Some(ApprovalRequest::Question { request_id, questions, response_tx }) => {
-                                if self.wait_for_question_answer(
-                                    request_id, questions, response_tx,
-                                    &tool_calls, &mut completed_tool_ids, &mut join_set,
-                                ).await.is_err() {
-                                    return Ok(());
-                                }
+                                // Store oneshot and emit question event
+                                pending_questions.insert(request_id.clone(), response_tx);
+                                self.emit(SessionOutput::Question {
+                                    request_id,
+                                    questions,
+                                    subagent_id: None,
+                                }).await;
                             }
                             None => {
                                 error!("Approval channel closed unexpectedly");
@@ -597,20 +591,61 @@ impl AgentLoop {
                         }
                     }
 
-                    // Non-blocking check for cancellation while tools are running
+                    // Handle control messages (approvals, answers, cancel)
                     input = self.control_rx.recv() => {
                         match input {
+                            Some(SessionInput::ApproveTool { tool_call_id }) => {
+                                if let Some(tx) = pending_approvals.remove(&tool_call_id) {
+                                    let _ = tx.send(ApprovalResponse::Approved);
+                                } else {
+                                    warn!("Received approval for unknown tool_call_id: {}", tool_call_id);
+                                }
+                            }
+                            Some(SessionInput::RejectTool { tool_call_id, reason }) => {
+                                if let Some(tx) = pending_approvals.remove(&tool_call_id) {
+                                    let _ = tx.send(ApprovalResponse::Rejected { reason });
+                                } else {
+                                    warn!("Received rejection for unknown tool_call_id: {}", tool_call_id);
+                                }
+                            }
+                            Some(SessionInput::AnswerQuestion { request_id, answers }) => {
+                                if let Some(tx) = pending_questions.remove(&request_id) {
+                                    let _ = tx.send(QuestionResponse { answers });
+                                } else {
+                                    warn!("Received answer for unknown request_id: {}", request_id);
+                                }
+                            }
                             Some(SessionInput::Cancel) => {
+                                // Reject all pending approvals/questions
+                                for (_, tx) in pending_approvals.drain() {
+                                    let _ = tx.send(ApprovalResponse::Rejected {
+                                        reason: Some("Cancelled by user".to_string()),
+                                    });
+                                }
+                                for (_, tx) in pending_questions.drain() {
+                                    let _ = tx.send(QuestionResponse {
+                                        answers: std::collections::HashMap::new(),
+                                    });
+                                }
                                 self.handle_cancel_cleanup(&tool_calls, &mut completed_tool_ids, &mut join_set).await;
                                 self.emit(SessionOutput::cancelled()).await;
                                 return Ok(());
                             }
                             Some(other) => {
-                                // Unexpected input while tools are running - log and ignore
-                                debug!("Unexpected input while tools running: {:?}", other);
+                                debug!("Unexpected control input: {:?}", other);
                             }
                             None => {
-                                // Channel closed
+                                // Channel closed - reject pending and return
+                                for (_, tx) in pending_approvals.drain() {
+                                    let _ = tx.send(ApprovalResponse::Rejected {
+                                        reason: Some("Session ended".to_string()),
+                                    });
+                                }
+                                for (_, tx) in pending_questions.drain() {
+                                    let _ = tx.send(QuestionResponse {
+                                        answers: std::collections::HashMap::new(),
+                                    });
+                                }
                                 self.emit(SessionOutput::error("Session interrupted".to_string())).await;
                                 return Ok(());
                             }
@@ -901,119 +936,6 @@ impl AgentLoop {
     fn run_user_prompt_hook(&self, prompt: &str) -> std::result::Result<Option<String>, String> {
         let context = HookContext::user_prompt(&self.session_id, prompt);
         self.execute_hooks(HookEvent::UserPromptSubmit, &context)
-    }
-
-    /// Check if the user has requested cancellation
-    ///
-    /// Uses try_recv() to non-blocking check for a Cancel input.
-    fn check_cancelled(&mut self) -> bool {
-        loop {
-            match self.control_rx.try_recv() {
-                Ok(SessionInput::Cancel) => return true,
-                Ok(other) => {
-                    // Log and discard unexpected inputs during cancel check
-                    debug!("Discarding input during cancel check: {:?}", other);
-                }
-                Err(mpsc::error::TryRecvError::Empty) => return false,
-                Err(mpsc::error::TryRecvError::Disconnected) => return false,
-            }
-        }
-    }
-
-    /// Wait for user approval response
-    ///
-    /// Returns Ok(response) on approval/rejection, Err(()) on cancel/disconnect.
-    async fn wait_for_approval(
-        &mut self,
-        tool_call_id: &str,
-        tool_name: &str,
-        arguments: serde_json::Value,
-        description: Option<String>,
-        response_tx: tokio::sync::oneshot::Sender<ApprovalResponse>,
-        tool_calls: &[ToolCall],
-        completed_tool_ids: &mut std::collections::HashSet<String>,
-        join_set: &mut JoinSet<SpawnedToolResult>,
-    ) -> std::result::Result<(), ()> {
-        // Emit pending status to frontend
-        self.emit(SessionOutput::tool_pending(tool_call_id, tool_name, arguments, description)).await;
-
-        // Wait for user response
-        loop {
-            match self.control_rx.recv().await {
-                Some(SessionInput::ApproveTool { .. }) => {
-                    let _ = response_tx.send(ApprovalResponse::Approved);
-                    return Ok(());
-                }
-                Some(SessionInput::RejectTool { reason, .. }) => {
-                    let _ = response_tx.send(ApprovalResponse::Rejected { reason });
-                    return Ok(());
-                }
-                Some(SessionInput::Cancel) => {
-                    let _ = response_tx.send(ApprovalResponse::Rejected {
-                        reason: Some("Cancelled by user".to_string()),
-                    });
-                    self.handle_cancel_cleanup(tool_calls, completed_tool_ids, join_set).await;
-                    self.emit(SessionOutput::cancelled()).await;
-                    return Err(());
-                }
-                Some(other) => {
-                    warn!("Unexpected input while waiting for approval: {:?}", other);
-                }
-                None => {
-                    let _ = response_tx.send(ApprovalResponse::Rejected {
-                        reason: Some("Session ended".to_string()),
-                    });
-                    return Err(());
-                }
-            }
-        }
-    }
-
-    /// Wait for user to answer a question
-    ///
-    /// Returns Ok(()) on answer, Err(()) on cancel/disconnect.
-    async fn wait_for_question_answer(
-        &mut self,
-        request_id: String,
-        questions: Vec<super::types::QuestionInfo>,
-        response_tx: tokio::sync::oneshot::Sender<QuestionResponse>,
-        tool_calls: &[ToolCall],
-        completed_tool_ids: &mut std::collections::HashSet<String>,
-        join_set: &mut JoinSet<SpawnedToolResult>,
-    ) -> std::result::Result<(), ()> {
-        // Emit question to frontend
-        self.emit(SessionOutput::Question {
-            request_id,
-            questions,
-            subagent_id: None,
-        }).await;
-
-        // Wait for user answer
-        loop {
-            match self.control_rx.recv().await {
-                Some(SessionInput::AnswerQuestion { answers, .. }) => {
-                    let _ = response_tx.send(QuestionResponse { answers });
-                    return Ok(());
-                }
-                Some(SessionInput::Cancel) => {
-                    let _ = response_tx.send(QuestionResponse {
-                        answers: std::collections::HashMap::new(),
-                    });
-                    self.handle_cancel_cleanup(tool_calls, completed_tool_ids, join_set).await;
-                    self.emit(SessionOutput::cancelled()).await;
-                    return Err(());
-                }
-                Some(other) => {
-                    warn!("Unexpected input while waiting for question answer: {:?}", other);
-                }
-                None => {
-                    let _ = response_tx.send(QuestionResponse {
-                        answers: std::collections::HashMap::new(),
-                    });
-                    return Err(());
-                }
-            }
-        }
     }
 
     /// Handle cancellation cleanup
