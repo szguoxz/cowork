@@ -6,8 +6,8 @@ license.workspace = true
 description = "Core library for Cowork - agents, tools, and orchestration"
 
 [dependencies]
-# LLM Framework
-genai = "0.5.2"
+# LLM Framework (using local fork)
+genai = { path = "../../../../genai" }
 
 # Async runtime
 tokio.workspace = true

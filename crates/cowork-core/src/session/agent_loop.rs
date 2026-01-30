@@ -8,8 +8,6 @@
 //! - Automatic context window management
 //! - Saving session state on close
 
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
@@ -520,6 +518,11 @@ impl AgentLoop {
             let tool_calls = response.tool_calls.clone();
             self.session.add_assistant_message(&content, tool_calls.clone());
 
+            // If no tool calls, we're done
+            if tool_calls.is_empty() {
+                return Ok(());
+            }
+
             // Spawn ALL tools in parallel
             let mut join_set: JoinSet<SpawnedToolResult> = JoinSet::new();
             for tool_call in &tool_calls {
@@ -648,8 +651,6 @@ impl AgentLoop {
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Tools allowed when plan mode is active
