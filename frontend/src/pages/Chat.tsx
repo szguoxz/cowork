@@ -31,8 +31,10 @@ export default function Chat() {
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pendingImages, setPendingImages] = useState<ImageData[]>([])
+  const [isDragging, setIsDragging] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textInputRef = useRef<HTMLInputElement>(null)
 
   const session = getActiveSession()
   const messages = session?.messages || []
@@ -45,6 +47,13 @@ export default function Chat() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, ephemeral])
+
+  // Auto-focus input on mount and when session becomes active
+  useEffect(() => {
+    if (isInitialized && hasApiKey && !modal) {
+      textInputRef.current?.focus()
+    }
+  }, [isInitialized, hasApiKey, activeSessionId, modal])
 
   // Sync session error to local error state
   useEffect(() => {
@@ -94,6 +103,37 @@ export default function Chat() {
   // Remove a pending image
   const removeImage = (index: number) => {
     setPendingImages(prev => prev.filter((_, i) => i !== index))
+  }
+
+  // Drag and drop handlers
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+  }
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+
+    const files = Array.from(e.dataTransfer.files)
+    const imageFiles = files.filter(f => f.type.startsWith('image/'))
+    if (imageFiles.length === 0) return
+
+    try {
+      const newImages = await Promise.all(imageFiles.map(fileToImageData))
+      setPendingImages(prev => [...prev, ...newImages])
+    } catch (err) {
+      console.error('Failed to read dropped image:', err)
+      setError('Failed to read dropped image')
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -324,7 +364,13 @@ export default function Chat() {
       )}
 
       {/* Input */}
-      <form onSubmit={handleSubmit} className="p-4 border-t border-border bg-card/50">
+      <form
+        onSubmit={handleSubmit}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={`p-4 border-t border-border bg-card/50 transition-colors ${isDragging ? 'bg-primary/10 border-primary' : ''}`}
+      >
         {/* Image Previews */}
         {pendingImages.length > 0 && (
           <div className="flex gap-2 mb-3 flex-wrap">
@@ -372,10 +418,11 @@ export default function Chat() {
           </Button>
 
           <input
+            ref={textInputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={modal ? "Waiting for response..." : pendingImages.length > 0 ? "Add a message about these images..." : "Type a message..."}
+            placeholder={modal ? "Waiting for response..." : isDragging ? "Drop images here..." : pendingImages.length > 0 ? "Add a message about these images..." : "Type a message..."}
             disabled={!!modal}
             className="flex-1 rounded-xl border border-border bg-background px-4 py-3 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
           />
