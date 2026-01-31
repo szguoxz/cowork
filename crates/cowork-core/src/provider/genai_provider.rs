@@ -256,8 +256,14 @@ impl GenAIProvider {
         );
 
         // Use provided base_url or fall back to catalog default
+        // Ensure URL ends with / for proper path concatenation
         let effective_url = base_url.unwrap_or(&provider.base_url);
-        let endpoint = Endpoint::from_owned(effective_url.to_string());
+        let normalized_url = if effective_url.ends_with('/') {
+            effective_url.to_string()
+        } else {
+            format!("{}/", effective_url)
+        };
+        let endpoint = Endpoint::from_owned(normalized_url);
 
         // Use model mapper to force the correct adapter for this provider
         let client = Client::builder()
