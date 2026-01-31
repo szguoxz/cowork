@@ -205,6 +205,9 @@ impl SessionManager {
             if let Some(api_key) = provider_config.get_api_key() {
                 session_config = session_config.with_api_key(api_key);
             }
+            if let Some(ref base_url) = provider_config.base_url {
+                session_config = session_config.with_base_url(base_url.clone());
+            }
         }
 
         // Create MCP server manager from config if servers are configured

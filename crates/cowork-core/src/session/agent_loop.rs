@@ -275,9 +275,11 @@ impl AgentLoop {
 
         // Create the provider
         debug!(
-            "AgentLoop config: provider={:?}, model={:?}, system_prompt_len={}",
+            "AgentLoop config: provider={:?}, model={:?}, base_url={:?}, api_key_set={}, system_prompt_len={}",
             config.provider_id,
             config.model,
+            config.base_url,
+            config.api_key.is_some(),
             config.system_prompt.as_ref().map(|s| s.len()).unwrap_or(0),
         );
         let provider = match config.api_key.as_deref() {
