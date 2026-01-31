@@ -30,7 +30,6 @@ mod config_structure_tests {
         assert_eq!(default_provider.provider_type, "anthropic");
         assert!(default_provider.model.contains("claude"));
         assert!(default_provider.api_key.is_none());
-        assert!(default_provider.api_key_env.is_some());
 
         // Check approval defaults
         assert_eq!(config.approval.auto_approve_level, "low");
@@ -184,7 +183,6 @@ timeout_secs = 600
         providers.insert("anthropic".to_string(), ProviderConfig {
             provider_type: "anthropic".to_string(),
             api_key: Some("test-key".to_string()),
-            api_key_env: None,
             model: "claude-sonnet".to_string(),
             model_tiers: None,
             base_url: Some("https://custom.api.com".to_string()),
@@ -448,7 +446,6 @@ mod api_key_resolution_tests {
     fn test_api_key_from_direct_config() {
         let provider = ProviderConfig {
             api_key: Some("direct-key".to_string()),
-            api_key_env: Some("NONEXISTENT_VAR_12345".to_string()),
             ..Default::default()
         };
 
@@ -457,31 +454,31 @@ mod api_key_resolution_tests {
     }
 
     #[test]
-    fn test_api_key_from_env_var() {
+    fn test_api_key_from_catalog_env_var() {
+        // Use anthropic provider which has ANTHROPIC_API_KEY in catalog
         let provider = ProviderConfig {
+            provider_type: "anthropic".to_string(),
             api_key: None,
-            api_key_env: Some("TEST_COWORK_API_KEY_12345".to_string()),
             ..Default::default()
         };
 
         // Set env var
         // SAFETY: Test runs in isolation, no concurrent access to this env var
-        unsafe { std::env::set_var("TEST_COWORK_API_KEY_12345", "env-key") };
+        unsafe { std::env::set_var("ANTHROPIC_API_KEY", "env-key-test") };
 
         let key = provider.get_api_key();
-        assert_eq!(key, Some("env-key".to_string()));
+        assert_eq!(key, Some("env-key-test".to_string()));
 
         // Clean up
         // SAFETY: Test runs in isolation, no concurrent access to this env var
-        unsafe { std::env::remove_var("TEST_COWORK_API_KEY_12345") };
+        unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
     }
 
     #[test]
-    fn test_api_key_fallback_to_default_env() {
+    fn test_api_key_fallback_to_catalog_env() {
         let provider = ProviderConfig {
             provider_type: "openai".to_string(),
             api_key: None,
-            api_key_env: None,
             ..Default::default()
         };
 

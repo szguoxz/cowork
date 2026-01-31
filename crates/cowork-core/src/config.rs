@@ -276,12 +276,9 @@ impl ModelTiers {
 pub struct ProviderConfig {
     /// Provider type: "anthropic", "openai", "gemini", etc.
     pub provider_type: String,
-    /// API key (can be loaded from env)
+    /// API key
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
-    /// Environment variable name for API key
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_env: Option<String>,
     /// Model to use (default/primary model)
     pub model: String,
     /// Model tiers for subagent execution (fast/balanced/powerful)
@@ -305,11 +302,9 @@ impl Default for ProviderConfig {
 impl ProviderConfig {
     /// Create provider config from catalog
     pub fn for_provider(provider_id: &str) -> Self {
-        let provider = catalog::get(provider_id);
         Self {
             provider_type: provider_id.to_string(),
             api_key: None,
-            api_key_env: provider.and_then(|p| p.api_key_env.clone()),
             model: catalog::default_model(provider_id).unwrap_or("").to_string(),
             model_tiers: None,
             base_url: None,
@@ -325,19 +320,12 @@ impl ProviderConfig {
             .unwrap_or_else(|| ModelTiers::for_provider(&self.provider_type))
     }
 
-    /// Get the API key, checking environment variable if not set directly
+    /// Get the API key, checking catalog's env var if not set directly
     pub fn get_api_key(&self) -> Option<String> {
         // First check direct API key
         if let Some(key) = &self.api_key
             && !key.is_empty() {
                 return Some(key.clone());
-            }
-
-        // Then check configured environment variable
-        if let Some(env_name) = &self.api_key_env
-            && let Ok(key) = std::env::var(env_name)
-            && !key.is_empty() {
-                return Some(key);
             }
 
         // Fall back to catalog's default env var for this provider
@@ -832,33 +820,28 @@ mod tests {
 
     #[test]
     fn test_api_key_from_env() {
-        let config = ProviderConfig {
-            api_key_env: Some("TEST_API_KEY_12345".to_string()),
-            ..Default::default()
-        };
+        // Test that catalog env var is used for anthropic provider
+        let config = ProviderConfig::for_provider("anthropic");
 
         // Set env var
         // SAFETY: Test runs in isolation, no concurrent access to this env var
-        unsafe { std::env::set_var("TEST_API_KEY_12345", "test-key") };
-        assert_eq!(config.get_api_key(), Some("test-key".to_string()));
+        unsafe { std::env::set_var("ANTHROPIC_API_KEY", "test-key-from-env") };
+        assert_eq!(config.get_api_key(), Some("test-key-from-env".to_string()));
 
         // Clean up
         // SAFETY: Test runs in isolation, no concurrent access to this env var
-        unsafe { std::env::remove_var("TEST_API_KEY_12345") };
+        unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
     }
 
     #[test]
     fn test_provider_factories() {
         let anthropic = ProviderConfig::for_provider("anthropic");
         assert_eq!(anthropic.provider_type, "anthropic");
-        assert_eq!(anthropic.api_key_env, Some("ANTHROPIC_API_KEY".to_string()));
 
         let openai = ProviderConfig::for_provider("openai");
         assert_eq!(openai.provider_type, "openai");
-        assert_eq!(openai.api_key_env, Some("OPENAI_API_KEY".to_string()));
 
         let gemini = ProviderConfig::for_provider("gemini");
         assert_eq!(gemini.provider_type, "gemini");
-        assert_eq!(gemini.api_key_env, Some("GEMINI_API_KEY".to_string()));
     }
 }

@@ -5,9 +5,8 @@
 #   macOS:   ~/Library/Application Support/cowork/config.toml
 #   Windows: %APPDATA%\cowork\config.toml
 #
-# API keys can be set either:
-#   1. In this config file under each provider's api_key field
-#   2. Via environment variables (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+# API keys can be set in this config file under each provider's api_key field.
+# For testing, you can also pass via command line: api_key=xxx cowork
 
 # Default provider to use when --provider is not specified
 default_provider = "anthropic"
@@ -18,8 +17,7 @@ default_provider = "anthropic"
 
 [providers.anthropic]
 provider_type = "anthropic"
-# api_key = "sk-ant-api03-your-key-here"  # Or use ANTHROPIC_API_KEY env var
-api_key_env = "ANTHROPIC_API_KEY"
+# api_key = "sk-ant-api03-your-key-here"
 # base_url = "https://api.anthropic.com"  # Optional: custom API endpoint
 # Models: claude-opus-4-5-20251101, claude-sonnet-4-20250514, claude-3-5-haiku-20241022
 model = "claude-sonnet-4-20250514"
@@ -28,8 +26,7 @@ default_temperature = 0.7
 
 [providers.openai]
 provider_type = "openai"
-# api_key = "sk-proj-your-key-here"  # Or use OPENAI_API_KEY env var
-api_key_env = "OPENAI_API_KEY"
+# api_key = "sk-proj-your-key-here"
 # base_url = "https://api.openai.com/v1"  # Optional: custom API endpoint
 # Models: gpt-4.1, gpt-4.1-mini, gpt-4.1-nano, o3, o4-mini
 model = "gpt-4.1"
@@ -38,8 +35,7 @@ default_temperature = 0.7
 
 [providers.gemini]
 provider_type = "gemini"
-# api_key = "your-key-here"  # Or use GEMINI_API_KEY env var
-api_key_env = "GEMINI_API_KEY"
+# api_key = "your-key-here"
 # Models: gemini-2.5-pro, gemini-2.5-flash
 model = "gemini-2.5-pro"
 default_max_tokens = 4096
@@ -47,8 +43,7 @@ default_temperature = 0.7
 
 [providers.groq]
 provider_type = "groq"
-# api_key = "your-key-here"  # Or use GROQ_API_KEY env var
-api_key_env = "GROQ_API_KEY"
+# api_key = "your-key-here"
 # Models: llama-3.3-70b-versatile, mixtral-8x7b-32768
 model = "llama-3.3-70b-versatile"
 default_max_tokens = 4096
@@ -56,8 +51,7 @@ default_temperature = 0.7
 
 [providers.deepseek]
 provider_type = "deepseek"
-# api_key = "your-key-here"  # Or use DEEPSEEK_API_KEY env var
-api_key_env = "DEEPSEEK_API_KEY"
+# api_key = "your-key-here"
 # Models: deepseek-chat, deepseek-coder
 model = "deepseek-chat"
 default_max_tokens = 4096
@@ -65,8 +59,7 @@ default_temperature = 0.7
 
 [providers.cohere]
 provider_type = "cohere"
-# api_key = "your-key-here"  # Or use COHERE_API_KEY env var
-api_key_env = "COHERE_API_KEY"
+# api_key = "your-key-here"
 # Models: command-r-plus, command-r
 model = "command-r-plus"
 default_max_tokens = 4096
