@@ -46,8 +46,7 @@ mod config_structure_tests {
         let provider = ProviderConfig::default();
 
         assert_eq!(provider.provider_type, "anthropic");
-        assert_eq!(provider.default_max_tokens, 4096);
-        assert!(provider.default_temperature > 0.0 && provider.default_temperature <= 1.0);
+        assert!(provider.model.contains("claude"));
     }
 
     #[test]
@@ -186,8 +185,6 @@ timeout_secs = 600
             model: "claude-sonnet".to_string(),
             model_tiers: None,
             base_url: Some("https://custom.api.com".to_string()),
-            default_max_tokens: 2048,
-            default_temperature: 0.8,
         });
         providers.insert("openai".to_string(), ProviderConfig::for_provider("openai"));
 

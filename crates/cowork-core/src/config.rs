@@ -284,13 +284,10 @@ pub struct ProviderConfig {
     /// Model tiers for subagent execution (fast/balanced/powerful)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_tiers: Option<ModelTiers>,
-    /// Base URL for the API (optional, for self-hosted)
+    /// Proxy URL - overrides the default API endpoint from genai catalog
+    /// Use this for API proxies or custom endpoints
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
-    /// Default max tokens
-    pub default_max_tokens: u32,
-    /// Default temperature
-    pub default_temperature: f32,
 }
 
 impl Default for ProviderConfig {
@@ -308,8 +305,6 @@ impl ProviderConfig {
             model: catalog::default_model(provider_id).unwrap_or("").to_string(),
             model_tiers: None,
             base_url: None,
-            default_max_tokens: 4096,
-            default_temperature: 0.7,
         }
     }
 

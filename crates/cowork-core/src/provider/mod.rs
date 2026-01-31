@@ -27,8 +27,6 @@ pub use genai_provider::{
 
 pub use model_listing::{get_known_models, get_model_context_limit, ModelInfo};
 
-use serde::{Deserialize, Serialize};
-
 // Re-export ChatRole from genai as our Role type
 pub use genai::chat::ChatRole;
 
@@ -80,29 +78,6 @@ pub fn message_text_content(msg: &ChatMessage) -> String {
 /// Append text to a ChatMessage's content (for system reminders)
 pub fn append_message_text(msg: &mut ChatMessage, text: &str) {
     msg.content = msg.content.clone().append(ContentPart::Text(text.to_string()));
-}
-
-/// Provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderConfig {
-    /// Provider ID (e.g., "anthropic", "openai", "together")
-    pub provider_id: String,
-    pub api_key: Option<String>,
-    pub base_url: Option<String>,
-    pub model: String,
-    pub default_max_tokens: u32,
-}
-
-impl Default for ProviderConfig {
-    fn default() -> Self {
-        Self {
-            provider_id: "anthropic".to_string(),
-            api_key: None,
-            base_url: None,
-            model: catalog::default_model("anthropic").unwrap_or("claude-sonnet-4-5-20250929").to_string(),
-            default_max_tokens: 4096,
-        }
-    }
 }
 
 #[cfg(test)]

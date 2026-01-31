@@ -178,8 +178,23 @@ export default function SettingsPage() {
                   }
                   placeholder="Enter your API key"
                 />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium mb-1.5 block text-foreground">Proxy URL (Optional)</label>
+                <Input
+                  type="text"
+                  value={settings.provider.base_url || ''}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      provider: { ...settings.provider, base_url: e.target.value || null },
+                    })
+                  }
+                  placeholder="Leave empty for default API endpoint"
+                />
                 <p className="mt-1.5 text-xs text-muted-foreground">
-                  You can also set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable.
+                  Override the default API endpoint with a proxy URL.
                 </p>
               </div>
             </CardContent>

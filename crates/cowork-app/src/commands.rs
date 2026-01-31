@@ -57,8 +57,6 @@ pub async fn update_settings(
                 model,
                 api_key: settings.provider.api_key.clone(),
                 base_url: settings.provider.base_url.clone(),
-                default_max_tokens: 4096,
-                default_temperature: 0.7,
                 model_tiers: None,
             },
         );
