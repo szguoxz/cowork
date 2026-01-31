@@ -578,6 +578,8 @@ pub struct SessionConfig {
     pub model: Option<String>,
     /// Optional API key (if not using env var)
     pub api_key: Option<String>,
+    /// Optional base URL for the provider API (for self-hosted or custom endpoints)
+    pub base_url: Option<String>,
     /// Web search configuration
     pub web_search_config: Option<crate::config::WebSearchConfig>,
     /// Prompt system configuration
@@ -607,6 +609,7 @@ impl Default for SessionConfig {
             provider_id: "anthropic".to_string(),
             model: None,
             api_key: None,
+            base_url: None,
             web_search_config: None,
             prompt_config: PromptSystemConfig::default(),
             component_registry: None,
@@ -644,6 +647,12 @@ impl SessionConfig {
     /// Set the API key
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
+        self
+    }
+
+    /// Set the base URL for the provider API
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = Some(base_url.into());
         self
     }
 

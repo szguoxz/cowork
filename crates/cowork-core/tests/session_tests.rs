@@ -20,6 +20,7 @@ fn test_config() -> SessionConfig {
         provider_id: "anthropic".to_string(),
         model: None,
         api_key: None,
+        base_url: None,
         web_search_config: None,
         prompt_config: Default::default(),
         component_registry: None,

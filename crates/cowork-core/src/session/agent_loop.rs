@@ -281,7 +281,12 @@ impl AgentLoop {
             config.system_prompt.as_ref().map(|s| s.len()).unwrap_or(0),
         );
         let provider = match config.api_key.as_deref() {
-            Some(key) => GenAIProvider::with_api_key(&config.provider_id, key, config.model.as_deref())?,
+            Some(key) => GenAIProvider::with_config(
+                &config.provider_id,
+                key,
+                config.model.as_deref(),
+                config.base_url.as_deref(),
+            )?,
             None => GenAIProvider::new(&config.provider_id, config.model.as_deref())?,
         };
         let provider = match config.system_prompt.as_deref() {

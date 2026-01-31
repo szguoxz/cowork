@@ -144,7 +144,13 @@ export default function SettingsPage() {
                   onChange={(e) =>
                     setSettings({
                       ...settings,
-                      provider: { ...settings.provider, provider_type: e.target.value },
+                      provider: {
+                        ...settings.provider,
+                        provider_type: e.target.value,
+                        // Clear API key when switching providers to prevent
+                        // accidentally saving wrong key to wrong provider
+                        api_key: null,
+                      },
                     })
                   }
                 >
@@ -175,21 +181,6 @@ export default function SettingsPage() {
                 <p className="mt-1.5 text-xs text-muted-foreground">
                   You can also set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable.
                 </p>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium mb-1.5 block text-foreground">Model</label>
-                <Input
-                  type="text"
-                  value={settings.provider.model}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      provider: { ...settings.provider, model: e.target.value },
-                    })
-                  }
-                  placeholder="e.g., claude-sonnet-4-20250514"
-                />
               </div>
             </CardContent>
           </Card>

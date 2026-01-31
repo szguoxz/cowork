@@ -318,6 +318,10 @@ async fn run_one_shot(
     // Load config
     let config_manager = ConfigManager::new()?;
     let api_key = cowork_core::provider::get_api_key(&config_manager, provider_id);
+    let base_url = config_manager
+        .config()
+        .get_provider(provider_id)
+        .and_then(|p| p.base_url.clone());
 
     // Create session config
     let workspace = workspace.to_path_buf();
@@ -342,6 +346,9 @@ async fn run_one_shot(
     }
     if let Some(ref key) = api_key {
         session_config = session_config.with_api_key(key.clone());
+    }
+    if let Some(ref url) = base_url {
+        session_config = session_config.with_base_url(url.clone());
     }
 
     // Create session manager
@@ -470,8 +477,12 @@ async fn run_chat(
         return Ok(());
     }
 
-    // Get API key for session config
+    // Get API key and base URL for session config
     let api_key = cowork_core::provider::get_api_key(&config_manager, provider_id);
+    let base_url = config_manager
+        .config()
+        .get_provider(provider_id)
+        .and_then(|p| p.base_url.clone());
 
     // Create session config
     let workspace_path = workspace.to_path_buf();
@@ -496,6 +507,9 @@ async fn run_chat(
     }
     if let Some(ref key) = api_key {
         session_config = session_config.with_api_key(key.clone());
+    }
+    if let Some(ref url) = base_url {
+        session_config = session_config.with_base_url(url.clone());
     }
 
     // Create session manager
