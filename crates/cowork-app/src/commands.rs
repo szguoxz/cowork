@@ -11,7 +11,7 @@ use cowork_core::prompt::{
 use cowork_core::provider::{catalog, create_provider_with_settings, ChatMessage};
 use cowork_core::ApprovalLevel;
 
-use crate::state::{AppState, Settings};
+use crate::state::{AppState, ProviderSettings, Settings};
 
 /// Get current settings
 #[tauri::command]
@@ -94,6 +94,39 @@ pub async fn save_settings(state: State<'_, AppState>) -> Result<(), String> {
 pub async fn check_api_key(state: State<'_, AppState>) -> Result<bool, String> {
     let cm = state.config_manager.read();
     Ok(cm.has_api_key())
+}
+
+/// Get saved settings for a specific provider
+///
+/// Returns the API key, model, and base_url if configured for that provider.
+#[tauri::command]
+pub async fn get_provider_config(
+    provider_type: String,
+    state: State<'_, AppState>,
+) -> Result<ProviderSettings, String> {
+    let cm = state.config_manager.read();
+    let config = cm.config();
+
+    if let Some(provider) = config.providers.get(&provider_type) {
+        Ok(ProviderSettings {
+            provider_type: provider.provider_type.clone(),
+            api_key: provider.get_api_key(),
+            model: Some(provider.model.clone()),
+            base_url: provider.base_url.clone(),
+        })
+    } else {
+        // Return defaults for unconfigured provider
+        Ok(ProviderSettings {
+            provider_type: provider_type.clone(),
+            api_key: None,
+            model: Some(
+                catalog::default_model(&provider_type)
+                    .unwrap_or("")
+                    .to_string(),
+            ),
+            base_url: None,
+        })
+    }
 }
 
 /// API test result matching frontend expectations

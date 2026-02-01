@@ -167,19 +167,22 @@ export default function SettingsPage() {
                   value={settings.provider.provider_type}
                   onChange={async (e) => {
                     const newProvider = e.target.value
-                    // Fetch models for the new provider to get the default
-                    const models = await invoke<ModelInfo[]>('fetch_provider_models', { providerType: newProvider })
+                    // Fetch saved config and models for the new provider
+                    const [savedConfig, models] = await Promise.all([
+                      invoke<{ api_key: string | null; model: string | null; base_url: string | null }>('get_provider_config', { providerType: newProvider }),
+                      invoke<ModelInfo[]>('fetch_provider_models', { providerType: newProvider }),
+                    ])
                     setAvailableModels(models)
                     setSettings({
                       ...settings,
                       provider: {
-                        ...settings.provider,
                         provider_type: newProvider,
-                        // Clear API key when switching providers to prevent
-                        // accidentally saving wrong key to wrong provider
-                        api_key: null,
-                        // Set to the first model (balanced) for the new provider
-                        model: models.length > 0 ? models[0].id : null,
+                        // Use saved API key if available, otherwise null
+                        api_key: savedConfig.api_key,
+                        // Use saved model if available, otherwise first model (balanced)
+                        model: savedConfig.model || (models.length > 0 ? models[0].id : null),
+                        // Use saved base_url if available
+                        base_url: savedConfig.base_url,
                       },
                     })
                   }}

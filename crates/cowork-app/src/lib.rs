@@ -256,6 +256,7 @@ pub fn run() {
             commands::update_settings,
             commands::save_settings,
             commands::check_api_key,
+            commands::get_provider_config,
             commands::test_api_connection,
             commands::is_setup_complete,
             commands::fetch_provider_models,
