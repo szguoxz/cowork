@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Settings as SettingsIcon, Save, RefreshCw, Sparkles, ArrowUpCircle, FolderOpen, FileCode } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
@@ -11,7 +11,7 @@ interface Settings {
   provider: {
     provider_type: string
     api_key: string | null
-    model: string
+    model: string | null
     base_url: string | null
   }
   approval: {
@@ -25,12 +25,29 @@ interface Settings {
   }
 }
 
+interface ModelInfo {
+  id: string
+  name: string
+  description: string
+}
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [configPath, setConfigPath] = useState<string | null>(null)
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([])
+
+  const fetchModels = useCallback(async (providerType: string) => {
+    try {
+      const models = await invoke<ModelInfo[]>('fetch_provider_models', { providerType })
+      setAvailableModels(models)
+    } catch (err) {
+      console.error('Failed to fetch models:', err)
+      setAvailableModels([])
+    }
+  }, [])
 
   const loadSettings = async () => {
     setLoading(true)
@@ -80,6 +97,13 @@ export default function SettingsPage() {
     loadSettings()
     loadConfigPath()
   }, [])
+
+  // Fetch models when settings load or provider changes
+  useEffect(() => {
+    if (settings?.provider.provider_type) {
+      fetchModels(settings.provider.provider_type)
+    }
+  }, [settings?.provider.provider_type, fetchModels])
 
   if (loading || !settings) {
     return (
@@ -141,18 +165,24 @@ export default function SettingsPage() {
                 <label className="text-sm font-medium mb-1.5 block text-foreground">Provider</label>
                 <Select
                   value={settings.provider.provider_type}
-                  onChange={(e) =>
+                  onChange={async (e) => {
+                    const newProvider = e.target.value
+                    // Fetch models for the new provider to get the default
+                    const models = await invoke<ModelInfo[]>('fetch_provider_models', { providerType: newProvider })
+                    setAvailableModels(models)
                     setSettings({
                       ...settings,
                       provider: {
                         ...settings.provider,
-                        provider_type: e.target.value,
+                        provider_type: newProvider,
                         // Clear API key when switching providers to prevent
                         // accidentally saving wrong key to wrong provider
                         api_key: null,
+                        // Set to the first model (balanced) for the new provider
+                        model: models.length > 0 ? models[0].id : null,
                       },
                     })
-                  }
+                  }}
                 >
                   <option value="anthropic">Anthropic (Claude)</option>
                   <option value="openai">OpenAI (GPT)</option>
@@ -161,8 +191,34 @@ export default function SettingsPage() {
                   <option value="groq">Groq</option>
                   <option value="deepseek">DeepSeek</option>
                   <option value="xai">xAI (Grok)</option>
+                  <option value="perplexity">Perplexity</option>
+                  <option value="together">Together AI</option>
+                  <option value="fireworks">Fireworks AI</option>
+                  <option value="nebius">Nebius AI</option>
                   <option value="ollama">Ollama (Local)</option>
                 </Select>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium mb-1.5 block text-foreground">Model</label>
+                <Select
+                  value={settings.provider.model || ''}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      provider: { ...settings.provider, model: e.target.value || null },
+                    })
+                  }
+                >
+                  {availableModels.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name} - {model.description}
+                    </option>
+                  ))}
+                </Select>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Select the model tier for this provider.
+                </p>
               </div>
 
               <div>
