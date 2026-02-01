@@ -364,6 +364,11 @@ pub struct GeneralConfig {
     pub log_level: String,
     /// Enable telemetry
     pub telemetry: bool,
+    /// Use streaming mode for LLM responses (default: false)
+    /// When true, responses are streamed token by token.
+    /// When false, responses are returned all at once (better token counting).
+    #[serde(default)]
+    pub stream_mode: bool,
 }
 
 impl Default for GeneralConfig {
@@ -372,6 +377,7 @@ impl Default for GeneralConfig {
             workspace_dir: None,
             log_level: "info".to_string(),
             telemetry: false,
+            stream_mode: false,
         }
     }
 }

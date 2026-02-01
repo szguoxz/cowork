@@ -226,6 +226,9 @@ impl SessionManager {
             session_config = session_config.with_mcp_manager(mcp_manager);
         }
 
+        // Set streaming mode from config
+        session_config = session_config.with_stream_mode(config.general.stream_mode);
+
         session_config
     }
 

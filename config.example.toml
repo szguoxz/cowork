@@ -104,3 +104,8 @@ log_level = "info"
 
 # Enable telemetry (anonymous usage statistics)
 telemetry = false
+
+# Streaming mode for LLM responses (default: false)
+# When true, responses are streamed token by token (faster perceived response)
+# When false, responses are returned all at once (more accurate token counting)
+# stream_mode = true

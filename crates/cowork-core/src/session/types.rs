@@ -598,6 +598,8 @@ pub struct SessionConfig {
     pub mcp_manager: Option<Arc<McpServerManager>>,
     /// Parent's approval channel sender (for subagents to share)
     pub parent_approval_channel: Option<ApprovalSender>,
+    /// Use streaming mode for LLM responses (default: false)
+    pub stream_mode: bool,
 }
 
 impl Default for SessionConfig {
@@ -619,6 +621,7 @@ impl Default for SessionConfig {
             session_registry: None,
             mcp_manager: None,
             parent_approval_channel: None,
+            stream_mode: false,
         }
     }
 }
@@ -719,6 +722,12 @@ impl SessionConfig {
     /// Set parent's approval channel sender (for subagents to share)
     pub fn with_parent_approval_channel(mut self, tx: ApprovalSender) -> Self {
         self.parent_approval_channel = Some(tx);
+        self
+    }
+
+    /// Set streaming mode for LLM responses
+    pub fn with_stream_mode(mut self, stream: bool) -> Self {
+        self.stream_mode = stream;
         self
     }
 }

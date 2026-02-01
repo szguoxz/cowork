@@ -30,6 +30,7 @@ fn test_config() -> SessionConfig {
         session_registry: None,
         mcp_manager: None,
         parent_approval_channel: None,
+        stream_mode: false,
     }
 }
 

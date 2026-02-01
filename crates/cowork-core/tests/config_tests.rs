@@ -202,6 +202,7 @@ timeout_secs = 600
                 workspace_dir: Some(PathBuf::from("/home/user/projects")),
                 log_level: "warn".to_string(),
                 telemetry: false,
+                stream_mode: false,
             },
             web_search: WebSearchConfig::default(),
             prompt: PromptSystemConfig::default(),
