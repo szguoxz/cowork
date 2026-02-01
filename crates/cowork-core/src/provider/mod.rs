@@ -87,12 +87,12 @@ mod tests {
     #[test]
     fn test_chat_message_user() {
         let msg = ChatMessage::user("Hello");
-        assert!(matches!(msg.role, ChatRole::User));
+        assert_eq!(msg.role, ChatRole::User);
     }
 
     #[test]
     fn test_chat_message_assistant() {
         let msg = ChatMessage::assistant("Hi there");
-        assert!(matches!(msg.role, ChatRole::Assistant));
+        assert_eq!(msg.role, ChatRole::Assistant);
     }
 }

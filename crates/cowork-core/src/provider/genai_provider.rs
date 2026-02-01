@@ -12,13 +12,15 @@
 //! Example: `LLM_LOG_FILE=/tmp/llm.log cowork`
 
 use genai::adapter::AdapterKind;
-use genai::chat::{ChatMessage, ChatOptions, ChatRequest, ToolCall, ToolResponse};
+use genai::chat::{ChatMessage, ChatOptions, ChatRequest, ChatStreamEvent, ToolCall, ToolResponse};
 use genai::resolver::{AuthData, AuthResolver, Endpoint};
 use genai::ModelIden;
 use genai::ServiceTarget;
 use genai::WebConfig;
 use genai::Client;
+use futures::StreamExt;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
 /// Retry configuration for different error types
@@ -348,8 +350,10 @@ impl GenAIProvider {
         // Note: We don't set max_tokens because newer OpenAI models (gpt-5.x) require
         // max_completion_tokens instead, and genai doesn't support that yet.
         // APIs have sensible defaults so this is fine.
+        let capture_raw = std::env::var("LLM_LOG_FILE").is_ok();
         let chat_options = ChatOptions::default()
-            .with_capture_usage(true);
+            .with_capture_usage(true)
+            .with_capture_raw_body(capture_raw);
 
         // Retry configuration
         let retry_config = RetryConfig::default();
@@ -367,9 +371,13 @@ impl GenAIProvider {
 
             match chat_res {
                 Ok(response) => {
-                    // Extract token usage BEFORE consuming response
+                    // Extract token usage and raw body BEFORE consuming response
                     let input_tokens = response.usage.prompt_tokens.map(|t| t as u64);
                     let output_tokens = response.usage.completion_tokens.map(|t| t as u64);
+                    // Convert JSON Value to pretty-printed string for logging
+                    let captured_raw_body = response.captured_raw_body
+                        .as_ref()
+                        .and_then(|v| serde_json::to_string_pretty(v).ok());
 
                     // Extract content
                     let content = response.first_text().map(|s| s.to_string());
@@ -416,7 +424,7 @@ impl GenAIProvider {
                         output_tokens,
                     };
 
-                    // Log successful interaction (no raw HTTP body available from genai)
+                    // Log successful interaction with raw HTTP body if captured
                     log_llm_interaction(LogConfig {
                         model: &self.model,
                         provider: Some("genai"),
@@ -424,6 +432,7 @@ impl GenAIProvider {
                         messages: &messages_for_log,
                         tools: tools_for_log.as_deref(),
                         result: Some(&result),
+                        raw_response: captured_raw_body.as_deref(),
                         ..Default::default()
                     });
 
@@ -539,9 +548,11 @@ impl GenAIProvider {
             chat_req = chat_req.append_message(tool_response);
         }
 
-        // Configure chat options (no max_tokens - see note in chat_with_tools_internal)
+        // Configure chat options (no max_tokens - see note in chat method)
+        let capture_raw = std::env::var("LLM_LOG_FILE").is_ok();
         let chat_options = ChatOptions::default()
-            .with_capture_usage(true);
+            .with_capture_usage(true)
+            .with_capture_raw_body(capture_raw);
 
         // Execute the chat again (non-streaming)
         // Note: The client's model_mapper will ensure the correct adapter is used
@@ -553,6 +564,10 @@ impl GenAIProvider {
                 tracing::error!(error = ?e, model = %self.model, "LLM continuation request failed");
                 Error::Provider(format!("GenAI error: {:?}", e))
             })?;
+
+        // Extract token usage before consuming response
+        let input_tokens = response.usage.prompt_tokens.map(|t| t as u64);
+        let output_tokens = response.usage.completion_tokens.map(|t| t as u64);
 
         // Extract content
         let content = response.first_text().map(|s| s.to_string());
@@ -579,11 +594,183 @@ impl GenAIProvider {
         Ok(CompletionResult {
             content,
             tool_calls,
+            input_tokens,
+            output_tokens,
+        })
+    }
+
+    /// Execute a streaming chat completion
+    ///
+    /// Sends text chunks to the provided channel as they arrive.
+    /// Returns the final CompletionResult with tool calls and token usage.
+    pub async fn chat_stream(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Option<Vec<ToolDefinition>>,
+        chunk_tx: mpsc::Sender<String>,
+    ) -> Result<CompletionResult> {
+        // Keep copies for logging
+        let messages_for_log = messages.clone();
+        let tools_for_log = tools.clone();
+
+        let mut chat_req = ChatRequest::default();
+
+        // Add system prompt if set
+        if let Some(system) = &self.system_prompt {
+            chat_req = chat_req.with_system(system.as_str());
+        }
+
+        // Append all messages
+        chat_req = chat_req.append_messages(messages);
+
+        // Add tools if provided
+        if let Some(tool_defs) = tools {
+            chat_req = chat_req.with_tools(tool_defs);
+        }
+
+        // Log request size for debugging
+        let request_size_estimate: usize = messages_for_log.iter()
+            .map(|m: &ChatMessage| super::message_text_content(m).len())
+            .sum();
+        debug!(
+            model = %self.model,
+            message_count = messages_for_log.len(),
+            request_size_chars = request_size_estimate,
+            tool_count = tools_for_log.as_ref().map(|t| t.len()).unwrap_or(0),
+            "Sending streaming LLM request"
+        );
+
+        // Configure chat options - capture usage and content at the end
+        let chat_options = ChatOptions::default()
+            .with_capture_usage(true)
+            .with_capture_content(true);
+
+        // Execute streaming request
+        let stream_response = self
+            .client
+            .exec_chat_stream(&self.model, chat_req, Some(&chat_options))
+            .await
+            .map_err(|e| {
+                let (error_details, _) = extract_genai_error_details(&e);
+                error!(error = %error_details, model = %self.model, "Streaming request failed");
+                Error::Provider(format!("GenAI streaming error: {}", error_details))
+            })?;
+
+        let mut stream = stream_response.stream;
+        let mut content_buffer = String::new();
+
+        // Process stream events
+        while let Some(event_result) = stream.next().await {
+            match event_result {
+                Ok(event) => match event {
+                    ChatStreamEvent::Start => {
+                        debug!("Stream started");
+                    }
+                    ChatStreamEvent::Chunk(chunk) => {
+                        // Send text chunk to caller
+                        content_buffer.push_str(&chunk.content);
+                        if chunk_tx.send(chunk.content).await.is_err() {
+                            debug!("Chunk receiver dropped, stream cancelled");
+                            break;
+                        }
+                    }
+                    ChatStreamEvent::ReasoningChunk(_) | ChatStreamEvent::ThoughtSignatureChunk(_) => {
+                        // Skip reasoning/thought chunks for now
+                    }
+                    ChatStreamEvent::ToolCallChunk(tool_chunk) => {
+                        debug!(
+                            tool_name = %tool_chunk.tool_call.fn_name,
+                            "Received tool call chunk"
+                        );
+                    }
+                    ChatStreamEvent::End(end_event) => {
+                        debug!("Stream ended");
+
+                        // Extract usage first (before consuming end_event)
+                        let input_tokens = end_event.captured_usage
+                            .as_ref()
+                            .and_then(|u| u.prompt_tokens)
+                            .map(|t| t as u64);
+                        let output_tokens = end_event.captured_usage
+                            .as_ref()
+                            .and_then(|u| u.completion_tokens)
+                            .map(|t| t as u64);
+
+                        // Get captured text (non-consuming)
+                        let captured_text = end_event.captured_first_text().map(|s| s.to_string());
+
+                        // Get tool calls from captured content (consumes end_event)
+                        let tool_calls: Vec<ToolCall> = end_event
+                            .captured_into_tool_calls()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|tc| {
+                                if tc.fn_name.is_empty() {
+                                    warn!("Received tool call with empty name, skipping");
+                                    return false;
+                                }
+                                debug!(
+                                    tool_name = %tc.fn_name,
+                                    call_id = %tc.call_id,
+                                    "Received tool call from stream"
+                                );
+                                true
+                            })
+                            .collect();
+
+                        // Use captured text or our buffer
+                        let content = captured_text
+                            .or_else(|| if content_buffer.is_empty() { None } else { Some(content_buffer) });
+
+                        let result = CompletionResult {
+                            content,
+                            tool_calls,
+                            input_tokens,
+                            output_tokens,
+                        };
+
+                        // Log successful interaction
+                        log_llm_interaction(LogConfig {
+                            model: &self.model,
+                            provider: Some("genai-stream"),
+                            system_prompt: self.system_prompt.as_deref(),
+                            messages: &messages_for_log,
+                            tools: tools_for_log.as_deref(),
+                            result: Some(&result),
+                            ..Default::default()
+                        });
+
+                        return Ok(result);
+                    }
+                },
+                Err(e) => {
+                    let error_msg = format!("Stream error: {:?}", e);
+                    error!(error = %error_msg, model = %self.model, "Stream error");
+
+                    log_llm_interaction(LogConfig {
+                        model: &self.model,
+                        provider: Some("genai-stream"),
+                        system_prompt: self.system_prompt.as_deref(),
+                        messages: &messages_for_log,
+                        tools: tools_for_log.as_deref(),
+                        error: Some(&error_msg),
+                        ..Default::default()
+                    });
+
+                    return Err(Error::Provider(error_msg));
+                }
+            }
+        }
+
+        // Stream ended without End event (shouldn't happen normally)
+        warn!("Stream ended unexpectedly without End event");
+        Ok(CompletionResult {
+            content: if content_buffer.is_empty() { None } else { Some(content_buffer) },
+            tool_calls: vec![],
             input_tokens: None,
             output_tokens: None,
         })
     }
-
 }
 
 impl GenAIProvider {

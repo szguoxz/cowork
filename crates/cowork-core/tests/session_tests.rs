@@ -669,11 +669,11 @@ mod tool_result_format_tests {
 
         // Find the tool result message (role should be Tool)
         let tool_result_msg = messages.iter()
-            .find(|m| matches!(m.role, ChatRole::Tool))
+            .find(|m| m.role == ChatRole::Tool)
             .expect("Should have tool result message");
 
         // Verify it has Tool role
-        assert!(matches!(tool_result_msg.role, ChatRole::Tool));
+        assert_eq!(tool_result_msg.role, ChatRole::Tool);
         // Content should contain the tool result text
         let content_text = cowork_core::provider::message_text_content(tool_result_msg);
         assert!(content_text.contains("File contents here"));
@@ -697,7 +697,7 @@ mod tool_result_format_tests {
 
         let tool_result_msg = messages.last().expect("Should have messages");
         // Verify it's a tool role message with the error content
-        assert!(matches!(tool_result_msg.role, ChatRole::Tool));
+        assert_eq!(tool_result_msg.role, ChatRole::Tool);
         let content = cowork_core::provider::message_text_content(tool_result_msg);
         assert!(content.contains("Permission denied"));
     }
@@ -726,8 +726,8 @@ mod tool_result_format_tests {
         assert_eq!(messages.len(), 4);
 
         // Verify tool results are Tool role messages
-        assert!(matches!(messages[2].role, ChatRole::Tool));
-        assert!(matches!(messages[3].role, ChatRole::Tool));
+        assert_eq!(messages[2].role, ChatRole::Tool);
+        assert_eq!(messages[3].role, ChatRole::Tool);
     }
 
     /// Test that batched results can include both success and error
@@ -752,7 +752,7 @@ mod tool_result_format_tests {
 
         // Find tool result messages (Tool role)
         let tool_results: Vec<_> = messages.iter()
-            .filter(|m| matches!(m.role, ChatRole::Tool))
+            .filter(|m| m.role == ChatRole::Tool)
             .collect();
         assert_eq!(tool_results.len(), 2);
     }
@@ -771,7 +771,7 @@ mod tool_result_format_tests {
         let messages = session.get_messages();
         let assistant_msg = &messages[1];
 
-        assert!(matches!(assistant_msg.role, ChatRole::Assistant));
+        assert_eq!(assistant_msg.role, ChatRole::Assistant);
         // Content should include both text and tool calls (as ContentParts)
         let content = cowork_core::provider::message_text_content(assistant_msg);
         assert!(content.contains("Let me search for that"));

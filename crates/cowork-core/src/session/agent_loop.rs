@@ -186,6 +186,8 @@ pub struct AgentLoop {
     save_session: bool,
     /// When the session was created
     created_at: chrono::DateTime<chrono::Utc>,
+    /// Whether to use streaming mode for LLM responses
+    stream_mode: bool,
 }
 
 impl AgentLoop {
@@ -380,6 +382,7 @@ impl AgentLoop {
             hooks_enabled,
             save_session: config.save_session,
             created_at: chrono::Utc::now(),
+            stream_mode: config.stream_mode,
         })
     }
 
@@ -702,23 +705,55 @@ impl AgentLoop {
             };
             // Append as a system reminder on the last user message
             if let Some(last_user) = llm_messages.iter_mut().rev()
-                .find(|m| matches!(m.role, crate::provider::ChatRole::User))
+                .find(|m| m.role == crate::provider::ChatRole::User)
             {
                 let suffix = format!("\n\n<system-reminder>\n{}\n</system-reminder>", reminder);
                 crate::provider::append_message_text(last_user, &suffix);
             }
         }
 
-        // Use non-streaming for now to get accurate token counts from provider
-        // TODO: Re-enable streaming once we capture usage from Final event
-        match self.provider.chat(llm_messages, tools).await {
-            Ok(result) => Ok(LlmCallResult {
-                content: result.content,
-                tool_calls: result.tool_calls,
-                input_tokens: result.input_tokens,
-                output_tokens: result.output_tokens,
-            }),
-            Err(e) => Err(crate::error::Error::Provider(e.to_string())),
+        // Use streaming or non-streaming based on config
+        if self.stream_mode {
+            // Streaming mode: emit text deltas as they arrive
+            let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<String>(32);
+            let output_tx = self.output_tx.clone();
+            let session_id = self.session_id.clone();
+            // Generate a unique ID for this streaming response
+            let stream_msg_id = format!("stream-{}", uuid::Uuid::new_v4());
+
+            // Spawn task to forward chunks to output
+            let chunk_forwarder = tokio::spawn(async move {
+                while let Some(chunk) = chunk_rx.recv().await {
+                    let _ = output_tx.send((session_id.clone(), SessionOutput::text_delta(&stream_msg_id, chunk))).await;
+                }
+            });
+
+            // Execute streaming request
+            let result = self.provider.chat_stream(llm_messages, tools, chunk_tx).await;
+
+            // Wait for chunk forwarder to finish
+            let _ = chunk_forwarder.await;
+
+            match result {
+                Ok(result) => Ok(LlmCallResult {
+                    content: result.content,
+                    tool_calls: result.tool_calls,
+                    input_tokens: result.input_tokens,
+                    output_tokens: result.output_tokens,
+                }),
+                Err(e) => Err(crate::error::Error::Provider(e.to_string())),
+            }
+        } else {
+            // Non-streaming mode: get complete response at once
+            match self.provider.chat(llm_messages, tools).await {
+                Ok(result) => Ok(LlmCallResult {
+                    content: result.content,
+                    tool_calls: result.tool_calls,
+                    input_tokens: result.input_tokens,
+                    output_tokens: result.output_tokens,
+                }),
+                Err(e) => Err(crate::error::Error::Provider(e.to_string())),
+            }
         }
     }
 

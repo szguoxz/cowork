@@ -231,7 +231,7 @@ pub fn generate_title(messages: &[ChatMessage]) -> Option<String> {
 
     messages
         .iter()
-        .find(|m| matches!(m.role, ChatRole::User))
+        .find(|m| m.role == ChatRole::User)
         .and_then(|m| m.content.joined_texts())
         .map(|content| {
             let content = content.trim();
