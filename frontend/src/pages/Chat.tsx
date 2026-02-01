@@ -6,7 +6,14 @@ import ApprovalModal from '../components/ApprovalModal'
 import QuestionModal from '../components/QuestionModal'
 import ToolCallMessage from '../components/ToolCallMessage'
 import ToolResultMessage from '../components/ToolResultMessage'
-import { useSession, ImageData } from '../context/SessionContext'
+import { useSession } from '../context/SessionContext'
+
+/** Pending image with both preview URL and data for sending */
+interface PendingImage {
+  previewUrl: string   // Full data URL for <img src>
+  base64: string       // Just base64 for backend
+  media_type: string
+}
 
 export default function Chat() {
   const {
@@ -30,7 +37,7 @@ export default function Chat() {
 
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [pendingImages, setPendingImages] = useState<ImageData[]>([])
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -62,28 +69,23 @@ export default function Chat() {
     }
   }, [session?.error])
 
-  // Convert File to base64 ImageData
-  // Keep full data URL for preview, will strip prefix when sending to backend
-  const fileToImageData = async (file: File): Promise<ImageData> => {
+  // Convert File to PendingImage with both preview URL and base64
+  const fileToPendingImage = async (file: File): Promise<PendingImage> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = () => {
         const dataUrl = reader.result as string
-        // Store full data URL - we'll extract base64 when sending
+        // Extract just the base64 part for backend
+        const base64 = dataUrl.split(',')[1] || ''
         resolve({
-          data: dataUrl,  // Full data URL for preview
+          previewUrl: dataUrl,  // Full data URL for <img src>
+          base64: base64,       // Just base64 for backend
           media_type: file.type || 'image/png'
         })
       }
-      reader.onerror = reject
+      reader.onerror = () => reject(new Error('Failed to read file'))
       reader.readAsDataURL(file)
     })
-  }
-
-  // Extract base64 from data URL for backend
-  const extractBase64 = (dataUrl: string): string => {
-    const parts = dataUrl.split(',')
-    return parts.length > 1 ? parts[1] : dataUrl
   }
 
   // Handle file selection
@@ -95,7 +97,7 @@ export default function Chat() {
     if (imageFiles.length === 0) return
 
     try {
-      const newImages = await Promise.all(imageFiles.map(fileToImageData))
+      const newImages = await Promise.all(imageFiles.map(fileToPendingImage))
       setPendingImages(prev => [...prev, ...newImages])
     } catch (err) {
       console.error('Failed to read image:', err)
@@ -151,11 +153,11 @@ export default function Chat() {
     }
 
     try {
-      const newImages = await Promise.all(imageFiles.map(fileToImageData))
+      const newImages = await Promise.all(imageFiles.map(fileToPendingImage))
       console.log('Processed images:', newImages.map(img => ({
         media_type: img.media_type,
-        data_length: img.data.length,
-        data_preview: img.data.substring(0, 50) + '...'
+        base64_length: img.base64.length,
+        previewUrl_start: img.previewUrl.substring(0, 50) + '...'
       })))
       setPendingImages(prev => [...prev, ...newImages])
     } catch (err) {
@@ -177,9 +179,9 @@ export default function Chat() {
 
     try {
       if (images.length > 0) {
-        // Convert data URLs to base64-only for backend
+        // Convert PendingImage to ImageData for backend
         const imagesForBackend = images.map(img => ({
-          data: extractBase64(img.data),
+          data: img.base64,
           media_type: img.media_type
         }))
         await sendMessageWithImages(userMessage, imagesForBackend)
@@ -424,7 +426,7 @@ export default function Chat() {
             {pendingImages.map((img, i) => (
               <div key={i} className="relative group">
                 <img
-                  src={img.data}
+                  src={img.previewUrl}
                   alt={`Attachment ${i + 1}`}
                   className="w-16 h-16 object-cover rounded-lg border border-border"
                 />
