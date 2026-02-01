@@ -126,7 +126,6 @@ use crate::error::{Error, Result};
 use crate::tools::ToolDefinition;
 use super::catalog;
 use super::logging::{log_llm_interaction, LogConfig};
-use super::model_listing::get_model_max_output;
 
 /// Response from completion that may contain both content and tool calls
 #[derive(Debug, Clone, Default)]
@@ -345,11 +344,11 @@ impl GenAIProvider {
             "Sending LLM request"
         );
 
-        // Configure chat options with max_tokens from catalog
-        // Different models have different limits (4K-32K), so use the catalog value
-        let max_output = get_model_max_output(&self.provider_id, &self.model).unwrap_or(8192);
+        // Configure chat options
+        // Note: We don't set max_tokens because newer OpenAI models (gpt-5.x) require
+        // max_completion_tokens instead, and genai doesn't support that yet.
+        // APIs have sensible defaults so this is fine.
         let chat_options = ChatOptions::default()
-            .with_max_tokens(max_output as u32)
             .with_capture_usage(true);
 
         // Retry configuration
@@ -540,10 +539,8 @@ impl GenAIProvider {
             chat_req = chat_req.append_message(tool_response);
         }
 
-        // Configure chat options with max_tokens from catalog
-        let max_output = get_model_max_output(&self.provider_id, &self.model).unwrap_or(8192);
+        // Configure chat options (no max_tokens - see note in chat_with_tools_internal)
         let chat_options = ChatOptions::default()
-            .with_max_tokens(max_output as u32)
             .with_capture_usage(true);
 
         // Execute the chat again (non-streaming)
