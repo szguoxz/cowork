@@ -640,10 +640,11 @@ impl GenAIProvider {
             "Sending streaming LLM request"
         );
 
-        // Configure chat options - capture usage and content at the end
+        // Configure chat options - capture usage, content, and tool calls at the end
         let chat_options = ChatOptions::default()
             .with_capture_usage(true)
-            .with_capture_content(true);
+            .with_capture_content(true)
+            .with_capture_tool_calls(true);
 
         // Execute streaming request
         let stream_response = self
@@ -684,8 +685,6 @@ impl GenAIProvider {
                         );
                     }
                     ChatStreamEvent::End(end_event) => {
-                        debug!("Stream ended");
-
                         // Extract usage first (before consuming end_event)
                         let input_tokens = end_event.captured_usage
                             .as_ref()
@@ -698,6 +697,18 @@ impl GenAIProvider {
 
                         // Get captured text (non-consuming)
                         let captured_text = end_event.captured_first_text().map(|s| s.to_string());
+
+                        // Check if we have tool calls before consuming
+                        let raw_tool_calls = end_event.captured_tool_calls();
+                        let tool_call_count = raw_tool_calls.as_ref().map(|v| v.len()).unwrap_or(0);
+
+                        debug!(
+                            input_tokens = ?input_tokens,
+                            output_tokens = ?output_tokens,
+                            captured_text_len = captured_text.as_ref().map(|s| s.len()).unwrap_or(0),
+                            tool_call_count = tool_call_count,
+                            "Stream ended"
+                        );
 
                         // Get tool calls from captured content (consumes end_event)
                         let tool_calls: Vec<ToolCall> = end_event
