@@ -115,13 +115,22 @@ export default function Chat() {
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    setIsDragging(true)
+    if (!isDragging) {
+      console.log('Drag over - files:', e.dataTransfer.types)
+      setIsDragging(true)
+    }
   }
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    setIsDragging(false)
+    // Only set to false if we're actually leaving the drop zone
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX
+    const y = e.clientY
+    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+      setIsDragging(false)
+    }
   }
 
   const handleDrop = async (e: React.DragEvent) => {
@@ -129,16 +138,29 @@ export default function Chat() {
     e.stopPropagation()
     setIsDragging(false)
 
+    console.log('Drop event - files:', e.dataTransfer.files.length)
     const files = Array.from(e.dataTransfer.files)
+    console.log('Files:', files.map(f => ({ name: f.name, type: f.type, size: f.size })))
+
     const imageFiles = files.filter(f => f.type.startsWith('image/'))
-    if (imageFiles.length === 0) return
+    console.log('Image files:', imageFiles.length)
+
+    if (imageFiles.length === 0) {
+      setError('Please drop image files (png, jpg, gif, etc.)')
+      return
+    }
 
     try {
       const newImages = await Promise.all(imageFiles.map(fileToImageData))
+      console.log('Processed images:', newImages.map(img => ({
+        media_type: img.media_type,
+        data_length: img.data.length,
+        data_preview: img.data.substring(0, 50) + '...'
+      })))
       setPendingImages(prev => [...prev, ...newImages])
     } catch (err) {
       console.error('Failed to read dropped image:', err)
-      setError('Failed to read dropped image')
+      setError('Failed to read dropped image: ' + String(err))
     }
   }
 
@@ -258,7 +280,23 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div
+      className="flex flex-col h-full bg-background relative"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drop Overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 z-50 bg-primary/20 border-4 border-dashed border-primary flex items-center justify-center pointer-events-none">
+          <div className="bg-card p-6 rounded-xl shadow-lg text-center">
+            <Paperclip className="w-12 h-12 text-primary mx-auto mb-2" />
+            <p className="text-lg font-medium">Drop images here</p>
+            <p className="text-sm text-muted-foreground">PNG, JPG, GIF supported</p>
+          </div>
+        </div>
+      )}
+
       {/* Session Tabs */}
       <SessionTabs
         sessions={sessions}
@@ -378,10 +416,7 @@ export default function Chat() {
       {/* Input */}
       <form
         onSubmit={handleSubmit}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        className={`p-4 border-t border-border bg-card/50 transition-colors ${isDragging ? 'bg-primary/10 border-primary' : ''}`}
+        className="p-4 border-t border-border bg-card/50"
       >
         {/* Image Previews */}
         {pendingImages.length > 0 && (
