@@ -138,9 +138,10 @@ export default function Chat() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim() || modal) return
+    const hasContent = input.trim() || pendingImages.length > 0
+    if (!hasContent || modal) return
 
-    const userMessage = input
+    const userMessage = input.trim() || 'What is in this image?'
     const images = [...pendingImages]
     setInput('')
     setPendingImages([])
@@ -428,7 +429,7 @@ export default function Chat() {
           />
           <Button
             type="submit"
-            disabled={!input.trim() || !!modal}
+            disabled={(!input.trim() && pendingImages.length === 0) || !!modal}
             variant="gradient"
             size="lg"
           >
