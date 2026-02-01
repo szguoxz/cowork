@@ -63,21 +63,27 @@ export default function Chat() {
   }, [session?.error])
 
   // Convert File to base64 ImageData
+  // Keep full data URL for preview, will strip prefix when sending to backend
   const fileToImageData = async (file: File): Promise<ImageData> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = () => {
-        const result = reader.result as string
-        // Remove data URL prefix (e.g., "data:image/png;base64,")
-        const base64 = result.split(',')[1]
+        const dataUrl = reader.result as string
+        // Store full data URL - we'll extract base64 when sending
         resolve({
-          data: base64,
+          data: dataUrl,  // Full data URL for preview
           media_type: file.type || 'image/png'
         })
       }
       reader.onerror = reject
       reader.readAsDataURL(file)
     })
+  }
+
+  // Extract base64 from data URL for backend
+  const extractBase64 = (dataUrl: string): string => {
+    const parts = dataUrl.split(',')
+    return parts.length > 1 ? parts[1] : dataUrl
   }
 
   // Handle file selection
@@ -149,7 +155,12 @@ export default function Chat() {
 
     try {
       if (images.length > 0) {
-        await sendMessageWithImages(userMessage, images)
+        // Convert data URLs to base64-only for backend
+        const imagesForBackend = images.map(img => ({
+          data: extractBase64(img.data),
+          media_type: img.media_type
+        }))
+        await sendMessageWithImages(userMessage, imagesForBackend)
       } else {
         await sendMessage(userMessage)
       }
@@ -378,7 +389,7 @@ export default function Chat() {
             {pendingImages.map((img, i) => (
               <div key={i} className="relative group">
                 <img
-                  src={`data:${img.media_type};base64,${img.data}`}
+                  src={img.data}
                   alt={`Attachment ${i + 1}`}
                   className="w-16 h-16 object-cover rounded-lg border border-border"
                 />
