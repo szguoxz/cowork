@@ -67,8 +67,11 @@ export default function SettingsPage() {
     try {
       await invoke('update_settings', { settings })
       await invoke('save_settings')
-      setMessage({ type: 'success', text: 'Settings saved successfully!' })
-      setTimeout(() => setMessage(null), 3000)
+      setMessage({
+        type: 'success',
+        text: 'Settings saved! Note: Active sessions will continue using their original settings. Start a new session to use the updated configuration.'
+      })
+      setTimeout(() => setMessage(null), 8000)
     } catch (err) {
       setMessage({ type: 'error', text: `Error saving settings: ${err}` })
     } finally {
