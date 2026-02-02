@@ -8,7 +8,19 @@
     "core:event:default",
     "core:event:allow-listen",
     "core:event:allow-emit",
-    "shell:allow-open",
+    {
+      "identifier": "shell:allow-open",
+      "allow": [
+        { "url": "https://**" },
+        { "url": "http://**" },
+        { "url": "mailto:**" },
+        { "url": "tel:**" },
+        { "url": "file://**" },
+        { "url": "[A-Z]://**" },
+        { "url": "[A-Z]:\\\\**" },
+        { "url": "/**" }
+      ]
+    },
     "dialog:default",
     "fs:default",
     "process:default",
