@@ -9,9 +9,8 @@ interface ClickablePathsProps {
 // - Windows: C:\path\to\file.ext or C:/path/to/file.ext
 // - Unix: /path/to/file.ext (optionally with :line_number suffix)
 // - Relative: ./path or ../path
-// Must end with a file extension or be in backticks
-// Paths in backticks can contain any characters; bare paths must have extensions
-const FILE_PATH_REGEX = /`([A-Za-z]:[\\\/][^\n`]+|\/[^\n`]+|\.\.?\/[^\n`]+)`|(?<![`\w])([A-Za-z]:[\\\/][^\s<>"|*?]+\.[a-zA-Z0-9]+(?::\d+)?|\/[^\s<>"|*?:]+\.[a-zA-Z0-9]+(?::\d+)?)(?![`\w])/g
+// Paths in backticks, or bare paths ending with file extensions
+const FILE_PATH_REGEX = /`([A-Za-z]:[\\\/][^\n`]+|\/[^\n`]+|\.\.?\/[^\n`]+)`|([A-Za-z]:[\\\/][^\s<>"|*?`]+\.[a-zA-Z0-9]+(?::\d+)?)|(?:^|[\s(])(\/?(?:[\w.-]+\/)+[\w.-]+\.[a-zA-Z0-9]+(?::\d+)?)/gm
 
 // Regex to match URLs (http, https, ftp)
 const URL_REGEX = /https?:\/\/[^\s<>)"'\]]+|ftp:\/\/[^\s<>)"'\]]+/g
@@ -34,12 +33,18 @@ export default function ClickablePaths({ text }: ClickablePathsProps) {
 
   // Find all file path matches
   for (const match of text.matchAll(FILE_PATH_REGEX)) {
-    const path = match[1] || match[2]
+    // match[1] = backtick path, match[2] = Windows path, match[3] = Unix path
+    const path = match[1] || match[2] || match[3]
     if (path && match.index !== undefined) {
+      // For backtick matches, use just the path; for bare paths use full match
+      // But strip leading whitespace/parens that might be captured
+      const fullMatch = match[0]
+      const pathStart = fullMatch.indexOf(path)
+      const actualIndex = match.index + pathStart
       parts.push({
         type: 'path',
-        content: match[1] ? path : match[0], // Use full match for bare paths
-        index: match.index
+        content: path,
+        index: actualIndex
       })
     }
   }
