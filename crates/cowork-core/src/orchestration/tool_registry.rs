@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use crate::config::{ModelTiers, WebSearchConfig};
 use crate::mcp_manager::McpServerManager;
 use crate::session::{SessionOutput, SessionRegistry};
-use crate::tools::filesystem::{EditFile, GlobFiles, GrepFiles, ReadFile, WriteFile};
+use crate::tools::filesystem::{EditFile, ExportDocument, GlobFiles, GrepFiles, ReadFile, WriteFile};
 use crate::tools::interaction::AskUserQuestion;
 use crate::tools::lsp::LspTool;
 use crate::tools::mcp::create_mcp_tools;
@@ -167,6 +167,7 @@ impl ToolRegistryBuilder {
         registry.register(Arc::new(EditFile::new(self.workspace.clone())));
         registry.register(Arc::new(GlobFiles::new(self.workspace.clone())));
         registry.register(Arc::new(GrepFiles::new(self.workspace.clone())));
+        registry.register(Arc::new(ExportDocument::new(self.workspace.clone())));
 
         // Shell tools with shared process registry
         let shell_registry = Arc::new(ShellProcessRegistry::new());
@@ -340,6 +341,7 @@ impl ToolRegistryBuilder {
                 registry.register(Arc::new(EditFile::new(workspace.clone())));
                 registry.register(Arc::new(GlobFiles::new(workspace.clone())));
                 registry.register(Arc::new(GrepFiles::new(workspace.clone())));
+                registry.register(Arc::new(ExportDocument::new(workspace.clone())));
                 let shell_registry = Arc::new(ShellProcessRegistry::new());
                 registry.register(Arc::new(
                     ExecuteCommand::new(workspace.clone()).with_registry(shell_registry),
@@ -409,6 +411,7 @@ mod tests {
         assert!(registry.get("Edit").is_some());
         assert!(registry.get("Glob").is_some());
         assert!(registry.get("Grep").is_some());
+        assert!(registry.get("ExportDocument").is_some());
 
         // Should have shell tools
         assert!(registry.get("Bash").is_some());

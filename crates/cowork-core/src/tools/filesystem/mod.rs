@@ -2,6 +2,7 @@
 
 mod document;
 mod edit;
+mod export;
 mod glob;
 mod grep;
 mod path_utils;
@@ -10,6 +11,7 @@ mod write;
 
 // Re-export tools
 pub use edit::EditFile;
+pub use export::ExportDocument;
 pub use glob::GlobFiles;
 pub use grep::GrepFiles;
 pub use read::ReadFile;

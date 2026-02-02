@@ -49,11 +49,16 @@ zip = "7"
 dunce = "1"  # Cross-platform canonicalize without UNC prefix on Windows
 sha2 = "0.10"
 
-# Document parsing
+# Document parsing (reading)
 pdf-extract = "0.10"
 calamine = "0.32"
 dotext = "0.1"        # Word/docx text extraction
 quick-xml = "0.39"    # XML parsing for PPTX
+
+# Document generation (writing)
+genpdf = "0.2"
+rust_xlsxwriter = "0.93"
+docx-rs = "0.4"
 
 # Token counting
 tiktoken-rs = { version = "0.9", optional = true }
