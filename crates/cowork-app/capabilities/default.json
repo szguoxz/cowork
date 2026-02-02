@@ -9,7 +9,15 @@
     "core:event:allow-listen",
     "core:event:allow-emit",
     "shell:allow-open",
-    "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "**" }]
+    },
+    "opener:allow-reveal-item-in-dir",
     "dialog:default",
     "fs:default",
     "process:default",
