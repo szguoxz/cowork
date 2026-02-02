@@ -45,7 +45,18 @@ Usage:
   - For Excel: TSV (tab-separated values) or JSON array of rows
   - For slides: JSON array of slide objects with "title" and "content" fields
 
+- font (optional, PDF only): Font name to use. If not specified, uses Liberation Sans.
+  Examples: "Roboto", "Open Sans", "Times New Roman", "Arial"
+
 Examples:
+
+PDF with custom font:
+{
+  "file_path": "/path/to/report.pdf",
+  "title": "Quarterly Report",
+  "font": "Roboto",
+  "content": "First paragraph.\n\nSecond paragraph with more details."
+}
 
 PDF/Word:
 {
@@ -89,6 +100,10 @@ HTML Slides:
                 "title": {
                     "type": "string",
                     "description": "Optional document title"
+                },
+                "font": {
+                    "type": "string",
+                    "description": "Optional font name for PDF (e.g., 'Roboto', 'Arial'). Uses Liberation Sans if not specified."
                 }
             },
             "required": ["file_path", "content"]
@@ -106,6 +121,7 @@ HTML Slides:
                 .ok_or_else(|| ToolError::InvalidParams("content is required".into()))?;
 
             let title = params["title"].as_str().unwrap_or("Document");
+            let font_name = params["font"].as_str();
 
             let path = self.workspace.join(path_str);
 
@@ -144,7 +160,7 @@ HTML Slides:
             } else {
                 match ext.as_str() {
                     "pdf" => {
-                        let bytes = export_pdf(&path, title, content)?;
+                        let bytes = export_pdf(&path, title, content, font_name)?;
                         ("pdf", bytes)
                     }
                     "docx" => {
@@ -182,22 +198,219 @@ HTML Slides:
 const LIBERATION_SANS_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/LiberationSans-Regular.ttf");
 const LIBERATION_SANS_BOLD: &[u8] = include_bytes!("../../../assets/fonts/LiberationSans-Bold.ttf");
 
+/// Common Google Fonts with their specimen URLs
+const GOOGLE_FONTS: &[(&str, &str)] = &[
+    ("roboto", "Roboto"),
+    ("open sans", "Open+Sans"),
+    ("opensans", "Open+Sans"),
+    ("lato", "Lato"),
+    ("montserrat", "Montserrat"),
+    ("oswald", "Oswald"),
+    ("raleway", "Raleway"),
+    ("poppins", "Poppins"),
+    ("nunito", "Nunito"),
+    ("ubuntu", "Ubuntu"),
+    ("playfair display", "Playfair+Display"),
+    ("merriweather", "Merriweather"),
+    ("pt sans", "PT+Sans"),
+    ("pt serif", "PT+Serif"),
+    ("source sans pro", "Source+Sans+Pro"),
+    ("source serif pro", "Source+Serif+Pro"),
+    ("noto sans", "Noto+Sans"),
+    ("noto serif", "Noto+Serif"),
+    ("inter", "Inter"),
+    ("work sans", "Work+Sans"),
+    ("fira sans", "Fira+Sans"),
+    ("quicksand", "Quicksand"),
+    ("cabin", "Cabin"),
+    ("karla", "Karla"),
+    ("libre baskerville", "Libre+Baskerville"),
+    ("crimson text", "Crimson+Text"),
+    ("dancing script", "Dancing+Script"),
+    ("pacifico", "Pacifico"),
+    ("lobster", "Lobster"),
+    ("comfortaa", "Comfortaa"),
+];
+
+/// System font directories by platform
+fn get_font_directories() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(windir) = std::env::var("WINDIR") {
+            dirs.push(std::path::PathBuf::from(format!("{}\\Fonts", windir)));
+        }
+        dirs.push(std::path::PathBuf::from("C:\\Windows\\Fonts"));
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            dirs.push(std::path::PathBuf::from(format!("{}\\Microsoft\\Windows\\Fonts", localappdata)));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        dirs.push(std::path::PathBuf::from("/System/Library/Fonts"));
+        dirs.push(std::path::PathBuf::from("/Library/Fonts"));
+        if let Ok(home) = std::env::var("HOME") {
+            dirs.push(std::path::PathBuf::from(format!("{}/Library/Fonts", home)));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        dirs.push(std::path::PathBuf::from("/usr/share/fonts"));
+        dirs.push(std::path::PathBuf::from("/usr/local/share/fonts"));
+        if let Ok(home) = std::env::var("HOME") {
+            dirs.push(std::path::PathBuf::from(format!("{}/.local/share/fonts", home)));
+            dirs.push(std::path::PathBuf::from(format!("{}/.fonts", home)));
+        }
+    }
+
+    dirs
+}
+
+/// Search for a font file by name in system directories
+fn find_system_font(font_name: &str) -> Option<(std::path::PathBuf, Option<std::path::PathBuf>)> {
+    let font_lower = font_name.to_lowercase().replace(' ', "");
+    let font_dirs = get_font_directories();
+
+    let mut regular_path: Option<std::path::PathBuf> = None;
+    let mut bold_path: Option<std::path::PathBuf> = None;
+
+    for dir in font_dirs {
+        if !dir.exists() {
+            continue;
+        }
+
+        // Walk directory recursively
+        for entry in walkdir::WalkDir::new(&dir)
+            .max_depth(3)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if let Some(ext) = path.extension() {
+                if ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf") {
+                    if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        let stem_lower = file_stem.to_lowercase().replace(['-', '_'], "");
+
+                        // Check if this is the font we're looking for
+                        if stem_lower.contains(&font_lower) || font_lower.contains(&stem_lower) {
+                            // Determine if it's regular or bold
+                            let is_bold = stem_lower.contains("bold") || stem_lower.ends_with("bd") || stem_lower.ends_with("b");
+                            let is_italic = stem_lower.contains("italic") || stem_lower.contains("oblique") || stem_lower.ends_with("it") || stem_lower.ends_with("i");
+                            let is_regular = !is_bold && !is_italic &&
+                                (stem_lower.contains("regular") || stem_lower.ends_with(&font_lower) ||
+                                 stem_lower == font_lower || !stem_lower.contains("light") && !stem_lower.contains("thin"));
+
+                            if is_regular && regular_path.is_none() {
+                                regular_path = Some(path.to_path_buf());
+                            } else if is_bold && !is_italic && bold_path.is_none() {
+                                bold_path = Some(path.to_path_buf());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Stop if we found both
+        if regular_path.is_some() && bold_path.is_some() {
+            break;
+        }
+    }
+
+    regular_path.map(|r| (r, bold_path))
+}
+
+/// Generate a helpful error message when a font is not found
+fn font_not_found_error(font_name: &str) -> ToolError {
+    let font_lower = font_name.to_lowercase();
+
+    // Check if it's a known Google Font
+    let google_url = GOOGLE_FONTS.iter()
+        .find(|(name, _)| font_lower.contains(name) || name.contains(&font_lower))
+        .map(|(_, url_name)| format!("https://fonts.google.com/specimen/{}", url_name));
+
+    let download_section = if let Some(url) = google_url {
+        format!(
+            "Download from Google Fonts:\n  {}\n\n\
+             Click 'Download family', extract the ZIP, and install the .ttf files.",
+            url
+        )
+    } else {
+        "Search for the font at:\n  \
+         https://fonts.google.com/\n  \
+         https://www.dafont.com/\n  \
+         https://www.fontsquirrel.com/".to_string()
+    };
+
+    let install_instructions = if cfg!(target_os = "windows") {
+        "How to install on Windows:\n  \
+         1. Download the font (.ttf or .otf file)\n  \
+         2. Right-click the font file → 'Install' or 'Install for all users'"
+    } else if cfg!(target_os = "macos") {
+        "How to install on macOS:\n  \
+         1. Download the font (.ttf or .otf file)\n  \
+         2. Double-click the font file → Click 'Install Font'"
+    } else {
+        "How to install on Linux:\n  \
+         1. Download the font (.ttf or .otf file)\n  \
+         2. Copy to ~/.local/share/fonts/\n  \
+         3. Run: fc-cache -f -v"
+    };
+
+    ToolError::ExecutionFailed(format!(
+        "Font \"{}\" not found on your system.\n\n{}\n\n{}\n\n\
+         After installing, try the export again.",
+        font_name, download_section, install_instructions
+    ))
+}
+
 /// Export content to PDF using genpdf
-fn export_pdf(path: &std::path::Path, title: &str, content: &str) -> Result<usize, ToolError> {
+fn export_pdf(path: &std::path::Path, title: &str, content: &str, font_name: Option<&str>) -> Result<usize, ToolError> {
     use genpdf::{elements, fonts, style, Document, Element};
 
-    // Use embedded Liberation Sans font (works on all platforms)
-    let regular = fonts::FontData::new(LIBERATION_SANS_REGULAR.to_vec(), None)
-        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to load regular font: {}", e)))?;
-    let bold = fonts::FontData::new(LIBERATION_SANS_BOLD.to_vec(), None)
-        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to load bold font: {}", e)))?;
+    // Load font family - either custom or embedded
+    let font_family = if let Some(name) = font_name {
+        // Try to find the custom font
+        if let Some((regular_path, bold_path)) = find_system_font(name) {
+            let regular_bytes = std::fs::read(&regular_path)
+                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read font file: {}", e)))?;
+            let regular = fonts::FontData::new(regular_bytes, None)
+                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to load font: {}", e)))?;
 
-    // Use regular font for italic variants (we don't have italic fonts bundled)
-    let font_family = fonts::FontFamily {
-        regular: regular.clone(),
-        bold: bold.clone(),
-        italic: regular,       // Fallback to regular for italic
-        bold_italic: bold,     // Fallback to bold for bold-italic
+            let bold = if let Some(bold_p) = bold_path {
+                let bold_bytes = std::fs::read(&bold_p)
+                    .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read bold font: {}", e)))?;
+                fonts::FontData::new(bold_bytes, None)
+                    .map_err(|e| ToolError::ExecutionFailed(format!("Failed to load bold font: {}", e)))?
+            } else {
+                regular.clone() // Use regular as bold if no bold variant found
+            };
+
+            fonts::FontFamily {
+                regular: regular.clone(),
+                bold: bold.clone(),
+                italic: regular,
+                bold_italic: bold,
+            }
+        } else {
+            return Err(font_not_found_error(name));
+        }
+    } else {
+        // Use embedded Liberation Sans font (works on all platforms)
+        let regular = fonts::FontData::new(LIBERATION_SANS_REGULAR.to_vec(), None)
+            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to load regular font: {}", e)))?;
+        let bold = fonts::FontData::new(LIBERATION_SANS_BOLD.to_vec(), None)
+            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to load bold font: {}", e)))?;
+
+        fonts::FontFamily {
+            regular: regular.clone(),
+            bold: bold.clone(),
+            italic: regular,
+            bold_italic: bold,
+        }
     };
 
     let mut doc = Document::new(font_family);
