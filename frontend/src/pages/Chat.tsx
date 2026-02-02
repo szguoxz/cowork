@@ -6,6 +6,7 @@ import ApprovalModal from '../components/ApprovalModal'
 import QuestionModal from '../components/QuestionModal'
 import ToolCallMessage from '../components/ToolCallMessage'
 import ToolResultMessage from '../components/ToolResultMessage'
+import ClickablePaths from '../components/ClickablePaths'
 import { useSession } from '../context/SessionContext'
 
 /** Pending image with both preview URL and data for sending */
@@ -346,7 +347,9 @@ export default function Chat() {
                   {/* Add ● prefix for assistant messages */}
                   <div className="flex items-start gap-2">
                     <span className="text-foreground font-medium select-none">●</span>
-                    <pre className="whitespace-pre-wrap font-sans text-sm flex-1">{msg.content}</pre>
+                    <pre className="whitespace-pre-wrap font-sans text-sm flex-1">
+                      <ClickablePaths text={msg.content} />
+                    </pre>
                   </div>
                 </div>
               </div>
