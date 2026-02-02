@@ -182,12 +182,24 @@ fn export_pdf(path: &std::path::Path, title: &str, content: &str) -> Result<usiz
     use genpdf::{elements, fonts, style, Document, Element};
 
     // Try to load system fonts from common locations
+    // Order: Linux (DejaVu, Liberation), macOS (Helvetica), Windows (Arial, Segoe)
     let font_family = fonts::from_files("/usr/share/fonts/truetype/dejavu", "DejaVuSans", None)
         .or_else(|_| fonts::from_files("/usr/share/fonts/truetype/liberation", "LiberationSans", None))
+        .or_else(|_| fonts::from_files("/usr/share/fonts/TTF", "DejaVuSans", None)) // Arch Linux
         .or_else(|_| fonts::from_files("/System/Library/Fonts", "Helvetica", None))
+        .or_else(|_| fonts::from_files("/System/Library/Fonts/Supplemental", "Arial", None))
+        // Windows - try multiple common fonts
         .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "arial", None))
+        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "segoeui", None))
+        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "calibri", None))
+        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "tahoma", None))
+        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "verdana", None))
+        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "times", None))
+        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "cour", None)) // Courier New
         .map_err(|e| ToolError::ExecutionFailed(format!(
-            "No suitable fonts found for PDF generation. Please install dejavu-fonts or liberation-fonts. Error: {}",
+            "No suitable fonts found for PDF generation. Error: {}. \
+             On Windows, ensure you have Arial, Segoe UI, Calibri, or another TrueType font installed. \
+             On Linux, install dejavu-fonts or liberation-fonts.",
             e
         )))?;
 
