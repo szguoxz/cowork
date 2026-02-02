@@ -1,4 +1,5 @@
-import { File, Folder, FileText, AlertCircle, CheckCircle2, Search, Code } from 'lucide-react'
+import { File, Folder, FileText, AlertCircle, CheckCircle2, Search, Code, ExternalLink, FolderOpen } from 'lucide-react'
+import { open } from '@tauri-apps/plugin-shell'
 
 interface ToolResultFormatterProps {
   toolName: string
@@ -241,6 +242,73 @@ function StatusMessage({ result }: { result: string }) {
   return <span className="text-sm text-foreground">{result}</span>
 }
 
+// Format export document results with open button
+interface ExportResult {
+  path: string
+  format: string
+  bytes_written: number
+}
+
+function ExportDocumentResult({ data }: { data: ExportResult }) {
+  const formatLabels: Record<string, string> = {
+    pdf: 'PDF',
+    docx: 'Word',
+    xlsx: 'Excel',
+    html_slides: 'HTML Slides',
+  }
+
+  const formatLabel = formatLabels[data.format] || data.format.toUpperCase()
+  const fileName = data.path.split('/').pop() || data.path
+  const parentDir = data.path.substring(0, data.path.lastIndexOf('/')) || '/'
+
+  const handleOpen = async () => {
+    try {
+      await open(data.path)
+    } catch (e) {
+      console.error('Failed to open file:', e)
+    }
+  }
+
+  const handleReveal = async () => {
+    try {
+      // Open the parent directory in the file manager
+      await open(parentDir)
+    } catch (e) {
+      console.error('Failed to open folder:', e)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
+        <span className="text-sm text-foreground">
+          Created {formatLabel}: <span className="font-medium">{fileName}</span>
+        </span>
+        <span className="text-xs text-muted-foreground">
+          ({formatSize(data.bytes_written)})
+        </span>
+      </div>
+      <div className="flex gap-2 ml-6">
+        <button
+          onClick={handleOpen}
+          className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium bg-primary/10 hover:bg-primary/20 text-primary rounded-md transition-colors"
+        >
+          <ExternalLink className="w-3 h-3" />
+          Open
+        </button>
+        <button
+          onClick={handleReveal}
+          className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded-md transition-colors"
+        >
+          <FolderOpen className="w-3 h-3" />
+          Show in Folder
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function ToolResultFormatter({ toolName, result }: ToolResultFormatterProps) {
   // Handle empty or very short results
   if (!result || result.trim() === '') {
@@ -299,6 +367,15 @@ export default function ToolResultFormatter({ toolName, result }: ToolResultForm
     case 'edit_file':
     case 'create_file':
     case 'delete_file': {
+      return <StatusMessage result={result} />
+    }
+
+    case 'ExportDocument':
+    case 'export_document': {
+      const data = tryParseJson<ExportResult>(result)
+      if (data?.path && data?.format) {
+        return <ExportDocumentResult data={data} />
+      }
       return <StatusMessage result={result} />
     }
 

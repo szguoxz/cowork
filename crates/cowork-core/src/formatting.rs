@@ -343,6 +343,11 @@ pub fn format_tool_call(tool_name: &str, args: &Value) -> String {
                 "TodoWrite(...)".to_string()
             }
         }
+        "ExportDocument" => {
+            let path = args["file_path"].as_str().unwrap_or("?");
+            let filename = path.rsplit('/').next().unwrap_or(path);
+            format!("ExportDocument({})", filename)
+        }
         _ => {
             if let Some(obj) = args.as_object() {
                 let params: Vec<String> = obj
@@ -785,6 +790,27 @@ pub fn format_tool_result_summary(
                 )
             } else {
                 ("Updated todos".to_string(), None)
+            }
+        }
+        "ExportDocument" => {
+            // Parse the output JSON to get format and path
+            if let Ok(json) = serde_json::from_str::<Value>(output) {
+                let format = json.get("format").and_then(|f| f.as_str()).unwrap_or("document");
+                let path = json.get("path").and_then(|p| p.as_str()).unwrap_or("");
+                let bytes = json.get("bytes_written").and_then(|b| b.as_u64()).unwrap_or(0);
+
+                let format_label = match format {
+                    "pdf" => "PDF",
+                    "docx" => "Word",
+                    "xlsx" => "Excel",
+                    "html_slides" => "HTML Slides",
+                    _ => format,
+                };
+
+                let filename = path.rsplit('/').next().unwrap_or(path);
+                (format!("Created {} ({}) - {}", format_label, format_size(bytes), filename), None)
+            } else {
+                ("Document exported".to_string(), None)
             }
         }
         _ => {
