@@ -177,31 +177,28 @@ HTML Slides:
     }
 }
 
+// Embedded Liberation Sans fonts (SIL Open Font License)
+// This ensures PDF generation works on all platforms without system font dependencies
+const LIBERATION_SANS_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/LiberationSans-Regular.ttf");
+const LIBERATION_SANS_BOLD: &[u8] = include_bytes!("../../../assets/fonts/LiberationSans-Bold.ttf");
+
 /// Export content to PDF using genpdf
 fn export_pdf(path: &std::path::Path, title: &str, content: &str) -> Result<usize, ToolError> {
     use genpdf::{elements, fonts, style, Document, Element};
 
-    // Try to load system fonts from common locations
-    // Order: Linux (DejaVu, Liberation), macOS (Helvetica), Windows (Arial, Segoe)
-    let font_family = fonts::from_files("/usr/share/fonts/truetype/dejavu", "DejaVuSans", None)
-        .or_else(|_| fonts::from_files("/usr/share/fonts/truetype/liberation", "LiberationSans", None))
-        .or_else(|_| fonts::from_files("/usr/share/fonts/TTF", "DejaVuSans", None)) // Arch Linux
-        .or_else(|_| fonts::from_files("/System/Library/Fonts", "Helvetica", None))
-        .or_else(|_| fonts::from_files("/System/Library/Fonts/Supplemental", "Arial", None))
-        // Windows - try multiple common fonts
-        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "arial", None))
-        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "segoeui", None))
-        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "calibri", None))
-        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "tahoma", None))
-        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "verdana", None))
-        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "times", None))
-        .or_else(|_| fonts::from_files("C:\\Windows\\Fonts", "cour", None)) // Courier New
-        .map_err(|e| ToolError::ExecutionFailed(format!(
-            "No suitable fonts found for PDF generation. Error: {}. \
-             On Windows, ensure you have Arial, Segoe UI, Calibri, or another TrueType font installed. \
-             On Linux, install dejavu-fonts or liberation-fonts.",
-            e
-        )))?;
+    // Use embedded Liberation Sans font (works on all platforms)
+    let regular = fonts::FontData::new(LIBERATION_SANS_REGULAR.to_vec(), None)
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to load regular font: {}", e)))?;
+    let bold = fonts::FontData::new(LIBERATION_SANS_BOLD.to_vec(), None)
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to load bold font: {}", e)))?;
+
+    // Use regular font for italic variants (we don't have italic fonts bundled)
+    let font_family = fonts::FontFamily {
+        regular: regular.clone(),
+        bold: bold.clone(),
+        italic: regular,       // Fallback to regular for italic
+        bold_italic: bold,     // Fallback to bold for bold-italic
+    };
 
     let mut doc = Document::new(font_family);
     doc.set_title(title);
