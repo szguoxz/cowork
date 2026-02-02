@@ -1,4 +1,5 @@
-import { open } from '@tauri-apps/plugin-shell'
+import { open as openUrl } from '@tauri-apps/plugin-shell'
+import { openPath } from '@tauri-apps/plugin-opener'
 import { ExternalLink, Globe } from 'lucide-react'
 
 interface ClickablePathsProps {
@@ -104,16 +105,15 @@ export default function ClickablePaths({ text }: ClickablePathsProps) {
   const handleOpen = async (target: string, e: React.MouseEvent) => {
     e.preventDefault()
     try {
-      // For URLs, open directly
+      // For URLs, use shell plugin
       if (target.includes('://')) {
-        await open(target)
+        await openUrl(target)
         return
       }
 
-      // For file paths, strip line number suffix (e.g., :123) and normalize separators
-      let filePath = target.replace(/:\d+$/, '')
-      filePath = filePath.replace(/\\/g, '/')
-      await open(filePath)
+      // For file paths, strip line number suffix (e.g., :123) and use opener plugin
+      const filePath = target.replace(/:\d+$/, '')
+      await openPath(filePath)
     } catch (err) {
       console.error('Failed to open:', err)
     }
