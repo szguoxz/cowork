@@ -7,10 +7,11 @@ interface ClickablePathsProps {
 
 // Regex to match file paths:
 // - Windows: C:\path\to\file.ext or C:/path/to/file.ext
-// - Unix: /path/to/file.ext
+// - Unix: /path/to/file.ext (optionally with :line_number suffix)
 // - Relative: ./path or ../path
 // Must end with a file extension or be in backticks
-const FILE_PATH_REGEX = /`([A-Za-z]:[\\\/][^\s`]+|\/[^\s`]+|\.\.?\/[^\s`]+)`|(?<![`\w])([A-Za-z]:[\\\/][^\s<>"|*?]+\.[a-zA-Z0-9]+|\/(?:[\w.-]+\/)*[\w.-]+\.[a-zA-Z0-9]+)(?![`\w])/g
+// Paths in backticks can contain any characters; bare paths must have extensions
+const FILE_PATH_REGEX = /`([A-Za-z]:[\\\/][^\n`]+|\/[^\n`]+|\.\.?\/[^\n`]+)`|(?<![`\w])([A-Za-z]:[\\\/][^\s<>"|*?]+\.[a-zA-Z0-9]+(?::\d+)?|\/[^\s<>"|*?:]+\.[a-zA-Z0-9]+(?::\d+)?)(?![`\w])/g
 
 // Regex to match URLs (http, https, ftp)
 const URL_REGEX = /https?:\/\/[^\s<>)"'\]]+|ftp:\/\/[^\s<>)"'\]]+/g
@@ -98,9 +99,16 @@ export default function ClickablePaths({ text }: ClickablePathsProps) {
   const handleOpen = async (target: string, e: React.MouseEvent) => {
     e.preventDefault()
     try {
-      // For file paths, normalize separators
-      const normalized = target.includes('://') ? target : target.replace(/\\/g, '/')
-      await open(normalized)
+      // For URLs, open directly
+      if (target.includes('://')) {
+        await open(target)
+        return
+      }
+
+      // For file paths, strip line number suffix (e.g., :123) and normalize separators
+      let filePath = target.replace(/:\d+$/, '')
+      filePath = filePath.replace(/\\/g, '/')
+      await open(filePath)
     } catch (err) {
       console.error('Failed to open:', err)
     }
